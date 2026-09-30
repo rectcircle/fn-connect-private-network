@@ -1,0 +1,10 @@
+#!/bin/bash
+
+set -eu
+
+if ! "${TRIM_APPDEST}/cmd/main" start; then
+  echo "FnCPN upgrade healthcheck failed" >&2
+  exit 1
+fi
+
+exit 0

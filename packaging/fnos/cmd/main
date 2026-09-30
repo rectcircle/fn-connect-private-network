@@ -1,0 +1,237 @@
+#!/bin/bash
+
+set -eu
+
+BINARY="${TRIM_APPDEST}/server/fncpn"
+RUN_DIR="${TRIM_PKGVAR}/run"
+APP_RUN_DIR="${TRIM_APPDEST}/run"
+APP_SOCKET="${APP_RUN_DIR}/app.sock"
+PRIVILEGED_SOCKET="${RUN_DIR}/server-privileged.sock"
+SERVER_PID_FILE="${RUN_DIR}/server.pid"
+PRIVILEGED_PID_FILE="${RUN_DIR}/privileged.pid"
+SERVER_LOG_DIR="${TRIM_PKGVAR}/logs/server"
+PRIVILEGED_LOG_DIR="${TRIM_PKGVAR}/logs/privileged"
+SERVER_LOG="${SERVER_LOG_DIR}/server.log"
+PRIVILEGED_LOG="${PRIVILEGED_LOG_DIR}/privileged.log"
+CONTROL_STATE="${TRIM_PKGETC}/control"
+PRIVILEGED_STATE="${TRIM_PKGETC}/privileged"
+APP_USER="fncpn"
+
+log_error() {
+    local message
+    message="$(printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g')"
+    mkdir -p "$SERVER_LOG_DIR"
+    printf '{"time":"%s","level":"ERROR","msg":"%s"}\n' \
+        "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$message" >> "$SERVER_LOG"
+    if [ -n "${TRIM_TEMP_LOGFILE:-}" ]; then
+        printf '%s\n' "$1" > "$TRIM_TEMP_LOGFILE"
+    fi
+}
+
+read_pid() {
+    [ -r "$1" ] || return 1
+    local pid
+    pid="$(head -n 1 "$1" | tr -d '[:space:]')"
+    case "$pid" in
+        ''|*[!0-9]*|0|1) return 1 ;;
+    esac
+    printf '%s\n' "$pid"
+}
+
+process_matches() {
+    local pid_file="$1"
+    local expected_uid="$2"
+    local expected_role="$3"
+    local pid actual_uid executable command_line
+    pid="$(read_pid "$pid_file")" || return 1
+    kill -0 "$pid" 2>/dev/null || return 1
+    actual_uid="$(awk '/^Uid:/{print $2}' "/proc/${pid}/status" 2>/dev/null)" || return 1
+    [ "$actual_uid" = "$expected_uid" ] || return 1
+    executable="$(readlink -f "/proc/${pid}/exe" 2>/dev/null)" || return 1
+    [ "$executable" = "$(readlink -f "$BINARY")" ] || return 1
+    command_line="$(tr '\0' ' ' < "/proc/${pid}/cmdline" 2>/dev/null)" || return 1
+    case "$command_line" in
+        *"server ${expected_role}"*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+find_process() {
+    local expected_uid="$1"
+    local expected_role="$2"
+    local status pid actual_uid executable command_line found=""
+    for status in /proc/[0-9]*/status; do
+        [ -r "$status" ] || continue
+        pid="${status#/proc/}"
+        pid="${pid%/status}"
+        actual_uid="$(awk '/^Uid:/{print $2}' "$status" 2>/dev/null)" || continue
+        [ "$actual_uid" = "$expected_uid" ] || continue
+        executable="$(readlink -f "/proc/${pid}/exe" 2>/dev/null)" || continue
+        [ "$executable" = "$(readlink -f "$BINARY")" ] || continue
+        command_line="$(tr '\0' ' ' < "/proc/${pid}/cmdline" 2>/dev/null)" || continue
+        case "$command_line" in
+            *"server ${expected_role}"*)
+                [ -z "$found" ] || return 2
+                found="$pid"
+                ;;
+        esac
+    done
+    [ -n "$found" ] || return 1
+    printf '%s\n' "$found"
+}
+
+wait_for_health() {
+    local role="$1"
+    local socket="$2"
+    local count=0
+    while [ "$count" -lt 50 ]; do
+        if "$BINARY" internal-healthcheck --role "$role" --socket "$socket" >/dev/null 2>&1; then
+            return 0
+        fi
+        sleep 0.1
+        count=$((count + 1))
+    done
+    return 1
+}
+
+prepare_directories() {
+    mkdir -p "$RUN_DIR" "$APP_RUN_DIR" "$CONTROL_STATE" "$PRIVILEGED_STATE"
+    mkdir -p "$SERVER_LOG_DIR" "$PRIVILEGED_LOG_DIR"
+    chown "root:$APP_USER" "$RUN_DIR"
+    chown root:root "$PRIVILEGED_STATE" "$PRIVILEGED_LOG_DIR"
+    chmod 0750 "$RUN_DIR"
+    chmod 0700 "$PRIVILEGED_STATE" "$PRIVILEGED_LOG_DIR"
+    chown "$APP_USER:$APP_USER" "$APP_RUN_DIR" "$CONTROL_STATE" "$SERVER_LOG_DIR"
+    chmod 0750 "$APP_RUN_DIR" "$CONTROL_STATE"
+    chmod 0700 "$SERVER_LOG_DIR"
+}
+
+start_app() {
+    local app_uid
+    app_uid="$(id -u "$APP_USER")"
+    if process_matches "$SERVER_PID_FILE" "$app_uid" daemon &&
+        process_matches "$PRIVILEGED_PID_FILE" 0 privileged-daemon &&
+        wait_for_health server "$APP_SOCKET" &&
+        wait_for_health server-privileged "$PRIVILEGED_SOCKET"; then
+        return 0
+    fi
+    if ! stop_app; then
+        log_error "existing FnCPN processes could not be stopped"
+        return 1
+    fi
+    prepare_directories
+
+    "$BINARY" server privileged-daemon \
+        --socket "$PRIVILEGED_SOCKET" \
+        --state-dir "$PRIVILEGED_STATE" \
+        --log-file "$PRIVILEGED_LOG" \
+        --allow-uid "$app_uid" &
+    printf '%s\n' "$!" > "$PRIVILEGED_PID_FILE"
+    if ! wait_for_health server-privileged "$PRIVILEGED_SOCKET"; then
+        log_error "privileged daemon failed its healthcheck"
+        stop_app || true
+        return 1
+    fi
+    chown "root:$APP_USER" "$PRIVILEGED_SOCKET"
+    chmod 0660 "$PRIVILEGED_SOCKET"
+    if ! su -s /bin/sh "$APP_USER" -c \
+        "exec '$BINARY' internal-healthcheck --role server-privileged --socket '$PRIVILEGED_SOCKET'"; then
+        log_error "application user cannot reach the privileged daemon"
+        stop_app || true
+        return 1
+    fi
+
+    su -s /bin/sh "$APP_USER" -c \
+        "exec '$BINARY' server daemon --socket '$APP_SOCKET' --state-dir '$CONTROL_STATE' --privileged-socket '$PRIVILEGED_SOCKET' --log-file '$SERVER_LOG'" &
+    server_launcher_pid="$!"
+    if ! wait_for_health server "$APP_SOCKET"; then
+        log_error "server daemon failed its healthcheck"
+        kill -TERM "$server_launcher_pid" 2>/dev/null || true
+        stop_app || true
+        return 1
+    fi
+    server_pid="$(find_process "$app_uid" daemon)" || {
+        log_error "server daemon process identity could not be established"
+        kill -TERM "$server_launcher_pid" 2>/dev/null || true
+        stop_app || true
+        return 1
+    }
+    printf '%s\n' "$server_pid" > "$SERVER_PID_FILE"
+}
+
+stop_process() {
+    local pid_file="$1"
+    local expected_uid="$2"
+    local expected_role="$3"
+    local pid find_status count=0
+    if process_matches "$pid_file" "$expected_uid" "$expected_role"; then
+        pid="$(read_pid "$pid_file")"
+    else
+        rm -f "$pid_file"
+        if pid="$(find_process "$expected_uid" "$expected_role")"; then
+            printf '%s\n' "$pid" > "$pid_file"
+        else
+            find_status="$?"
+            if [ "$find_status" -eq 1 ]; then
+                return 0
+            fi
+            log_error "multiple ${expected_role} processes matched; refusing to stop"
+            return 1
+        fi
+    fi
+    kill -TERM "$pid" 2>/dev/null || true
+    while process_matches "$pid_file" "$expected_uid" "$expected_role" &&
+        [ "$count" -lt 10 ]; do
+        sleep 1
+        count=$((count + 1))
+    done
+    if process_matches "$pid_file" "$expected_uid" "$expected_role"; then
+        kill -KILL "$pid" 2>/dev/null || true
+        count=0
+        while process_matches "$pid_file" "$expected_uid" "$expected_role" &&
+            [ "$count" -lt 50 ]; do
+            sleep 0.1
+            count=$((count + 1))
+        done
+    fi
+    if process_matches "$pid_file" "$expected_uid" "$expected_role"; then
+        log_error "${expected_role} process did not stop"
+        return 1
+    fi
+    rm -f "$pid_file"
+}
+
+stop_app() {
+    local app_uid
+    app_uid="$(id -u "$APP_USER")"
+    stop_process "$SERVER_PID_FILE" "$app_uid" daemon || return 1
+    stop_process "$PRIVILEGED_PID_FILE" 0 privileged-daemon || return 1
+    if ! "$BINARY" internal-cleanup --role server --state-dir "$PRIVILEGED_STATE"; then
+        log_error "server network cleanup failed; cleanup journal was retained"
+        return 1
+    fi
+    rm -f "$APP_SOCKET" "$PRIVILEGED_SOCKET"
+}
+
+case "${1:-}" in
+    start)
+        start_app
+        ;;
+    stop)
+        stop_app
+        ;;
+    status)
+        APP_UID="$(id -u "$APP_USER")"
+        if process_matches "$SERVER_PID_FILE" "$APP_UID" daemon &&
+            process_matches "$PRIVILEGED_PID_FILE" 0 privileged-daemon &&
+            wait_for_health server "$APP_SOCKET" &&
+            wait_for_health server-privileged "$PRIVILEGED_SOCKET"; then
+            exit 0
+        fi
+        exit 3
+        ;;
+    *)
+        log_error "unsupported command: ${1:-<empty>}"
+        exit 1
+        ;;
+esac

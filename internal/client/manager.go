@@ -1,0 +1,1899 @@
+package client
+
+import (
+	"bytes"
+	"context"
+	"crypto/hmac"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"log/slog"
+	"net"
+	"net/http"
+	"net/netip"
+	"net/url"
+	"os"
+	"slices"
+	"strconv"
+	"strings"
+	"sync"
+	"syscall"
+	"time"
+
+	"github.com/rectcircle/fn-connect-private-network/internal/ipc"
+	"github.com/rectcircle/fn-connect-private-network/internal/model"
+	"github.com/rectcircle/fn-connect-private-network/internal/notify"
+	"github.com/rectcircle/fn-connect-private-network/internal/privileged"
+	wgconfig "github.com/rectcircle/fn-connect-private-network/internal/wireguard"
+)
+
+type Discoverer interface {
+	Discover(context.Context, string) (Discovery, error)
+}
+
+type RemoteService interface {
+	Bootstrap(context.Context) (Bootstrap, error)
+	RegisterDevice(context.Context, string, string) (model.DeviceRegistration, error)
+	Configuration(context.Context, string) (model.ClientConfiguration, error)
+	LocalProbeConfiguration(
+		context.Context,
+		string,
+	) (model.LocalProbeConfiguration, error)
+}
+
+type ConfigurationWatchResult struct {
+	Changed       bool                      `json:"changed"`
+	Cursor        string                    `json:"cursor"`
+	Configuration model.ClientConfiguration `json:"configuration,omitempty"`
+}
+
+type ConfigurationWatcher interface {
+	WatchConfiguration(
+		context.Context,
+		string,
+		string,
+	) (ConfigurationWatchResult, error)
+}
+
+type RemoteFactory func(string, []Cookie, func([]Cookie) error) (RemoteService, error)
+
+type PrivilegedNetwork interface {
+	Apply(context.Context, model.ClientPlan) (model.ClientPrivilegedStatus, error)
+	Status(context.Context) (model.ClientPrivilegedStatus, error)
+	Remove(context.Context) error
+}
+
+type PrivilegedLifecycleWatcher interface {
+	WatchLifecycle(
+		context.Context,
+		uint64,
+	) (privileged.WatchResult[privileged.ClientStatus], error)
+}
+
+type Bridge interface {
+	Start(context.Context, string, CookieProvider) (string, error)
+	BindPeer(uint16) error
+	Stop()
+	Connected() bool
+	Events() <-chan error
+}
+
+type LocalProbe interface {
+	Reachable(
+		context.Context,
+		model.LocalProbeConfiguration,
+		string,
+		NetworkSnapshot,
+	) (bool, error)
+	Snapshot() (NetworkSnapshot, error)
+}
+
+type NetworkMonitor interface {
+	Events(context.Context) <-chan model.NetworkChange
+}
+
+type NetworkSnapshot struct {
+	InterfaceName  string
+	InterfaceIndex int
+	Prefixes       []netip.Prefix
+	Addresses      []netip.Addr
+	HasPublicIPv6  bool
+}
+
+func (s NetworkSnapshot) Fingerprint() string {
+	values := []string{s.InterfaceName, strconv.Itoa(s.InterfaceIndex)}
+	for _, prefix := range s.Prefixes {
+		values = append(values, prefix.String())
+	}
+	values = append(values, strconv.FormatBool(s.HasPublicIPv6))
+	slices.Sort(values[2:])
+	return strings.Join(values, "\n")
+}
+
+type ManagerOptions struct {
+	Store            *ConfigStore
+	Discoverer       Discoverer
+	Remote           RemoteFactory
+	Privileged       PrivilegedNetwork
+	Bridge           Bridge
+	Probe            LocalProbe
+	Monitor          NetworkMonitor
+	DeviceName       string
+	Logger           *slog.Logger
+	HandshakeTimeout time.Duration
+}
+
+type Manager struct {
+	mu               sync.RWMutex
+	operation        sync.Mutex
+	store            *ConfigStore
+	discoverer       Discoverer
+	remote           RemoteFactory
+	privileged       PrivilegedNetwork
+	bridge           Bridge
+	probe            LocalProbe
+	monitor          NetworkMonitor
+	deviceName       string
+	logger           *slog.Logger
+	handshakeTimeout time.Duration
+	directRetryAfter time.Time
+	localProbeConfig *model.LocalProbeConfiguration
+	status           model.ClientStatus
+	maintenanceError bool
+	statusChanges    *notify.Change
+	watchCancel      context.CancelFunc
+}
+
+func NewManager(options ManagerOptions) (*Manager, error) {
+	if options.Store == nil ||
+		options.Discoverer == nil ||
+		options.Remote == nil ||
+		options.Privileged == nil ||
+		options.Bridge == nil ||
+		options.Probe == nil {
+		return nil, errors.New("client manager dependencies are required")
+	}
+	deviceName := options.DeviceName
+	if deviceName == "" {
+		deviceName, _ = os.Hostname()
+	}
+	if deviceName == "" {
+		deviceName = "Mac"
+	}
+	managerLogger := options.Logger
+	if managerLogger == nil {
+		managerLogger = slog.Default()
+	}
+	handshakeTimeout := options.HandshakeTimeout
+	if handshakeTimeout <= 0 {
+		handshakeTimeout = 10 * time.Second
+	}
+	return &Manager{
+		store:            options.Store,
+		discoverer:       options.Discoverer,
+		remote:           options.Remote,
+		privileged:       options.Privileged,
+		bridge:           options.Bridge,
+		probe:            options.Probe,
+		monitor:          options.Monitor,
+		deviceName:       deviceName,
+		logger:           managerLogger,
+		handshakeTimeout: handshakeTimeout,
+		statusChanges:    notify.New(),
+		status: model.ClientStatus{
+			State:     model.ClientUnconfigured,
+			UpdatedAt: time.Now().UTC(),
+		},
+	}, nil
+}
+
+func (m *Manager) Start(ctx context.Context) error {
+	config, err := m.store.Load()
+	if err != nil {
+		return err
+	}
+	if config == nil {
+		m.setStatus(model.ClientUnconfigured, "", "", nil)
+		return nil
+	}
+	m.setStatus(model.ClientPaused, "", "", nil)
+	if config.AutoConnect {
+		_ = m.Connect(ctx)
+	} else {
+		m.convergeStoppedNetwork(ctx, *config, m.Status())
+	}
+	return nil
+}
+
+func (m *Manager) Authorize(
+	ctx context.Context,
+	fnID string,
+	cookies []Cookie,
+) error {
+	m.operation.Lock()
+	defer m.operation.Unlock()
+	fnID, err := normalizeFNID(fnID)
+	if err != nil {
+		return err
+	}
+	if len(cookies) == 0 {
+		return model.NewError(
+			model.ErrorAuthRequired,
+			"FN Connect cookies are required",
+			false,
+		)
+	}
+	m.cancelConfigurationWatch()
+	m.setStatus(model.ClientAuthorizing, "", "", nil)
+	existing, err := m.store.Load()
+	if err != nil {
+		return m.fail(err)
+	}
+	privateKey, err := m.store.EnsureWireGuardKey(fnID)
+	if err != nil {
+		return m.fail(err)
+	}
+	candidateCookies := append([]Cookie(nil), cookies...)
+	remote, err := m.remote(fnID, candidateCookies, func(updated []Cookie) error {
+		candidateCookies = append(candidateCookies[:0], updated...)
+		return nil
+	})
+	if err != nil {
+		return m.fail(err)
+	}
+	bootstrap, err := remote.Bootstrap(ctx)
+	if err != nil {
+		return m.fail(err)
+	}
+	if !bootstrap.Administrator {
+		return m.fail(model.NewError(
+			model.ErrorAuthRequired,
+			"administrator access is required to register this device",
+			false,
+		))
+	}
+	if existing != nil &&
+		existing.FNID == fnID &&
+		existing.DeviceID != "" &&
+		existing.PublicKey == privateKey.PublicKey().String() {
+		configuration, err := remote.Configuration(ctx, existing.DeviceID)
+		if err != nil && model.AsError(err).Code != model.ErrorDeviceRevoked {
+			return m.fail(err)
+		}
+		if err == nil {
+			configuration, _, err = selectClientConfiguration(
+				existing.Configuration,
+				configuration,
+			)
+			if err != nil {
+				return m.fail(err)
+			}
+			existing.Configuration = configuration
+			existing.AutoConnect = true
+			if err := m.store.SaveCookies(fnID, candidateCookies); err != nil {
+				return m.fail(err)
+			}
+			if err := m.store.Save(*existing); err != nil {
+				return m.fail(err)
+			}
+			return m.connectWithConfig(ctx, *existing)
+		}
+	}
+	publicKey := privateKey.PublicKey().String()
+	registration, err := remote.RegisterDevice(
+		ctx,
+		m.deviceName,
+		publicKey,
+	)
+	if err != nil {
+		return m.fail(err)
+	}
+	registration, err = wgconfig.NormalizeDeviceRegistration(registration, publicKey)
+	if err != nil {
+		return m.fail(model.WrapError(
+			model.ErrorFailedPrecondition,
+			"server returned an invalid device registration",
+			false,
+			err,
+		))
+	}
+	configuration, _, err := selectClientConfiguration(
+		model.ClientConfiguration{},
+		registration.Configuration,
+	)
+	if err != nil {
+		return m.fail(err)
+	}
+	config := LocalConfig{
+		Version:       localConfigVersion,
+		FNID:          fnID,
+		DeviceID:      registration.Device.ID,
+		PublicKey:     publicKey,
+		Configuration: configuration,
+		AutoConnect:   true,
+	}
+	if err := m.store.SaveCookies(fnID, candidateCookies); err != nil {
+		return m.fail(err)
+	}
+	if err := m.store.Save(config); err != nil {
+		return m.fail(err)
+	}
+	return m.connectWithConfig(ctx, config)
+}
+
+func (m *Manager) Connect(ctx context.Context) error {
+	m.operation.Lock()
+	defer m.operation.Unlock()
+	return m.connect(ctx)
+}
+
+func (m *Manager) connect(ctx context.Context) error {
+	m.cancelConfigurationWatch()
+	config, err := m.store.Load()
+	if err != nil {
+		return m.fail(err)
+	}
+	if config == nil || config.DeviceID == "" {
+		err := model.NewError(
+			model.ErrorAuthRequired,
+			"FN Connect authorization is required",
+			false,
+		)
+		return m.fail(err)
+	}
+	config.AutoConnect = true
+	if err := m.store.Save(*config); err != nil {
+		return m.fail(err)
+	}
+	return m.connectWithConfig(ctx, *config)
+}
+
+func (m *Manager) Disconnect(ctx context.Context) error {
+	m.operation.Lock()
+	defer m.operation.Unlock()
+	return m.disconnect(ctx)
+}
+
+func (m *Manager) disconnect(ctx context.Context) error {
+	config, err := m.store.Load()
+	if err != nil {
+		return m.fail(err)
+	}
+	if config != nil {
+		config.AutoConnect = false
+		if err := m.store.Save(*config); err != nil {
+			return m.fail(err)
+		}
+	}
+	m.cancelConfigurationWatch()
+	m.bridge.Stop()
+	m.localProbeConfig = nil
+	if err := m.privileged.Remove(ctx); err != nil {
+		typed := model.AsError(err)
+		m.logger.Error(
+			"disconnect network cleanup failed",
+			"code",
+			typed.Code,
+			"retryable",
+			typed.Retryable,
+			"error",
+			err,
+		)
+		state := model.ClientPaused
+		if config == nil {
+			state = model.ClientUnconfigured
+		}
+		m.setStatus(state, "", "", typed)
+		return err
+	}
+	if config != nil {
+		m.setStatus(model.ClientPaused, "", "", nil)
+	} else {
+		m.setStatus(model.ClientUnconfigured, "", "", nil)
+	}
+	return nil
+}
+
+func (m *Manager) convergeStoppedNetwork(
+	ctx context.Context,
+	config LocalConfig,
+	status model.ClientStatus,
+) {
+	network, statusErr := m.privileged.Status(ctx)
+	if statusErr != nil {
+		m.recordStoppedCleanupError(config, status, statusErr)
+		return
+	}
+	if !network.Active && !network.Degraded {
+		if status.State == model.ClientPaused && status.LastError != nil {
+			m.setStatus(
+				model.ClientPaused,
+				"",
+				"",
+				nil,
+			)
+		}
+		return
+	}
+	if err := m.privileged.Remove(ctx); err != nil {
+		m.recordStoppedCleanupError(config, status, err)
+		return
+	}
+	if status.State == model.ClientPaused {
+		m.setStatus(
+			model.ClientPaused,
+			"",
+			"",
+			nil,
+		)
+	}
+}
+
+func (m *Manager) recordStoppedCleanupError(
+	config LocalConfig,
+	status model.ClientStatus,
+	err error,
+) {
+	typed := model.AsError(err)
+	if status.LastError == nil ||
+		status.LastError.Code != typed.Code ||
+		status.LastError.Message != typed.Message {
+		m.logger.Error(
+			"converge stopped network cleanup",
+			"code",
+			typed.Code,
+			"retryable",
+			typed.Retryable,
+			"error",
+			err,
+		)
+	}
+	if status.State == model.ClientPaused {
+		m.setStatus(
+			model.ClientPaused,
+			"",
+			"",
+			typed,
+		)
+	}
+}
+
+func (m *Manager) Retry(ctx context.Context) error {
+	return m.Connect(ctx)
+}
+
+func (m *Manager) Logout(ctx context.Context) error {
+	m.operation.Lock()
+	defer m.operation.Unlock()
+	config, err := m.store.Load()
+	if err != nil {
+		return m.fail(err)
+	}
+	if err := m.disconnect(ctx); err != nil {
+		return err
+	}
+	if config != nil {
+		if err := m.store.ClearCookies(config.FNID); err != nil {
+			return m.fail(err)
+		}
+		m.setStatus(
+			model.ClientAuthRequired,
+			"",
+			"",
+			nil,
+		)
+	}
+	return nil
+}
+
+func (m *Manager) Forget(ctx context.Context) error {
+	m.operation.Lock()
+	defer m.operation.Unlock()
+	m.cancelConfigurationWatch()
+	config, err := m.store.Load()
+	if err != nil {
+		return m.fail(err)
+	}
+	m.bridge.Stop()
+	m.localProbeConfig = nil
+	if err := m.privileged.Remove(ctx); err != nil {
+		return m.fail(err)
+	}
+	if config != nil {
+		if err := m.store.Forget(config.FNID); err != nil {
+			return m.fail(err)
+		}
+	}
+	m.setStatus(model.ClientUnconfigured, "", "", nil)
+	return nil
+}
+
+func (m *Manager) Close(ctx context.Context) error {
+	m.operation.Lock()
+	defer m.operation.Unlock()
+	m.cancelConfigurationWatch()
+	m.bridge.Stop()
+	m.localProbeConfig = nil
+	return m.privileged.Remove(ctx)
+}
+
+func (m *Manager) Run(ctx context.Context) {
+	previous := m.networkFingerprint()
+	maintenanceTicker := time.NewTicker(60 * time.Second)
+	defer maintenanceTicker.Stop()
+	bridgeEvents := m.bridge.Events()
+	privilegedEvents := m.privilegedLifecycleEvents(ctx)
+	go m.watchConfiguration(ctx)
+	var networkEvents <-chan model.NetworkChange
+	if m.monitor != nil {
+		networkEvents = m.monitor.Events(ctx)
+	}
+	var debounce <-chan time.Time
+	var pendingNetworkChange model.NetworkChange
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case err := <-bridgeEvents:
+			if err == nil {
+				continue
+			}
+			m.operation.Lock()
+			m.bridge.Stop()
+			m.localProbeConfig = nil
+			if cleanupErr := m.privileged.Remove(ctx); cleanupErr != nil {
+				m.logger.Error(
+					"clean up network after relay failure",
+					"code",
+					model.AsError(cleanupErr).Code,
+					"error",
+					cleanupErr,
+				)
+			}
+			_ = m.fail(err)
+			m.operation.Unlock()
+		case change, ok := <-networkEvents:
+			if !ok {
+				networkEvents = nil
+				continue
+			}
+			pendingNetworkChange.PrimaryNetworkChanged =
+				pendingNetworkChange.PrimaryNetworkChanged ||
+					change.PrimaryNetworkChanged
+			debounce = time.After(time.Second)
+		case <-debounce:
+			debounce = nil
+			change := pendingNetworkChange
+			pendingNetworkChange = model.NetworkChange{}
+			m.handleNetworkChange(ctx, &previous, change.PrimaryNetworkChanged)
+		case <-maintenanceTicker.C:
+			m.maintainHealth(ctx)
+			m.handleNetworkChange(ctx, &previous, false)
+		case _, ok := <-privilegedEvents:
+			if !ok {
+				privilegedEvents = nil
+				continue
+			}
+			m.maintainPrivileged(ctx)
+		}
+	}
+}
+
+func (m *Manager) watchConfiguration(ctx context.Context) {
+	var cursor string
+	var retryDelay time.Duration
+	for ctx.Err() == nil {
+		statusGeneration := m.statusChanges.Current()
+		m.operation.Lock()
+		config, err := m.store.Load()
+		if err != nil {
+			m.recordMaintenanceError("load_configuration", err)
+			m.operation.Unlock()
+			if !m.waitConfigurationRetry(ctx, &retryDelay, err) {
+				return
+			}
+			continue
+		}
+		if !canAutoConnect(config, m.Status()) {
+			cursor = ""
+			m.operation.Unlock()
+			m.statusChanges.Wait(ctx, statusGeneration)
+			continue
+		}
+		cookies, err := m.store.LoadCookies(config.FNID)
+		if err != nil {
+			m.recordMaintenanceError("load_cookies", err)
+			m.operation.Unlock()
+			if !m.waitConfigurationRetry(ctx, &retryDelay, err) {
+				return
+			}
+			continue
+		}
+		if len(cookies) == 0 {
+			_ = m.fail(model.NewError(
+				model.ErrorAuthRequired, "FN Connect authorization is required", false,
+			))
+			m.operation.Unlock()
+			m.statusChanges.Wait(ctx, statusGeneration)
+			continue
+		}
+		var updatedCookies []Cookie
+		remote, err := m.remote(
+			config.FNID,
+			cookies,
+			func(updated []Cookie) error {
+				updatedCookies = slices.Clone(updated)
+				if updatedCookies == nil {
+					updatedCookies = []Cookie{}
+				}
+				return nil
+			},
+		)
+		if err != nil {
+			m.recordMaintenanceError("create_remote", err)
+			m.operation.Unlock()
+			if !m.waitConfigurationRetry(ctx, &retryDelay, err) {
+				return
+			}
+			continue
+		}
+		watcher, ok := remote.(ConfigurationWatcher)
+		if !ok {
+			m.operation.Unlock()
+			return
+		}
+		watchContext, cancel := context.WithCancel(ctx)
+		m.watchCancel = cancel
+		m.operation.Unlock()
+
+		result, err := watcher.WatchConfiguration(watchContext, config.DeviceID, cursor)
+
+		m.operation.Lock()
+		current, loadErr := m.store.Load()
+		if loadErr != nil {
+			m.cancelConfigurationWatch()
+			m.recordMaintenanceError("load_configuration", loadErr)
+			m.operation.Unlock()
+			if !m.waitConfigurationRetry(ctx, &retryDelay, loadErr) {
+				return
+			}
+			continue
+		}
+		obsolete := watchContext.Err() != nil ||
+			!canAutoConnect(current, m.Status()) ||
+			current.FNID != config.FNID || current.DeviceID != config.DeviceID
+		m.cancelConfigurationWatch()
+		if obsolete {
+			m.operation.Unlock()
+			cursor = ""
+			retryDelay = 0
+			continue
+		}
+		if updatedCookies != nil {
+			err = errors.Join(err, m.store.SaveCookies(config.FNID, updatedCookies))
+		}
+		if err == nil {
+			if result.Changed {
+				err = m.applyWatchedConfiguration(ctx, result.Configuration)
+			} else {
+				m.clearMaintenanceError()
+			}
+		}
+		if err != nil {
+			typed := model.AsError(err)
+			if typed.Code == model.ErrorAuthRequired || typed.Code == model.ErrorDeviceRevoked {
+				_ = m.fail(err)
+				m.bridge.Stop()
+				m.convergeStoppedNetwork(ctx, *current, m.Status())
+			} else {
+				m.recordMaintenanceError("watch_configuration", err)
+			}
+		}
+		m.operation.Unlock()
+		if err == nil {
+			cursor = result.Cursor
+			retryDelay = 0
+			continue
+		}
+		if !m.waitConfigurationRetry(ctx, &retryDelay, err) {
+			return
+		}
+	}
+}
+
+func (m *Manager) cancelConfigurationWatch() {
+	if m.watchCancel != nil {
+		m.watchCancel()
+		m.watchCancel = nil
+	}
+}
+
+func canAutoConnect(config *LocalConfig, status model.ClientStatus) bool {
+	return config != nil && config.DeviceID != "" && config.AutoConnect &&
+		status.State != model.ClientAuthRequired && status.State != model.ClientAuthorizing &&
+		(status.State != model.ClientError || status.LastError != nil && status.LastError.Retryable)
+}
+
+func (m *Manager) waitConfigurationRetry(
+	ctx context.Context,
+	retryDelay *time.Duration,
+	err error,
+) bool {
+	if *retryDelay == 0 {
+		*retryDelay = time.Second
+	} else if *retryDelay < 30*time.Second {
+		*retryDelay = min(*retryDelay*2, 30*time.Second)
+	}
+	m.logger.Warn(
+		"watch server configuration",
+		"retry_in",
+		*retryDelay,
+		"error",
+		err,
+	)
+	timer := time.NewTimer(*retryDelay)
+	select {
+	case <-ctx.Done():
+		timer.Stop()
+		return false
+	case <-timer.C:
+		return true
+	}
+}
+
+func (m *Manager) applyWatchedConfiguration(
+	ctx context.Context,
+	latest model.ClientConfiguration,
+) error {
+	config, err := m.store.Load()
+	if err != nil {
+		m.recordMaintenanceError("load_configuration", err)
+		return err
+	}
+	if !canAutoConnect(config, m.Status()) {
+		return nil
+	}
+	normalized, changed, err := selectClientConfiguration(
+		config.Configuration,
+		latest,
+	)
+	if err != nil {
+		m.recordMaintenanceError("select_configuration", err)
+		return err
+	}
+	if !changed {
+		m.clearMaintenanceError()
+		return nil
+	}
+	config.Configuration = normalized
+	if err := m.store.Save(*config); err != nil {
+		m.recordMaintenanceError("save_configuration", err)
+		return err
+	}
+	m.clearMaintenanceError()
+	_ = m.reconnect(ctx, *config)
+	return nil
+}
+
+// Caller holds operation; background recovery never changes the user's intent.
+func (m *Manager) reconnect(ctx context.Context, config LocalConfig) error {
+	if !canAutoConnect(&config, m.Status()) {
+		return nil
+	}
+	m.cancelConfigurationWatch()
+	reconnectContext, cancel := context.WithTimeout(ctx, 45*time.Second)
+	defer cancel()
+	return m.connectWithKnownConfiguration(reconnectContext, config)
+}
+
+func (m *Manager) privilegedLifecycleEvents(ctx context.Context) <-chan struct{} {
+	watcher, ok := m.privileged.(PrivilegedLifecycleWatcher)
+	if !ok {
+		return nil
+	}
+	events := make(chan struct{}, 1)
+	go func() {
+		defer close(events)
+		var generation uint64
+		retryDelay := time.Second
+		for ctx.Err() == nil {
+			result, err := watcher.WatchLifecycle(ctx, generation)
+			if err != nil {
+				select {
+				case events <- struct{}{}:
+				default:
+				}
+				timer := time.NewTimer(retryDelay)
+				select {
+				case <-ctx.Done():
+					timer.Stop()
+					return
+				case <-timer.C:
+				}
+				if retryDelay < 5*time.Second {
+					retryDelay = min(2*retryDelay, 5*time.Second)
+				}
+				generation = 0
+				continue
+			}
+			retryDelay = time.Second
+			generation = result.Generation
+			if result.Changed {
+				select {
+				case events <- struct{}{}:
+				default:
+				}
+			}
+		}
+	}()
+	return events
+}
+
+func (m *Manager) maintainPrivileged(ctx context.Context) {
+	m.operation.Lock()
+	defer m.operation.Unlock()
+	status := m.Status()
+	config, err := m.store.Load()
+	if err != nil {
+		m.recordMaintenanceError("load_configuration", err)
+		return
+	}
+	if !canAutoConnect(config, status) {
+		if config != nil {
+			m.convergeStoppedNetwork(ctx, *config, status)
+		}
+		return
+	}
+	if status.State == model.ClientLocal {
+		return
+	}
+	statusContext, cancel := context.WithTimeout(ctx, 5*time.Second)
+	network, err := m.privileged.Status(statusContext)
+	cancel()
+	if err != nil {
+		m.setStatus(
+			model.ClientReconnecting,
+			status.Path,
+			status.Interface,
+			model.PublicError(err),
+		)
+		return
+	}
+	if network.Active && !network.Degraded &&
+		(status.State == model.ClientDirect || status.State == model.ClientRelay) {
+		return
+	}
+	m.setStatus(
+		model.ClientReconnecting,
+		status.Path,
+		status.Interface,
+		model.NewError(
+			model.ErrorUnavailable,
+			"privileged network state was reset",
+			true,
+		),
+	)
+	_ = m.reconnect(ctx, *config)
+}
+
+func (m *Manager) maintainHealth(ctx context.Context) {
+	m.operation.Lock()
+	defer m.operation.Unlock()
+	config, err := m.store.Load()
+	if err != nil {
+		m.recordMaintenanceError("load_configuration", err)
+		return
+	}
+	if config == nil {
+		return
+	}
+	status := m.Status()
+	if !canAutoConnect(config, status) {
+		m.convergeStoppedNetwork(ctx, *config, status)
+		return
+	}
+	if status.State == model.ClientReconnecting ||
+		status.State == model.ClientPaused || status.State == model.ClientUnconfigured {
+		_ = m.reconnect(ctx, *config)
+		return
+	}
+
+	switch status.State {
+	case model.ClientDirect, model.ClientRelay:
+		networkStatus, statusErr := m.privileged.Status(ctx)
+		healthErr := clientNetworkHealthError(
+			status.State,
+			networkStatus,
+			statusErr,
+			m.bridge.Connected(),
+		)
+		if statusErr == nil {
+			m.mu.Lock()
+			changed := m.status.MTU != networkStatus.MTU ||
+				!timesEqual(m.status.LastHandshake, networkStatus.LastHandshake)
+			if changed {
+				m.status.LastHandshake = networkStatus.LastHandshake
+				m.status.MTU = networkStatus.MTU
+				m.status.UpdatedAt = time.Now().UTC()
+			}
+			m.mu.Unlock()
+			if changed {
+				m.statusChanges.Notify()
+			}
+		}
+		if healthErr != nil {
+			if status.State == model.ClientDirect {
+				m.directRetryAfter = time.Now().Add(5 * time.Minute)
+			}
+			m.setStatus(
+				model.ClientReconnecting,
+				status.Path,
+				status.Interface,
+				model.PublicError(healthErr),
+			)
+			_ = m.reconnect(ctx, *config)
+			return
+		}
+	case model.ClientLocal:
+		snapshot, snapshotErr := m.probe.Snapshot()
+		reachable := false
+		probeConfiguration := cloneLocalProbeConfiguration(m.localProbeConfig)
+		if probeConfiguration != nil && snapshotErr == nil {
+			reachable, _ = m.probe.Reachable(
+				ctx,
+				*probeConfiguration,
+				config.DeviceID,
+				snapshot,
+			)
+			if reachable {
+				m.localProbeConfig = probeConfiguration
+			}
+		}
+		if !reachable {
+			m.setStatus(
+				model.ClientReconnecting,
+				"local",
+				"",
+				nil,
+			)
+			_ = m.reconnect(ctx, *config)
+			return
+		}
+	}
+
+	if status.State == model.ClientRelay &&
+		!m.directRetryAfter.IsZero() &&
+		time.Now().After(m.directRetryAfter) {
+		m.directRetryAfter = time.Time{}
+		_ = m.reconnect(ctx, *config)
+	}
+}
+
+func (m *Manager) handleNetworkChange(
+	ctx context.Context,
+	previous *string,
+	primaryNetworkChanged bool,
+) {
+	current := m.networkFingerprint()
+	if !primaryNetworkChanged && current == *previous {
+		return
+	}
+	*previous = current
+	m.operation.Lock()
+	defer m.operation.Unlock()
+	m.directRetryAfter = time.Time{}
+	config, err := m.store.Load()
+	if err != nil {
+		m.recordMaintenanceError("load_configuration", err)
+		return
+	}
+	if !canAutoConnect(config, m.Status()) {
+		return
+	}
+	_ = m.reconnect(ctx, *config)
+}
+
+func (m *Manager) Status() model.ClientStatus {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return cloneStatus(m.status)
+}
+
+func (m *Manager) WatchStatus(
+	ctx context.Context,
+	after uint64,
+) StatusWatchResult {
+	generation, changed := m.statusChanges.Wait(ctx, after)
+	return StatusWatchResult{
+		Changed:    changed,
+		Generation: generation,
+		Status:     m.Status(),
+	}
+}
+
+func (m *Manager) Diagnose(ctx context.Context) model.ClientDiagnostics {
+	status := m.Status()
+	networkStatus, err := m.privileged.Status(ctx)
+	snapshot, snapshotErr := m.probe.Snapshot()
+	fingerprint := ""
+	if snapshotErr == nil {
+		fingerprint = snapshot.Fingerprint()
+	}
+	lanOverlap := false
+	config, configErr := m.store.Load()
+	if configErr == nil && config != nil && snapshotErr == nil {
+		lanOverlap = configurationHasLANOverlap(
+			config.Configuration,
+			snapshot.Prefixes,
+		)
+	}
+	mtu := status.MTU
+	if err == nil && networkStatus.MTU > 0 {
+		mtu = networkStatus.MTU
+	}
+	networkInterface := status.Interface
+	if err == nil && networkStatus.Interface != "" {
+		networkInterface = networkStatus.Interface
+	}
+	diagnostics := model.ClientDiagnostics{
+		Status:              status,
+		PrivilegedAvailable: err == nil,
+		PrivilegedActive:    err == nil && networkStatus.Active,
+		PrivilegedDegraded:  err == nil && networkStatus.Degraded,
+		NetworkInterface:    networkInterface,
+		NetworkFingerprint:  fingerprint,
+		MTU:                 mtu,
+		LANOverlap:          lanOverlap,
+		RoutePolicy:         "overlay-only-on-lan-overlap",
+		CheckedAt:           time.Now().UTC(),
+	}
+	if networkStatus.LastHandshake != nil {
+		diagnostics.HandshakeAge = time.Since(*networkStatus.LastHandshake).
+			Round(time.Second).
+			String()
+	}
+	if err != nil && diagnostics.Status.LastError == nil {
+		diagnostics.Status.LastError = model.PublicError(err)
+	} else if snapshotErr != nil && diagnostics.Status.LastError == nil {
+		diagnostics.Status.LastError = model.PublicError(snapshotErr)
+	} else if configErr != nil && diagnostics.Status.LastError == nil {
+		diagnostics.Status.LastError = model.PublicError(configErr)
+	}
+	return diagnostics
+}
+
+func (m *Manager) connectWithConfig(
+	ctx context.Context,
+	config LocalConfig,
+) error {
+	return m.connectWithOptionalConfiguration(ctx, config, nil)
+}
+
+func (m *Manager) connectWithKnownConfiguration(
+	ctx context.Context,
+	config LocalConfig,
+) error {
+	configuration := config.Configuration
+	return m.connectWithOptionalConfiguration(
+		ctx,
+		config,
+		&configuration,
+	)
+}
+
+func (m *Manager) connectWithOptionalConfiguration(
+	ctx context.Context,
+	config LocalConfig,
+	known *model.ClientConfiguration,
+) error {
+	m.setStatus(
+		model.ClientProbing,
+		"",
+		"",
+		nil,
+	)
+	m.bridge.Stop()
+	m.localProbeConfig = nil
+	if err := m.privileged.Remove(ctx); err != nil {
+		return m.fail(err)
+	}
+	cookies, err := m.store.LoadCookies(config.FNID)
+	if err != nil {
+		return m.fail(err)
+	}
+	if len(cookies) == 0 {
+		return m.fail(model.NewError(
+			model.ErrorAuthRequired,
+			"FN Connect authorization is required",
+			false,
+		))
+	}
+	remote, err := m.remote(
+		config.FNID,
+		cookies,
+		func(updated []Cookie) error {
+			return m.store.SaveCookies(config.FNID, updated)
+		},
+	)
+	if err != nil {
+		return m.fail(err)
+	}
+	latest := config.Configuration
+	if known == nil {
+		latest, err = remote.Configuration(ctx, config.DeviceID)
+		if err != nil {
+			return m.fail(err)
+		}
+	} else {
+		latest = *known
+	}
+	configuration, changed, err := selectClientConfiguration(
+		config.Configuration,
+		latest,
+	)
+	if err != nil {
+		return m.fail(err)
+	}
+	if changed {
+		config.Configuration = configuration
+		if err := m.store.Save(config); err != nil {
+			return m.fail(err)
+		}
+	}
+
+	networkSnapshot, err := m.probe.Snapshot()
+	if err != nil {
+		return m.fail(err)
+	}
+	probeConfiguration, probeErr := remote.LocalProbeConfiguration(
+		ctx,
+		config.DeviceID,
+	)
+	local := false
+	if probeErr == nil {
+		local, err = m.probe.Reachable(
+			ctx,
+			probeConfiguration,
+			config.DeviceID,
+			networkSnapshot,
+		)
+		if err != nil {
+			m.logger.Warn("probe local server", "error", err)
+		}
+	} else {
+		m.logger.Warn("get local probe configuration", "error", probeErr)
+	}
+	if local {
+		m.localProbeConfig = cloneLocalProbeConfiguration(&probeConfiguration)
+		m.setStatus(
+			model.ClientLocal,
+			"local",
+			"",
+			nil,
+		)
+		return nil
+	}
+	m.localProbeConfig = nil
+	discovery, err := m.discoverer.Discover(ctx, config.FNID)
+	if err != nil {
+		return m.fail(err)
+	}
+	allowedIPs := routedPrefixes(
+		config.Configuration,
+		networkSnapshot.Prefixes,
+	)
+	privateKey, err := m.store.EnsureWireGuardKey(config.FNID)
+	if err != nil {
+		return m.fail(err)
+	}
+	if !discovery.ForbidPublicIPv6 &&
+		networkSnapshot.HasPublicIPv6 &&
+		time.Now().After(m.directRetryAfter) {
+		directAttempted := false
+		for _, value := range discovery.PublicIPv6 {
+			address, parseErr := netip.ParseAddr(value)
+			if parseErr != nil || !wgconfig.IsPublicIPv6(address) {
+				continue
+			}
+			directAttempted = true
+			plan := clientPlan(
+				config.Configuration,
+				privateKey.String(),
+				"direct",
+				net.JoinHostPort(address.String(), strconv.Itoa(int(config.Configuration.ListenPort))),
+				allowedIPs,
+				1280,
+			)
+			started := time.Now()
+			status, applyErr := m.applyPlan(ctx, plan)
+			if applyErr != nil {
+				return m.fail(applyErr)
+			}
+			status, handshakeErr := m.waitForHandshake(ctx, status, started)
+			if handshakeErr != nil {
+				if cleanupErr := m.privileged.Remove(ctx); cleanupErr != nil {
+					return m.fail(errors.Join(handshakeErr, cleanupErr))
+				}
+				continue
+			}
+			m.bridge.Stop()
+			m.setNetworkStatus(
+				model.ClientDirect,
+				"ipv6",
+				status,
+			)
+			return nil
+		}
+		if directAttempted {
+			m.directRetryAfter = time.Now().Add(5 * time.Minute)
+		}
+	}
+
+	relayURL, err := relayURLFromDiscovery(config.FNID, discovery)
+	if err != nil {
+		return m.fail(err)
+	}
+	endpoint, err := m.bridge.Start(ctx, relayURL, func() ([]Cookie, error) {
+		return m.store.LoadCookies(config.FNID)
+	})
+	if err != nil {
+		return m.fail(model.NormalizeError(
+			err,
+			model.ErrorUnavailable,
+			"FN Connect relay is unavailable",
+			true,
+		))
+	}
+	plan := clientPlan(
+		config.Configuration,
+		privateKey.String(),
+		"relay",
+		endpoint,
+		allowedIPs,
+		1280,
+	)
+	started := time.Now()
+	status, err := m.applyPlan(ctx, plan)
+	if err != nil {
+		m.bridge.Stop()
+		return m.fail(err)
+	}
+	if err := m.bridge.BindPeer(status.ListenPort); err != nil {
+		m.bridge.Stop()
+		cleanupErr := m.privileged.Remove(ctx)
+		return m.fail(errors.Join(err, cleanupErr))
+	}
+	status, err = m.waitForHandshake(ctx, status, started)
+	if err != nil {
+		m.bridge.Stop()
+		cleanupErr := m.privileged.Remove(ctx)
+		return m.fail(errors.Join(err, cleanupErr))
+	}
+	m.setNetworkStatus(
+		model.ClientRelay,
+		"fn-connect",
+		status,
+	)
+	return nil
+}
+
+func selectClientConfiguration(
+	current model.ClientConfiguration,
+	received model.ClientConfiguration,
+) (model.ClientConfiguration, bool, error) {
+	received, err := wgconfig.NormalizeClientConfiguration(received)
+	if err != nil {
+		return model.ClientConfiguration{}, false, err
+	}
+	if current.DeviceID == "" {
+		return received, true, nil
+	}
+	current, err = wgconfig.NormalizeClientConfiguration(current)
+	if err != nil {
+		return model.ClientConfiguration{}, false, err
+	}
+	if clientConfigurationsEqual(current, received) {
+		return current, false, nil
+	}
+	return received, true, nil
+}
+
+func clientConfigurationsEqual(
+	first model.ClientConfiguration,
+	second model.ClientConfiguration,
+) bool {
+	return first.DeviceID == second.DeviceID &&
+		first.ServerPublicKey == second.ServerPublicKey &&
+		first.ServerAddress == second.ServerAddress &&
+		first.ClientAddress == second.ClientAddress &&
+		first.ListenPort == second.ListenPort &&
+		slices.Equal(first.AllowedIPs, second.AllowedIPs)
+}
+
+func clientPlan(
+	config model.ClientConfiguration,
+	privateKey string,
+	mode string,
+	endpoint string,
+	allowedIPs []string,
+	mtu int,
+) model.ClientPlan {
+	return model.ClientPlan{
+		Mode:            mode,
+		PrivateKey:      privateKey,
+		ClientAddress:   config.ClientAddress,
+		ServerPublicKey: config.ServerPublicKey,
+		Endpoint:        endpoint,
+		AllowedIPs:      slices.Clone(allowedIPs),
+		MTU:             mtu,
+	}
+}
+
+func (m *Manager) applyPlan(
+	ctx context.Context,
+	plan model.ClientPlan,
+) (model.ClientPrivilegedStatus, error) {
+	return m.privileged.Apply(ctx, plan)
+}
+
+func (m *Manager) waitForHandshake(
+	ctx context.Context,
+	status model.ClientPrivilegedStatus,
+	started time.Time,
+) (model.ClientPrivilegedStatus, error) {
+	deadline := time.NewTimer(m.handshakeTimeout)
+	ticker := time.NewTicker(250 * time.Millisecond)
+	defer deadline.Stop()
+	defer ticker.Stop()
+	for {
+		if status.LastHandshake != nil && !status.LastHandshake.Before(started) {
+			return status, nil
+		}
+		select {
+		case <-ctx.Done():
+			return status, model.AsError(ctx.Err())
+		case <-deadline.C:
+			return status, model.NewError(
+				model.ErrorTimeout,
+				"WireGuard handshake timed out",
+				true,
+			)
+		case <-ticker.C:
+			next, err := m.privileged.Status(ctx)
+			if err != nil {
+				return status, err
+			}
+			status = next
+		}
+	}
+}
+
+func (m *Manager) setNetworkStatus(
+	state model.ClientState,
+	path string,
+	network model.ClientPrivilegedStatus,
+) {
+	m.mu.Lock()
+	m.status = model.ClientStatus{
+		State:         state,
+		Path:          path,
+		Interface:     network.Interface,
+		MTU:           network.MTU,
+		LastHandshake: network.LastHandshake,
+		UpdatedAt:     time.Now().UTC(),
+	}
+	m.maintenanceError = false
+	m.mu.Unlock()
+	m.statusChanges.Notify()
+}
+
+func clientNetworkHealthError(
+	state model.ClientState,
+	network model.ClientPrivilegedStatus,
+	statusErr error,
+	bridgeConnected bool,
+) error {
+	if statusErr != nil {
+		return statusErr
+	}
+	if !network.Active || network.Degraded {
+		return model.NewError(
+			model.ErrorUnavailable,
+			"client privileged network is inactive or degraded",
+			true,
+		)
+	}
+	if network.LastHandshake == nil {
+		return model.NewError(
+			model.ErrorUnavailable,
+			"WireGuard handshake is unavailable",
+			true,
+		)
+	}
+	if time.Since(*network.LastHandshake) > 180*time.Second {
+		return model.NewError(
+			model.ErrorTimeout,
+			"WireGuard handshake is stale",
+			true,
+		)
+	}
+	if state == model.ClientRelay && !bridgeConnected {
+		return model.NewError(
+			model.ErrorUnavailable,
+			"FN Connect relay is disconnected",
+			true,
+		)
+	}
+	return nil
+}
+
+func cloneLocalProbeConfiguration(
+	configuration *model.LocalProbeConfiguration,
+) *model.LocalProbeConfiguration {
+	if configuration == nil {
+		return nil
+	}
+	cloned := *configuration
+	cloned.Endpoints = slices.Clone(configuration.Endpoints)
+	return &cloned
+}
+
+func configurationHasLANOverlap(
+	config model.ClientConfiguration,
+	localPrefixes []netip.Prefix,
+) bool {
+	server, err := netip.ParsePrefix(config.ServerAddress)
+	if err != nil {
+		return false
+	}
+	for _, value := range config.AllowedIPs {
+		prefix, err := netip.ParsePrefix(value)
+		if err != nil {
+			continue
+		}
+		prefix = prefix.Masked()
+		if prefix.Contains(server.Addr()) {
+			continue
+		}
+		if overlapsAny(prefix, localPrefixes) {
+			return true
+		}
+	}
+	return false
+}
+
+func routedPrefixes(
+	config model.ClientConfiguration,
+	localPrefixes []netip.Prefix,
+) []string {
+	server, _ := netip.ParsePrefix(config.ServerAddress)
+	result := []string{netip.PrefixFrom(server.Addr(), 32).String()}
+	for _, value := range config.AllowedIPs {
+		prefix, err := netip.ParsePrefix(value)
+		if err != nil {
+			continue
+		}
+		prefix = prefix.Masked()
+		if prefix.Contains(server.Addr()) {
+			continue
+		}
+		if !overlapsAny(prefix, localPrefixes) {
+			result = appendUnique(result, prefix.String())
+		}
+	}
+	return result
+}
+
+func overlapsAny(prefix netip.Prefix, candidates []netip.Prefix) bool {
+	for _, candidate := range candidates {
+		if prefix.Addr().BitLen() == candidate.Addr().BitLen() &&
+			(prefix.Contains(candidate.Addr()) || candidate.Contains(prefix.Addr())) {
+			return true
+		}
+	}
+	return false
+}
+
+func appendUnique(values []string, value string) []string {
+	if slices.Contains(values, value) {
+		return values
+	}
+	return append(values, value)
+}
+
+func relayURLFromDiscovery(fnID string, discovery Discovery) (string, error) {
+	host := ""
+	if len(discovery.FN) > 0 {
+		host = discovery.FN[0]
+	}
+	if host == "" {
+		normalized, err := normalizeFNID(fnID)
+		if err != nil {
+			return "", err
+		}
+		host = normalized + ".fnos.net"
+	}
+	parsed, err := url.Parse("wss://" + host)
+	if err != nil || parsed.Host == "" {
+		return "", errors.New("invalid FN Connect relay endpoint")
+	}
+	parsed.Path = gatewayApplicationPath + "/relay/v1/wireguard"
+	return parsed.String(), nil
+}
+
+func (m *Manager) fail(err error) error {
+	typed := model.AsError(err)
+	m.logger.Error(
+		"client operation failed",
+		"code",
+		typed.Code,
+		"retryable",
+		typed.Retryable,
+		"error",
+		err,
+	)
+	state := model.ClientError
+	switch {
+	case typed.Code == model.ErrorAuthRequired ||
+		typed.Code == model.ErrorDeviceRevoked:
+		m.cancelConfigurationWatch()
+		state = model.ClientAuthRequired
+	case typed.Retryable:
+		state = model.ClientReconnecting
+	case typed.Code == model.ErrorPermissionDenied:
+		state = model.ClientPaused
+	}
+	m.setStatus(state, "", "", typed)
+	return err
+}
+
+func (m *Manager) setStatus(
+	state model.ClientState,
+	path string,
+	interfaceName string,
+	lastError *model.Error,
+) {
+	m.mu.Lock()
+	m.status = model.ClientStatus{
+		State:     state,
+		Path:      path,
+		Interface: interfaceName,
+		LastError: lastError,
+		UpdatedAt: time.Now().UTC(),
+	}
+	m.maintenanceError = false
+	m.mu.Unlock()
+	m.statusChanges.Notify()
+}
+
+func (m *Manager) recordMaintenanceError(phase string, err error) {
+	public := model.PublicError(err)
+	m.mu.Lock()
+	previous := m.status.LastError
+	changed := previous == nil ||
+		previous.Code != public.Code ||
+		previous.Message != public.Message
+	m.status.LastError = public
+	m.status.UpdatedAt = time.Now().UTC()
+	m.maintenanceError = true
+	m.mu.Unlock()
+	if changed {
+		m.statusChanges.Notify()
+		m.logger.Error(
+			"synchronize client configuration",
+			"phase",
+			phase,
+			"code",
+			public.Code,
+			"retryable",
+			public.Retryable,
+			"error",
+			err,
+		)
+	}
+}
+
+func (m *Manager) clearMaintenanceError() {
+	m.mu.Lock()
+	if !m.maintenanceError {
+		m.mu.Unlock()
+		return
+	}
+	m.status.LastError = nil
+	m.status.UpdatedAt = time.Now().UTC()
+	m.maintenanceError = false
+	m.mu.Unlock()
+	m.statusChanges.Notify()
+}
+
+func timesEqual(first, second *time.Time) bool {
+	if first == nil || second == nil {
+		return first == second
+	}
+	return first.Equal(*second)
+}
+
+func (m *Manager) networkFingerprint() string {
+	snapshot, err := m.probe.Snapshot()
+	if err != nil {
+		return ""
+	}
+	return snapshot.Fingerprint()
+}
+
+type IPCPrivilegedNetwork struct {
+	Client ipc.Client
+}
+
+func (n IPCPrivilegedNetwork) Apply(
+	ctx context.Context,
+	plan model.ClientPlan,
+) (model.ClientPrivilegedStatus, error) {
+	var status model.ClientPrivilegedStatus
+	err := n.Client.Call(ctx, privileged.MethodApply, plan, &status)
+	return status, err
+}
+
+func (n IPCPrivilegedNetwork) Status(
+	ctx context.Context,
+) (model.ClientPrivilegedStatus, error) {
+	var response privileged.ClientStatus
+	if err := n.Client.Call(ctx, privileged.MethodStatus, nil, &response); err != nil {
+		return model.ClientPrivilegedStatus{}, err
+	}
+	if !response.Available {
+		return model.ClientPrivilegedStatus{}, model.NewError(
+			model.ErrorUnavailable,
+			"client privileged network engine is unavailable",
+			true,
+		)
+	}
+	return response.Network, nil
+}
+
+func (n IPCPrivilegedNetwork) Remove(ctx context.Context) error {
+	return n.Client.Call(ctx, privileged.MethodRemove, nil, nil)
+}
+
+func (n IPCPrivilegedNetwork) WatchLifecycle(
+	ctx context.Context,
+	after uint64,
+) (privileged.WatchResult[privileged.ClientStatus], error) {
+	client := n.Client
+	client.Timeout = 5*time.Minute + 10*time.Second
+	var result privileged.WatchResult[privileged.ClientStatus]
+	err := client.Call(
+		ctx,
+		privileged.MethodWatchLifecycle,
+		privileged.WatchRequest{After: after},
+		&result,
+	)
+	return result, err
+}
+
+type SystemLocalProbe struct {
+	HTTPClient *http.Client
+}
+
+func (p SystemLocalProbe) Reachable(
+	ctx context.Context,
+	configuration model.LocalProbeConfiguration,
+	deviceID string,
+	snapshot NetworkSnapshot,
+) (bool, error) {
+	key, err := base64.RawURLEncoding.DecodeString(configuration.Key)
+	if err != nil || len(key) != sha256.Size {
+		return false, errors.New("invalid local probe key")
+	}
+	if deviceID == "" {
+		return false, errors.New("local probe device ID is required")
+	}
+	nonce := make([]byte, sha256.Size)
+	if _, err := rand.Read(nonce); err != nil {
+		return false, fmt.Errorf("generate local probe nonce: %w", err)
+	}
+	input := model.LocalProbeRequest{
+		DeviceID: deviceID,
+		Nonce:    base64.RawURLEncoding.EncodeToString(nonce),
+	}
+	body, err := json.Marshal(input)
+	if err != nil {
+		return false, err
+	}
+	expected := hmac.New(sha256.New, key)
+	_, _ = expected.Write([]byte(model.LocalProbeDomain))
+	_, _ = expected.Write(nonce)
+	expectedProof := expected.Sum(nil)
+
+	for _, endpoint := range configuration.Endpoints {
+		host, port, splitErr := net.SplitHostPort(endpoint)
+		if splitErr != nil {
+			continue
+		}
+		address, parseErr := netip.ParseAddr(host)
+		if parseErr != nil || !address.Is4() || !address.IsPrivate() {
+			continue
+		}
+		if value, parseErr := strconv.ParseUint(port, 10, 16); parseErr != nil || value == 0 {
+			continue
+		}
+		client := p.HTTPClient
+		var transport *http.Transport
+		if client == nil {
+			transport = localProbeTransport(snapshot.InterfaceIndex)
+			client = &http.Client{
+				Timeout:   1500 * time.Millisecond,
+				Transport: transport,
+				CheckRedirect: func(
+					*http.Request,
+					[]*http.Request,
+				) error {
+					return http.ErrUseLastResponse
+				},
+			}
+		}
+		target := url.URL{
+			Scheme: "http",
+			Host:   endpoint,
+			Path:   "/probe",
+		}
+		request, err := http.NewRequestWithContext(
+			ctx,
+			http.MethodPost,
+			target.String(),
+			bytes.NewReader(body),
+		)
+		if err != nil {
+			continue
+		}
+		request.Header.Set("Content-Type", "application/json")
+		response, err := client.Do(request)
+		if transport != nil {
+			transport.CloseIdleConnections()
+		}
+		if err != nil {
+			continue
+		}
+		data, readErr := io.ReadAll(io.LimitReader(
+			response.Body,
+			maxRemoteResponseSize+1,
+		))
+		response.Body.Close()
+		if readErr != nil || len(data) > maxRemoteResponseSize {
+			continue
+		}
+		var probe model.LocalProbeResponse
+		decodeErr := model.DecodeStrict(data, &probe)
+		proof, proofErr := base64.RawURLEncoding.DecodeString(probe.Proof)
+		if response.StatusCode == http.StatusOK &&
+			decodeErr == nil &&
+			proofErr == nil &&
+			hmac.Equal(proof, expectedProof) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func localProbeTransport(interfaceIndex int) *http.Transport {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.Proxy = nil
+	transport.DialContext = func(
+		ctx context.Context,
+		network string,
+		address string,
+	) (net.Conn, error) {
+		dialer := net.Dialer{
+			Timeout: 1500 * time.Millisecond,
+			Control: func(_, _ string, raw syscall.RawConn) error {
+				var bindErr error
+				if err := raw.Control(func(fd uintptr) {
+					bindErr = bindSocketToInterface(fd, interfaceIndex)
+				}); err != nil {
+					return err
+				}
+				return bindErr
+			},
+		}
+		return dialer.DialContext(ctx, network, address)
+	}
+	return transport
+}
+
+func (SystemLocalProbe) Snapshot() (NetworkSnapshot, error) {
+	defaultInterface, err := defaultPhysicalInterface()
+	if err != nil {
+		return NetworkSnapshot{}, err
+	}
+	interfaces, err := net.Interfaces()
+	if err != nil {
+		return NetworkSnapshot{}, err
+	}
+	snapshot := NetworkSnapshot{}
+	for _, networkInterface := range interfaces {
+		if defaultInterface != "" && networkInterface.Name != defaultInterface {
+			continue
+		}
+		if networkInterface.Flags&net.FlagUp == 0 ||
+			networkInterface.Flags&net.FlagLoopback != 0 ||
+			!usablePhysicalInterface(
+				networkInterface.Name,
+				defaultInterface,
+			) {
+			continue
+		}
+		snapshot.InterfaceName = networkInterface.Name
+		snapshot.InterfaceIndex = networkInterface.Index
+		values, err := networkInterface.Addrs()
+		if err != nil {
+			continue
+		}
+		for _, value := range values {
+			prefix, err := netip.ParsePrefix(value.String())
+			if err != nil {
+				continue
+			}
+			if prefix.Addr().Is4() {
+				snapshot.Prefixes = append(snapshot.Prefixes, prefix.Masked())
+				snapshot.Addresses = append(snapshot.Addresses, prefix.Addr())
+			}
+			if isPublicIPv6Address(prefix.Addr()) {
+				snapshot.HasPublicIPv6 = true
+			}
+		}
+		break
+	}
+	return snapshot, nil
+}
+
+func defaultPhysicalInterface() (string, error) {
+	connection, err := net.Dial("udp4", "1.1.1.1:53")
+	if err != nil {
+		return "", nil
+	}
+	defer connection.Close()
+	local := connection.LocalAddr().(*net.UDPAddr).IP
+	interfaces, err := net.Interfaces()
+	if err != nil {
+		return "", err
+	}
+	for _, networkInterface := range interfaces {
+		addresses, _ := networkInterface.Addrs()
+		for _, value := range addresses {
+			prefix, parseErr := netip.ParsePrefix(value.String())
+			if parseErr == nil && prefix.Addr().String() == local.String() {
+				return networkInterface.Name, nil
+			}
+		}
+	}
+	return "", errors.New("default physical interface was not found")
+}
+
+func usablePhysicalInterface(name, defaultInterface string) bool {
+	if name == defaultInterface && strings.HasPrefix(name, "bridge") {
+		return true
+	}
+	return !isVirtualInterface(name)
+}
+
+func isVirtualInterface(name string) bool {
+	for _, prefix := range []string{
+		"utun", "lo", "bridge", "awdl", "llw", "gif", "stf", "vbox", "vmnet",
+	} {
+		if strings.HasPrefix(name, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+func isPublicIPv6Address(address netip.Addr) bool {
+	return address.Is6() &&
+		address.IsGlobalUnicast() &&
+		!address.IsPrivate() &&
+		!address.IsLinkLocalUnicast()
+}

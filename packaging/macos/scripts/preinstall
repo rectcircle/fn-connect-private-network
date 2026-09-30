@@ -1,0 +1,30 @@
+#!/bin/sh
+
+set -eu
+
+TOOL="/Library/PrivilegedHelperTools/com.rectcircle.fncpn/fncpn"
+AGENT_LABEL="com.rectcircle.fncpn.client"
+
+if [ -x "$TOOL" ]; then
+  /bin/ps -axo uid=,pid=,command= | while read -r uid pid command; do
+    case "$command" in
+      "$TOOL client daemon"*)
+        /bin/launchctl bootout "gui/${uid}/${AGENT_LABEL}" 2>/dev/null || true
+        /bin/kill -TERM "$pid" 2>/dev/null || true
+        ;;
+    esac
+  done
+fi
+
+/bin/launchctl bootout system/com.rectcircle.fncpn.privileged 2>/dev/null || true
+count=0
+while [ -f /var/db/fncpn/state.json ] && [ "$count" -lt 50 ]; do
+  /bin/sleep 0.1
+  count=$((count + 1))
+done
+if [ -f /var/db/fncpn/state.json ]; then
+  echo "FnCPN network cleanup did not complete; refusing to replace the installation" >&2
+  exit 1
+fi
+
+exit 0

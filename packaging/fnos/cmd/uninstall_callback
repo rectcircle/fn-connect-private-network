@@ -1,0 +1,6 @@
+#!/bin/bash
+
+set -eu
+
+# User-owned settings and the root server key are retained by fnOS package storage.
+exit 0

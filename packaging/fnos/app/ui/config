@@ -1,0 +1,17 @@
+{
+  ".url": {
+    "fncpn.main": {
+      "title": "FN Connect Private Network",
+      "icon": "images/icon_{0}.png",
+      "type": "iframe",
+      "protocol": "",
+      "gatewayPrefix": "/app/fncpn",
+      "gatewaySocket": "run/app.sock",
+      "url": "/app/fncpn",
+      "allUsers": false,
+      "control": {
+        "accessPerm": "readonly"
+      }
+    }
+  }
+}

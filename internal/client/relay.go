@@ -1,0 +1,390 @@
+package client
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"net"
+	"net/http"
+	"net/url"
+	"sync"
+	"sync/atomic"
+	"time"
+
+	"github.com/coder/websocket"
+	"github.com/rectcircle/fn-connect-private-network/internal/model"
+)
+
+const (
+	defaultRelayListenAddress = "127.0.0.1:0"
+	maxRelayDatagramSize      = 65535
+	maxRelayQueue             = 256
+)
+
+type CookieProvider func() ([]Cookie, error)
+
+type relayPacket struct {
+	payload    []byte
+	receivedAt time.Time
+}
+
+type RelayBridge struct {
+	ListenAddress string
+	mu            sync.Mutex
+	cancel        context.CancelFunc
+	udp           *net.UDPConn
+	done          chan struct{}
+	relayURL      string
+	cookies       CookieProvider
+	expectedPeer  atomic.Uint32
+	events        chan error
+	connected     atomic.Bool
+}
+
+func (b *RelayBridge) Start(
+	requestContext context.Context,
+	relayURL string,
+	cookies CookieProvider,
+) (string, error) {
+	parsed, err := url.Parse(relayURL)
+	if err != nil ||
+		(parsed.Scheme != "ws" && parsed.Scheme != "wss") ||
+		parsed.Host == "" {
+		return "", errors.New("invalid relay URL")
+	}
+	if cookies == nil {
+		return "", errors.New("relay cookie provider is required")
+	}
+	b.mu.Lock()
+	if b.cancel != nil &&
+		b.relayURL == relayURL &&
+		b.connected.Load() {
+		endpoint := b.udp.LocalAddr().String()
+		b.mu.Unlock()
+		return endpoint, nil
+	}
+	b.stopLocked()
+	b.mu.Unlock()
+
+	connection, err := dialRelay(requestContext, parsed, cookies)
+	if err != nil {
+		return "", fmt.Errorf("connect relay: %w", err)
+	}
+	listenAddress := valueOrDefault(b.ListenAddress, defaultRelayListenAddress)
+	udpAddress, err := net.ResolveUDPAddr("udp", listenAddress)
+	if err != nil {
+		connection.CloseNow()
+		return "", fmt.Errorf("resolve local relay address: %w", err)
+	}
+	udp, err := net.ListenUDP("udp", udpAddress)
+	if err != nil {
+		connection.CloseNow()
+		return "", fmt.Errorf("listen for local WireGuard: %w", err)
+	}
+
+	b.mu.Lock()
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	b.cancel = cancel
+	b.udp = udp
+	b.done = done
+	b.relayURL = relayURL
+	b.cookies = cookies
+	b.expectedPeer.Store(0)
+	if b.events == nil {
+		b.events = make(chan error, 1)
+	}
+	events := b.events
+	b.connected.Store(true)
+	b.mu.Unlock()
+
+	go b.run(ctx, done, udp, connection, parsed, cookies, events)
+	return udp.LocalAddr().String(), nil
+}
+
+func (b *RelayBridge) BindPeer(port uint16) error {
+	if port == 0 {
+		return errors.New("WireGuard listen port is required")
+	}
+	b.expectedPeer.Store(uint32(port))
+	return nil
+}
+
+func (b *RelayBridge) Events() <-chan error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.events == nil {
+		b.events = make(chan error, 1)
+	}
+	return b.events
+}
+
+func (b *RelayBridge) Stop() {
+	b.mu.Lock()
+	b.stopLocked()
+	b.mu.Unlock()
+}
+
+func (b *RelayBridge) Connected() bool {
+	return b.connected.Load()
+}
+
+func (b *RelayBridge) stopLocked() {
+	if b.cancel == nil {
+		return
+	}
+	cancel := b.cancel
+	udp := b.udp
+	done := b.done
+	b.cancel = nil
+	b.udp = nil
+	b.done = nil
+	b.relayURL = ""
+	b.cookies = nil
+	b.expectedPeer.Store(0)
+	b.connected.Store(false)
+	cancel()
+	_ = udp.Close()
+	<-done
+}
+
+func (b *RelayBridge) run(
+	ctx context.Context,
+	done chan struct{},
+	udp *net.UDPConn,
+	initial *websocket.Conn,
+	relayURL *url.URL,
+	cookies CookieProvider,
+	events chan<- error,
+) {
+	defer close(done)
+	defer b.connected.Store(false)
+	packets := make(chan relayPacket, maxRelayQueue)
+	go readWireGuardDatagrams(ctx, udp, packets, &b.expectedPeer)
+
+	connection := initial
+	backoff := time.Second
+	for ctx.Err() == nil {
+		b.connected.Store(true)
+		_ = runRelaySession(ctx, connection, udp, packets, &b.expectedPeer)
+		connection.CloseNow()
+		b.connected.Store(false)
+		if ctx.Err() != nil {
+			return
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(backoff + retryJitter(backoff)):
+		}
+		dialContext, cancel := context.WithTimeout(ctx, 15*time.Second)
+		next, dialErr := dialRelay(dialContext, relayURL, cookies)
+		cancel()
+		if dialErr != nil {
+			if model.AsError(dialErr).Code == model.ErrorAuthRequired {
+				publishRelayEvent(events, dialErr)
+				return
+			}
+			if backoff < 30*time.Second {
+				backoff *= 2
+				if backoff > 30*time.Second {
+					backoff = 30 * time.Second
+				}
+			}
+			continue
+		}
+		connection = next
+		backoff = time.Second
+	}
+}
+
+func readWireGuardDatagrams(
+	ctx context.Context,
+	udp *net.UDPConn,
+	packets chan<- relayPacket,
+	expectedPeer *atomic.Uint32,
+) {
+	buffer := make([]byte, maxRelayDatagramSize)
+	for {
+		if err := udp.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
+			return
+		}
+		size, address, err := udp.ReadFromUDP(buffer)
+		if err != nil {
+			if timeout, ok := err.(net.Error); ok && timeout.Timeout() {
+				if ctx.Err() != nil {
+					return
+				}
+				continue
+			}
+			return
+		}
+		if !address.IP.IsLoopback() ||
+			uint32(address.Port) != expectedPeer.Load() {
+			continue
+		}
+		packet := relayPacket{
+			payload:    append([]byte(nil), buffer[:size]...),
+			receivedAt: time.Now(),
+		}
+		select {
+		case packets <- packet:
+		default:
+		}
+	}
+}
+
+func runRelaySession(
+	parent context.Context,
+	connection *websocket.Conn,
+	udp *net.UDPConn,
+	packets <-chan relayPacket,
+	expectedPeer *atomic.Uint32,
+) error {
+	connection.SetReadLimit(maxRelayDatagramSize)
+	ctx, cancel := context.WithCancel(parent)
+	defer cancel()
+	errs := make(chan error, 2)
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				errs <- ctx.Err()
+				return
+			case packet := <-packets:
+				if time.Since(packet.receivedAt) > 5*time.Second {
+					continue
+				}
+				writeContext, writeCancel := context.WithTimeout(ctx, 10*time.Second)
+				err := connection.Write(
+					writeContext,
+					websocket.MessageBinary,
+					packet.payload,
+				)
+				writeCancel()
+				if err != nil {
+					errs <- fmt.Errorf("write relay websocket: %w", err)
+					return
+				}
+			}
+		}
+	}()
+	go func() {
+		for {
+			messageType, payload, err := connection.Read(ctx)
+			if err != nil {
+				errs <- fmt.Errorf("read relay websocket: %w", err)
+				return
+			}
+			if messageType != websocket.MessageBinary {
+				errs <- errors.New("relay returned a non-binary message")
+				return
+			}
+			port := expectedPeer.Load()
+			if port == 0 {
+				continue
+			}
+			destination := &net.UDPAddr{
+				IP:   net.IPv4(127, 0, 0, 1),
+				Port: int(port),
+			}
+			if _, err := udp.WriteToUDP(payload, destination); err != nil {
+				errs <- fmt.Errorf("write WireGuard UDP datagram: %w", err)
+				return
+			}
+		}
+	}()
+	err := <-errs
+	cancel()
+	_ = connection.Close(websocket.StatusNormalClosure, "session ended")
+	return err
+}
+
+func dialRelay(
+	ctx context.Context,
+	target *url.URL,
+	cookies CookieProvider,
+) (*websocket.Conn, error) {
+	records, err := cookies()
+	if err != nil {
+		return nil, fmt.Errorf("load relay cookies: %w", err)
+	}
+	headers := make(http.Header)
+	originScheme := "http"
+	if target.Scheme == "wss" {
+		originScheme = "https"
+	}
+	headers.Set("Origin", originScheme+"://"+target.Host)
+	if header := cookieHeaderForURL(records, target); header != "" {
+		headers.Set("Cookie", header)
+	}
+	connection, response, err := websocket.Dial(
+		ctx,
+		target.String(),
+		&websocket.DialOptions{
+			HTTPHeader:      headers,
+			CompressionMode: websocket.CompressionDisabled,
+		},
+	)
+	if err != nil {
+		if response != nil &&
+			(response.StatusCode == http.StatusUnauthorized ||
+				response.StatusCode == http.StatusForbidden) {
+			return nil, model.WrapError(
+				model.ErrorAuthRequired,
+				"FN Connect authorization is required",
+				false,
+				err,
+			)
+		}
+		return nil, model.NormalizeError(
+			err,
+			model.ErrorUnavailable,
+			"FN Connect relay is unavailable",
+			true,
+		)
+	}
+	return connection, nil
+}
+
+func retryJitter(backoff time.Duration) time.Duration {
+	window := backoff / 4
+	if window <= 0 {
+		return 0
+	}
+	return time.Duration(time.Now().UnixNano() % int64(window))
+}
+
+func publishRelayEvent(events chan<- error, err error) {
+	if events == nil {
+		return
+	}
+	select {
+	case events <- err:
+	default:
+	}
+}
+
+func RelayURL(fnID string) (string, error) {
+	normalized, err := normalizeFNID(fnID)
+	if err != nil {
+		return "", err
+	}
+	return "wss://" + normalized + ".fnos.net" +
+		gatewayApplicationPath + "/relay/v1/wireguard", nil
+}
+
+func cookieHeaderForURL(cookies []Cookie, target *url.URL) string {
+	normalized := append([]Cookie(nil), cookies...)
+	for index := range normalized {
+		if normalized[index].Domain == "" {
+			normalized[index].Domain = target.Hostname()
+			normalized[index].HostOnly = true
+		}
+	}
+	set, err := newCookieSet(normalized)
+	if err != nil {
+		return ""
+	}
+	return set.Header(target)
+}

@@ -1,0 +1,5 @@
+#!/bin/bash
+
+set -eu
+
+"${TRIM_APPDEST}/cmd/main" stop
