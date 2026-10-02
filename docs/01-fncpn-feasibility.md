@@ -64,6 +64,10 @@ authx.sign = MD5(
 )
 ```
 
+`timestamp` 为 Unix 毫秒时间戳；`nonce` 必须使用网页端的六位十进制格式，范围为 `100000` 至 `999999`。公开脚本使用 `(Math.floor(Math.random()*9e5)+1e5).toString().padStart(6,"0")`。[cite:2]
+
+2026-10-01 使用随机不存在的 FN ID 对公共接口进行对照：32 位十六进制 nonce 返回 `5000: invalid sign`，六位十进制 nonce 返回 `3000037: Not Found Error`。后者说明请求通过了签名校验，但不代表真实 NAS 连接已通过。
+
 这属于客户端校验或反滥用机制，**不是用户身份认证**。算法与常量都在公开前端资源中，不能作为本项目的安全边界。[cite:2]
 
 该接口是未公开的内部接口。实现时应隔离在 `fnconnect/discovery` 适配器内，并允许协议变化后快速替换。

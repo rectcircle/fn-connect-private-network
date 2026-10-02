@@ -12,7 +12,7 @@ func TestClientServiceAppliesClientPlan(t *testing.T) {
 	engine := &fakeClientEngine{
 		fakeLifecycleEngine: fakeLifecycleEngine{available: true},
 	}
-	service := NewClientService(engine)
+	service := NewClientService(engine, nil)
 	request, err := ipc.NewRequest(
 		"apply",
 		MethodApply,
@@ -70,7 +70,7 @@ func TestServiceReturnsRoleSpecificStatusEnvelope(t *testing.T) {
 	clientService := NewClientService(&fakeClientEngine{
 		fakeLifecycleEngine: fakeLifecycleEngine{available: true},
 		status:              model.ClientPrivilegedStatus{Active: true},
-	})
+	}, nil)
 	request, err := ipc.NewRequest("client-status", MethodStatus, nil)
 	if err != nil {
 		t.Fatalf("new client status request: %v", err)
@@ -111,7 +111,7 @@ func TestServiceReturnsRoleSpecificStatusEnvelope(t *testing.T) {
 func TestServiceRejectsWrongPlanShape(t *testing.T) {
 	service := NewClientService(&fakeClientEngine{
 		fakeLifecycleEngine: fakeLifecycleEngine{available: true},
-	})
+	}, nil)
 	request, err := ipc.NewRequest("apply", MethodApply, map[string]any{
 		"unexpected": true,
 		"peers":      []any{},

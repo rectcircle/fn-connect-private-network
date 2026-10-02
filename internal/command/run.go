@@ -73,7 +73,7 @@ func Run(ctx context.Context, arguments []string, environment Environment) int {
 	}
 
 	typed := model.AsError(err)
-	_, _ = fmt.Fprintf(environment.Stderr, "fncpn: %s\n", typed.Message)
+	_, _ = fmt.Fprintf(environment.Stderr, "fncpn: %s\n", model.FormatError(err))
 	switch typed.Code {
 	case model.ErrorInvalidArgument:
 		return 2
@@ -85,13 +85,13 @@ func Run(ctx context.Context, arguments []string, environment Environment) int {
 		return 7
 	case model.ErrorAlreadyExists, model.ErrorConflict:
 		return 5
-	case model.ErrorFailedPrecondition:
+	case model.ErrorFailedPrecondition, model.ErrorProtocol:
 		return 8
 	case model.ErrorTimeout:
 		return 124
 	case model.ErrorCanceled:
 		return 130
-	case model.ErrorUnavailable:
+	case model.ErrorUnavailable, model.ErrorResourceExhausted, model.ErrorDiscoveryFailed:
 		return 4
 	default:
 		return 1
@@ -115,15 +115,10 @@ func runPurgeUser(arguments []string, environment Environment) error {
 	if err := flags.Parse(arguments); err != nil {
 		return err
 	}
-	store := client.NewConfigStore(*configPath, platform.NewClientSecretStore())
-	config, err := store.Load()
-	if err != nil {
+	// The root uninstall script removes this user's credential directory.
+	// This command runs as the user and never opens the old Keychain.
+	if err := client.NewConfigStore(*configPath, nil).Clear(); err != nil {
 		return err
-	}
-	if config != nil {
-		if err := store.Forget(config.FNID); err != nil {
-			return err
-		}
 	}
 	if err := os.RemoveAll(*dataDirectory); err != nil {
 		return fmt.Errorf("remove client data: %w", err)
@@ -183,7 +178,7 @@ func runHealthcheck(ctx context.Context, arguments []string) error {
 		}
 		defer response.Body.Close()
 		if response.StatusCode != http.StatusOK {
-			return fmt.Errorf("server healthcheck returned HTTP %d", response.StatusCode)
+			return client.HTTPResponseError(response, "healthcheck.server", nil)
 		}
 		return nil
 	default:
@@ -355,7 +350,7 @@ func runClientProcess(
 	ctx context.Context,
 	arguments []string,
 	environment Environment,
-) error {
+) (resultErr error) {
 	if len(arguments) == 0 {
 		return model.NewError(model.ErrorInvalidArgument, "client subcommand is required", false)
 	}
@@ -386,7 +381,21 @@ func runClientProcess(
 			return err
 		}
 		defer logWriter.Close()
-		store := client.NewConfigStore(*configPath, platform.NewClientSecretStore())
+		processLogger = processLogger.With("role", "client", "version", environment.Version)
+		processLogger.Info("client daemon starting", "socket", *socket)
+		defer func() {
+			if resultErr != nil {
+				processLogger.Error("client daemon failed", logging.ErrorAttrs(model.WithOperation(resultErr, "client.lifecycle"))...)
+			} else {
+				processLogger.Info("client daemon stopped")
+			}
+		}()
+		runContext, stop := context.WithCancel(ctx)
+		defer stop()
+		store := client.NewConfigStore(*configPath, client.IPCSecretStore{
+			Context: runContext,
+			Client:  ipc.Client{SocketPath: *privilegedSocket},
+		})
 		manager, err := client.NewManager(client.ManagerOptions{
 			Store:      store,
 			Discoverer: client.DiscoveryClient{},
@@ -409,7 +418,7 @@ func runClientProcess(
 			Privileged: client.IPCPrivilegedNetwork{Client: ipc.Client{
 				SocketPath: *privilegedSocket,
 			}},
-			Bridge:  &client.RelayBridge{},
+			Bridge:  &client.RelayBridge{Logger: processLogger},
 			Probe:   client.SystemLocalProbe{},
 			Monitor: platform.NewNetworkMonitor(),
 			Logger:  processLogger,
@@ -417,25 +426,24 @@ func runClientProcess(
 		if err != nil {
 			return err
 		}
-		if err := manager.Start(ctx); err != nil {
+		if err := manager.Start(); err != nil {
 			return fmt.Errorf("start client manager: %w", err)
 		}
-		if status := manager.Status(); status.LastError != nil {
-			processLogger.Error(
-				"initial client connection failed",
-				"code",
-				status.LastError.Code,
-				"error",
-				status.LastError.Message,
-			)
-		}
-		go manager.Run(ctx)
+		runDone := make(chan struct{})
+		go func() {
+			defer close(runDone)
+			manager.Run(runContext)
+		}()
+		clientService := client.NewWithRuntime(manager)
+		clientService.Logger = processLogger
 		serveErr := ipc.Server{
 			SocketPath: *socket,
 			Mode:       0o600,
-			Handler:    client.NewWithRuntime(manager),
+			Handler:    clientService,
 			Logger:     processLogger,
-		}.Serve(ctx)
+		}.Serve(runContext)
+		stop()
+		<-runDone
 		cleanupContext, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		result := errors.Join(serveErr, manager.Close(cleanupContext))
@@ -488,7 +496,7 @@ func runPrivilegedProcess(
 	role string,
 	arguments []string,
 	environment Environment,
-) error {
+) (resultErr error) {
 	if os.Geteuid() != 0 {
 		return model.NewError(
 			model.ErrorPermissionDenied,
@@ -529,6 +537,15 @@ func runPrivilegedProcess(
 		return err
 	}
 	defer logWriter.Close()
+	processLogger = processLogger.With("role", role+"-privileged", "version", environment.Version)
+	processLogger.Info("privileged daemon starting", "socket", *socket)
+	defer func() {
+		if resultErr != nil {
+			processLogger.Error("privileged daemon failed", logging.ErrorAttrs(model.WithOperation(resultErr, role+".privileged.lifecycle"))...)
+		} else {
+			processLogger.Info("privileged daemon stopped")
+		}
+	}()
 	var service interface {
 		ipc.Handler
 		Recover(context.Context) error
@@ -536,8 +553,16 @@ func runPrivilegedProcess(
 	}
 	switch role {
 	case "client":
+		secrets, err := privileged.OpenSecretStore(
+			filepath.Join(*stateDirectory, "credentials"), processLogger,
+		)
+		if err != nil {
+			processLogger.Error("open client credential storage", "error", err)
+			return fmt.Errorf("open client credential storage: %w", err)
+		}
 		service = privileged.NewClientService(
 			platform.NewClientEngine(processLogger, *stateDirectory),
+			secrets,
 		)
 	case "server":
 		service = privileged.NewServerService(
@@ -553,6 +578,7 @@ func runPrivilegedProcess(
 	if err := service.Recover(ctx); err != nil {
 		return fmt.Errorf("recover privileged network state: %w", err)
 	}
+	processLogger.Info("privileged network recovery completed")
 	serveErr := ipc.Server{
 		SocketPath: *socket,
 		Mode:       0o666,
@@ -592,7 +618,7 @@ func runServerDaemon(
 	ctx context.Context,
 	arguments []string,
 	environment Environment,
-) error {
+) (resultErr error) {
 	flags := flag.NewFlagSet("server daemon", flag.ContinueOnError)
 	flags.SetOutput(environment.Stderr)
 	socketPath := flags.String("socket", "", "fnOS gateway Unix socket")
@@ -633,6 +659,15 @@ func runServerDaemon(
 		}
 		defer logWriter.Close()
 	}
+	processLogger = processLogger.With("role", "server", "version", environment.Version)
+	processLogger.Info("server daemon starting", "socket", *socketPath)
+	defer func() {
+		if resultErr != nil {
+			processLogger.Error("server daemon failed", logging.ErrorAttrs(model.WithOperation(resultErr, "server.lifecycle"))...)
+		} else {
+			processLogger.Info("server daemon stopped")
+		}
+	}()
 	network := server.IPCNetwork{Client: ipc.Client{
 		SocketPath: *privilegedSocket,
 		Timeout:    30 * time.Second,
@@ -700,6 +735,7 @@ func runServerDaemon(
 		return err
 	}
 	defer cleanup()
+	processLogger.Info("server HTTP listener ready", "socket", *socketPath)
 
 	handler := server.NewHTTPHandler(store, localProbe)
 	go handler.Run(ctx)
@@ -707,6 +743,7 @@ func runServerDaemon(
 		Handler:           handler,
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       90 * time.Second,
+		ErrorLog:          slog.NewLogLogger(processLogger.Handler(), slog.LevelError),
 	}
 	errs := make(chan error, 1)
 	go func() {
@@ -813,7 +850,8 @@ func openProcessLogger(
 
 func logger(writer io.Writer) *slog.Logger {
 	return slog.New(slog.NewJSONHandler(writer, &slog.HandlerOptions{
-		Level: slog.LevelInfo,
+		Level:       slog.LevelInfo,
+		ReplaceAttr: logging.RedactAttr,
 	}))
 }
 

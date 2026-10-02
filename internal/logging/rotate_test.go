@@ -3,7 +3,9 @@ package logging
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -39,11 +41,65 @@ func TestRotatingWriterLimitsFilesAndPermissions(t *testing.T) {
 }
 
 func TestRedactSensitiveErrors(t *testing.T) {
-	if got := Redact("read privateKey failed"); !strings.Contains(got, "redacted") {
-		t.Fatalf("redacted value = %q", got)
+	if got := Redact("read privateKey failed"); got != "read privateKey failed" {
+		t.Fatalf("harmless description was redacted: %q", got)
+	}
+	if got := Redact("privateKey=canary-secret"); strings.Contains(got, "canary-secret") {
+		t.Fatalf("secret was retained: %q", got)
 	}
 	if got := Redact("permission denied"); got != "permission denied" {
 		t.Fatalf("ordinary value changed: %q", got)
+	}
+}
+
+func TestRedactErrorPreservesRequestFailureWithoutURLSecrets(t *testing.T) {
+	const address = "https://account:password@nas.example/app/fncpn/api/v1/bootstrap?entry-token=secret#fragment-secret"
+	cause := &url.Error{Op: "Get", URL: address, Err: io.EOF}
+	got := RedactError(fmt.Errorf("request failed: %w", cause))
+	if got != `request failed: Get "https://nas.example/app/fncpn/api/v1/bootstrap": EOF` {
+		t.Fatalf("diagnostic = %q", got)
+	}
+	if cause.URL != address || !errors.Is(cause, io.EOF) {
+		t.Fatal("redaction mutated the original error")
+	}
+}
+
+func TestRedactErrorFiltersNestedAndSensitiveCauses(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{name: "nil", want: ""},
+		{name: "plain", err: io.EOF, want: "EOF"},
+		{
+			name: "sensitive body",
+			err:  errors.New("Cookie: session=private-value"),
+			want: "[redacted sensitive error]",
+		},
+		{
+			name: "malformed URL",
+			err:  &url.Error{Op: "Get", URL: "https://user:secret%ZZ@nas.example/", Err: io.EOF},
+			want: `Get "[redacted URL]": EOF`,
+		},
+		{
+			name: "nested redirect",
+			err: &url.Error{
+				Op: "Get", URL: "https://nas.example/app/fncpn?token=old",
+				Err: &url.Error{
+					Op: "Get", URL: "https://user:secret@gateway.example/login?token=new",
+					Err: errors.New("stopped after 10 redirects"),
+				},
+			},
+			want: `Get "https://nas.example/app/fncpn": Get "https://gateway.example/login": stopped after 10 redirects`,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := RedactError(test.err); got != test.want {
+				t.Fatalf("diagnostic = %q, want %q", got, test.want)
+			}
+		})
 	}
 }
 

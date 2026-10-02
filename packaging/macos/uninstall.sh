@@ -53,8 +53,9 @@ if [ -n "$PURGE_UID" ]; then
     echo "User data purge failed; user data was retained" >&2
     exit 1
   fi
+  /bin/rm -rf "${STATE_DIR}/credentials/${PURGE_UID}"
 else
-  echo "FnCPN user configuration, logs, and Keychain items were retained"
+  echo "FnCPN user configuration, logs, and root-owned credentials were retained"
 fi
 
 /bin/rm -f /var/run/fncpn-client-privileged.sock
@@ -62,7 +63,9 @@ fi
 /bin/rm -f /Library/LaunchAgents/com.rectcircle.fncpn.client.plist
 /bin/rm -f /Library/LaunchDaemons/com.rectcircle.fncpn.privileged.plist
 /bin/rm -rf /Applications/FnCPN.app
-/bin/rm -rf "$STATE_DIR"
+/bin/rm -f "${STATE_DIR}/owner.lock"
+# Network cleanup removed its journal; preserve credentials for every other user.
+/bin/rmdir "${STATE_DIR}/credentials" "$STATE_DIR" 2>/dev/null || true
 /bin/rm -rf /var/log/fncpn
 /bin/rm -rf "$TOOL_DIR"
 

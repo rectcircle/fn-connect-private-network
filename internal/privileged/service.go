@@ -5,6 +5,7 @@ import (
 	"runtime"
 
 	"github.com/rectcircle/fn-connect-private-network/internal/ipc"
+	"github.com/rectcircle/fn-connect-private-network/internal/logging"
 	"github.com/rectcircle/fn-connect-private-network/internal/model"
 	"github.com/rectcircle/fn-connect-private-network/internal/notify"
 )
@@ -128,9 +129,15 @@ type Service[NetworkStatus, StatusEnvelope any] struct {
 	changes       *notify.Change
 }
 
+type ClientService struct {
+	*Service[model.ClientPrivilegedStatus, ClientStatus]
+	secrets *SecretStore
+}
+
 func NewClientService(
 	engine ClientEngine,
-) *Service[model.ClientPrivilegedStatus, ClientStatus] {
+	secrets *SecretStore,
+) *ClientService {
 	service := &Service[model.ClientPrivilegedStatus, ClientStatus]{
 		engine:  engine,
 		changes: notify.New(),
@@ -139,7 +146,14 @@ func NewClientService(
 			if err != nil {
 				return err
 			}
-			return engine.Apply(ctx, plan)
+			logger := logging.FromContext(ctx, nil)
+			logger.Info("privileged client network apply requested")
+			if err := engine.Apply(ctx, plan); err != nil {
+				return err
+			}
+			logger.Info("privileged client network applied", "mode", plan.Mode,
+				"address", plan.ClientAddress, "route_count", len(plan.AllowedIPs), "mtu", plan.MTU)
+			return nil
 		},
 		networkStatus: func() model.ClientPrivilegedStatus {
 			return engine.Status()
@@ -158,7 +172,21 @@ func NewClientService(
 			service.changes.Notify()
 		})
 	}
-	return service
+	return &ClientService{Service: service, secrets: secrets}
+}
+
+func (s *ClientService) Handle(ctx context.Context, request ipc.Request) ipc.Response {
+	switch request.Method {
+	case MethodGetSecret, MethodPutSecret, MethodDeleteSecret:
+		if s.secrets == nil {
+			return ipc.Failure(request.ID, model.NewError(
+				model.ErrorUnavailable, "client credential storage is unavailable", false,
+			))
+		}
+		return s.secrets.Handle(ctx, request)
+	default:
+		return s.Service.Handle(ctx, request)
+	}
 }
 
 func NewServerService(

@@ -18,8 +18,17 @@ type Client struct {
 	Timeout    time.Duration
 }
 
-func (c Client) Call(ctx context.Context, method string, params, result any) error {
+func (c Client) Call(ctx context.Context, method string, params, result any) (callErr error) {
 	id, err := requestID()
+	defer func() {
+		if callErr != nil {
+			failure := model.WithOperation(callErr, "ipc."+method)
+			if failure.RequestID == "" {
+				failure.RequestID = id
+			}
+			callErr = failure
+		}
+	}()
 	if err != nil {
 		return fmt.Errorf("generate request ID: %w", err)
 	}
@@ -71,13 +80,13 @@ func (c Client) Call(ctx context.Context, method string, params, result any) err
 		}
 		return model.NormalizeError(
 			err,
-			model.ErrorUnavailable,
+			model.ErrorProtocol,
 			"daemon returned an invalid response",
-			true,
+			false,
 		)
 	}
 	if response.ID != request.ID && (response.ID != "" || response.OK) {
-		return errors.New("IPC response ID mismatch")
+		return model.WrapError(model.ErrorProtocol, "IPC response ID mismatch", false, errors.New("response does not match request"))
 	}
 	if !response.OK {
 		return response.Error
@@ -88,7 +97,7 @@ func (c Client) Call(ctx context.Context, method string, params, result any) err
 	if err := json.Unmarshal(response.Result, result); err != nil {
 		return model.NormalizeError(
 			fmt.Errorf("decode IPC result: %w", err),
-			model.ErrorInternal,
+			model.ErrorProtocol,
 			"daemon returned an invalid result",
 			false,
 		)

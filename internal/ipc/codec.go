@@ -9,7 +9,12 @@ import (
 	"github.com/rectcircle/fn-connect-private-network/internal/model"
 )
 
-func ReadRequest(reader io.Reader) (Request, error) {
+func ReadRequest(reader io.Reader) (_ Request, failure error) {
+	defer func() {
+		if failure != nil {
+			failure = model.WithOperation(model.NormalizeError(failure, model.ErrorProtocol, "invalid IPC request", false), "ipc.read_request")
+		}
+	}()
 	payload, err := ReadFrame(reader)
 	if err != nil {
 		return Request{}, err
@@ -70,7 +75,7 @@ func ReadResponse(reader io.Reader) (Response, error) {
 	if !response.OK && len(response.Result) != 0 {
 		return Response{}, errors.New("failed response contains a result")
 	}
-	if response.Error != nil && response.Error.Code == "" {
+	if response.Error != nil && !model.IsErrorCode(response.Error.Code) {
 		return Response{}, errors.New("failed response contains an invalid error")
 	}
 	return response, nil

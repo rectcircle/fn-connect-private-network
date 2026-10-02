@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/url"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+	"github.com/rectcircle/fn-connect-private-network/internal/logging"
 	"github.com/rectcircle/fn-connect-private-network/internal/model"
 )
 
@@ -30,6 +32,7 @@ type relayPacket struct {
 
 type RelayBridge struct {
 	ListenAddress string
+	Logger        *slog.Logger
 	mu            sync.Mutex
 	cancel        context.CancelFunc
 	udp           *net.UDPConn
@@ -66,10 +69,13 @@ func (b *RelayBridge) Start(
 	b.stopLocked()
 	b.mu.Unlock()
 
+	logger := logging.FromContext(requestContext, b.logger()).With("relay_url", model.SafeURL(relayURL))
+	logger.Info("relay WebSocket connecting")
 	connection, err := dialRelay(requestContext, parsed, cookies)
 	if err != nil {
 		return "", fmt.Errorf("connect relay: %w", err)
 	}
+	logger.Info("relay WebSocket established")
 	listenAddress := valueOrDefault(b.ListenAddress, defaultRelayListenAddress)
 	udpAddress, err := net.ResolveUDPAddr("udp", listenAddress)
 	if err != nil {
@@ -98,6 +104,7 @@ func (b *RelayBridge) Start(
 	b.connected.Store(true)
 	b.mu.Unlock()
 
+	logger.Info("relay bridge ready", "udp_endpoint", udp.LocalAddr().String())
 	go b.run(ctx, done, udp, connection, parsed, cookies, events)
 	return udp.LocalAddr().String(), nil
 }
@@ -136,6 +143,7 @@ func (b *RelayBridge) stopLocked() {
 	cancel := b.cancel
 	udp := b.udp
 	done := b.done
+	relayURL := b.relayURL
 	b.cancel = nil
 	b.udp = nil
 	b.done = nil
@@ -146,6 +154,7 @@ func (b *RelayBridge) stopLocked() {
 	cancel()
 	_ = udp.Close()
 	<-done
+	b.logger().Info("relay bridge stopped", "relay_url", model.SafeURL(relayURL))
 }
 
 func (b *RelayBridge) run(
@@ -155,47 +164,75 @@ func (b *RelayBridge) run(
 	initial *websocket.Conn,
 	relayURL *url.URL,
 	cookies CookieProvider,
-	events chan<- error,
+	events chan error,
 ) {
 	defer close(done)
 	defer b.connected.Store(false)
+	logger := b.logger().With("relay_url", model.SafeURL(relayURL.String()))
 	packets := make(chan relayPacket, maxRelayQueue)
-	go readWireGuardDatagrams(ctx, udp, packets, &b.expectedPeer)
+	go readWireGuardDatagrams(ctx, udp, packets, &b.expectedPeer, func(err error) {
+		if ctx.Err() == nil {
+			failure := model.WithOperation(model.WrapError(model.ErrorUnavailable, "local WireGuard receive failed", false, err), "relay.udp_read")
+			b.logFailure(failure)
+			publishRelayEvent(events, failure)
+		}
+	})
 
 	connection := initial
 	backoff := time.Second
 	for ctx.Err() == nil {
 		b.connected.Store(true)
-		_ = runRelaySession(ctx, connection, udp, packets, &b.expectedPeer)
+		sessionErr := runRelaySession(ctx, connection, udp, packets, &b.expectedPeer)
 		connection.CloseNow()
 		b.connected.Store(false)
 		if ctx.Err() != nil {
 			return
 		}
-		select {
-		case <-ctx.Done():
-			return
-		case <-time.After(backoff + retryJitter(backoff)):
-		}
-		dialContext, cancel := context.WithTimeout(ctx, 15*time.Second)
-		next, dialErr := dialRelay(dialContext, relayURL, cookies)
-		cancel()
-		if dialErr != nil {
-			if model.AsError(dialErr).Code == model.ErrorAuthRequired {
-				publishRelayEvent(events, dialErr)
+		failure := model.WithOperation(model.NormalizeError(sessionErr, model.ErrorUnavailable, "relay session disconnected", true), "relay.session")
+		b.logFailure(failure)
+		publishRelayEvent(events, failure)
+		for ctx.Err() == nil {
+			select {
+			case <-ctx.Done():
 				return
+			case <-time.After(backoff + retryJitter(backoff)):
 			}
-			if backoff < 30*time.Second {
-				backoff *= 2
-				if backoff > 30*time.Second {
-					backoff = 30 * time.Second
+			logger.Info("relay WebSocket reconnecting", "backoff_ms", backoff.Milliseconds())
+			dialContext, cancel := context.WithTimeout(ctx, 15*time.Second)
+			next, dialErr := dialRelay(dialContext, relayURL, cookies)
+			cancel()
+			if dialErr != nil {
+				b.logFailure(dialErr)
+				publishRelayEvent(events, dialErr)
+				if !model.AsError(dialErr).Retryable {
+					return
 				}
+				if backoff < 30*time.Second {
+					backoff *= 2
+					if backoff > 30*time.Second {
+						backoff = 30 * time.Second
+					}
+				}
+				continue
 			}
-			continue
+			connection = next
+			backoff = time.Second
+			logger.Info("relay WebSocket reconnected")
+			publishRelayEvent(events, nil)
+			break
 		}
-		connection = next
-		backoff = time.Second
 	}
+}
+
+func (b *RelayBridge) logFailure(err error) {
+	b.logger().Error("relay connection failed", logging.ErrorAttrs(err)...)
+}
+
+func (b *RelayBridge) logger() *slog.Logger {
+	if b.Logger != nil {
+		return b.Logger
+	}
+	return slog.Default()
 }
 
 func readWireGuardDatagrams(
@@ -203,10 +240,17 @@ func readWireGuardDatagrams(
 	udp *net.UDPConn,
 	packets chan<- relayPacket,
 	expectedPeer *atomic.Uint32,
+	onError ...func(error),
 ) {
+	report := func(err error) {
+		for _, callback := range onError {
+			callback(err)
+		}
+	}
 	buffer := make([]byte, maxRelayDatagramSize)
 	for {
 		if err := udp.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
+			report(err)
 			return
 		}
 		size, address, err := udp.ReadFromUDP(buffer)
@@ -217,6 +261,7 @@ func readWireGuardDatagrams(
 				}
 				continue
 			}
+			report(err)
 			return
 		}
 		if !address.IP.IsLoopback() ||
@@ -327,22 +372,16 @@ func dialRelay(
 		},
 	)
 	if err != nil {
-		if response != nil &&
-			(response.StatusCode == http.StatusUnauthorized ||
-				response.StatusCode == http.StatusForbidden) {
-			return nil, model.WrapError(
-				model.ErrorAuthRequired,
-				"FN Connect authorization is required",
-				false,
-				err,
-			)
+		operation := "relay.handshake " + model.SafeURL(target.String())
+		if response != nil {
+			return nil, HTTPResponseError(response, operation, err)
 		}
-		return nil, model.NormalizeError(
+		return nil, model.WithOperation(model.NormalizeError(
 			err,
 			model.ErrorUnavailable,
 			"FN Connect relay is unavailable",
 			true,
-		)
+		), operation)
 	}
 	return connection, nil
 }
@@ -355,13 +394,23 @@ func retryJitter(backoff time.Duration) time.Duration {
 	return time.Duration(time.Now().UnixNano() % int64(window))
 }
 
-func publishRelayEvent(events chan<- error, err error) {
+func publishRelayEvent(events chan error, err error) {
 	if events == nil {
 		return
 	}
 	select {
 	case events <- err:
 	default:
+		// Report the latest state, especially a terminal rejection after a
+		// transient disconnect, instead of losing it behind a queued event.
+		select {
+		case <-events:
+		default:
+		}
+		select {
+		case events <- err:
+		default:
+		}
 	}
 }
 

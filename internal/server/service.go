@@ -5,12 +5,14 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/rectcircle/fn-connect-private-network/internal/logging"
 	"github.com/rectcircle/fn-connect-private-network/internal/model"
 	"github.com/rectcircle/fn-connect-private-network/internal/notify"
 )
@@ -55,9 +57,10 @@ func (s *Service) snapshot() serverSnapshot {
 	current := s.view.Load()
 	view := serverSnapshot{
 		state: cloneState(current.state), network: cloneServerNetworkSnapshot(current.network),
+		activity: maps.Clone(current.activity),
 	}
 	if view.network.Fresh && !view.network.RefreshedAt.IsZero() &&
-		time.Since(view.network.RefreshedAt) > 15*time.Second {
+		time.Since(view.network.RefreshedAt) > networkSnapshotMaxAge {
 		view.network.Fresh = false
 		view.network.LastError = model.NewError(
 			model.ErrorUnavailable, "server network status is stale", true,
@@ -71,7 +74,17 @@ func (s *Service) NetworkSnapshot() model.ServerNetworkSnapshot {
 }
 
 func (s *Service) publish(view serverSnapshot) {
-	previous := s.view.Swap(&view)
+	previous := s.view.Load()
+	view.activity = observeDeviceActivity(*previous, view)
+	s.view.Store(&view)
+	for _, device := range view.state.Devices {
+		before := deviceConnection(device.PublicKey, *previous, previous.network.RefreshedAt)
+		after := deviceConnection(device.PublicKey, view, view.network.RefreshedAt)
+		if before != after {
+			s.logger.Info("device connection state changed", "device_id", device.ID,
+				"previous_state", before, "state", after, "idle_timeout", deviceIdleTimeout.String())
+		}
+	}
 	if configurationSnapshotCursor(*previous) != configurationSnapshotCursor(view) {
 		s.configChanges.Notify()
 	}
@@ -91,13 +104,19 @@ func (s *Service) apply(ctx context.Context, state model.ServerState) (model.Ser
 }
 
 func (s *Service) networkResult(status model.ServerPrivilegedStatus, err error) model.ServerNetworkSnapshot {
+	previous := s.view.Load().network
 	snapshot := model.ServerNetworkSnapshot{
 		Network: status, Fresh: err == nil, RefreshedAt: time.Now().UTC(),
 	}
 	if err != nil {
 		snapshot.Network = cloneServerNetworkSnapshot(s.view.Load().network).Network
 		snapshot.LastError = model.PublicError(err)
-		s.logger.Error("server network operation failed", "error", err)
+		s.logger.Error("server network operation failed", logging.ErrorAttrs(err)...)
+	} else if !previous.Fresh || previous.Network.Active != status.Active ||
+		previous.Network.Degraded != status.Degraded || previous.Network.Interface != status.Interface ||
+		previous.Network.ListenPort != status.ListenPort || len(previous.Network.Peers) != len(status.Peers) {
+		s.logger.Info("server network status changed", "active", status.Active, "degraded", status.Degraded,
+			"interface", status.Interface, "listen_port", status.ListenPort, "peer_count", len(status.Peers))
 	}
 	return snapshot
 }
@@ -216,14 +235,17 @@ func (s *Service) RegisterDevice(ctx context.Context, name, publicKey string) (m
 	if err != nil {
 		return model.DeviceRegistration{}, false, err
 	}
+	logging.FromContext(ctx, s.logger).Info("device registration completed",
+		"device_id", device.ID, "device_name", model.SafeText(device.Name),
+		"address", device.OverlayAddress, "created", created)
 	return model.DeviceRegistration{Device: device, Configuration: configuration}, created, nil
 }
 
 func (s *Service) clientConfiguration(deviceID string) (model.ClientConfiguration, error) {
 	view := s.snapshot()
 	if !view.network.Fresh {
-		return model.ClientConfiguration{}, model.NewError(
-			model.ErrorUnavailable, "server network status is stale", true,
+		return model.ClientConfiguration{}, model.WrapError(
+			model.ErrorUnavailable, "server network status is stale", true, view.network.LastError,
 		)
 	}
 	device, err := FindDevice(view.state, deviceID)
@@ -276,5 +298,8 @@ func (s *Service) UpdateNetworks(ctx context.Context, update NetworkUpdate) (mod
 	if err := s.commit(ctx, next); err != nil {
 		return model.ServerState{}, err
 	}
+	logging.FromContext(ctx, s.logger).Info("server network settings updated",
+		"overlay_cidr", next.Settings.OverlayCIDR, "listen_port", next.Settings.ListenPort,
+		"lan_cidrs", next.Settings.LANCIDRs)
 	return cloneState(next), nil
 }

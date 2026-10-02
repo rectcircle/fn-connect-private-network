@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/rectcircle/fn-connect-private-network/internal/ipc"
+	"github.com/rectcircle/fn-connect-private-network/internal/logging"
 	"github.com/rectcircle/fn-connect-private-network/internal/model"
 	"github.com/rectcircle/fn-connect-private-network/internal/notify"
 	"github.com/rectcircle/fn-connect-private-network/internal/privileged"
@@ -144,6 +145,7 @@ type Manager struct {
 	localProbeConfig *model.LocalProbeConfiguration
 	status           model.ClientStatus
 	maintenanceError bool
+	maintenancePhase string
 	statusChanges    *notify.Change
 	watchCancel      context.CancelFunc
 }
@@ -191,21 +193,20 @@ func NewManager(options ManagerOptions) (*Manager, error) {
 	}, nil
 }
 
-func (m *Manager) Start(ctx context.Context) error {
+// Start prepares status only; IPC readiness must not depend on credentials or networking.
+func (m *Manager) Start() error {
 	config, err := m.store.Load()
 	if err != nil {
 		return err
 	}
 	if config == nil {
 		m.setStatus(model.ClientUnconfigured, "", "", nil)
+		m.logger.Info("client configuration absent")
 		return nil
 	}
 	m.setStatus(model.ClientPaused, "", "", nil)
-	if config.AutoConnect {
-		_ = m.Connect(ctx)
-	} else {
-		m.convergeStoppedNetwork(ctx, *config, m.Status())
-	}
+	m.logger.Info("client configuration loaded", "fn_id", config.FNID,
+		"device_id", config.DeviceID, "auto_connect", config.AutoConnect)
 	return nil
 }
 
@@ -218,7 +219,7 @@ func (m *Manager) Authorize(
 	defer m.operation.Unlock()
 	fnID, err := normalizeFNID(fnID)
 	if err != nil {
-		return err
+		return model.WrapError(model.ErrorInvalidArgument, "invalid FN ID", false, err)
 	}
 	if len(cookies) == 0 {
 		return model.NewError(
@@ -227,6 +228,8 @@ func (m *Manager) Authorize(
 			false,
 		)
 	}
+	logger := logging.FromContext(ctx, m.logger).With("fn_id", fnID)
+	logger.Info("authorization validation started")
 	m.cancelConfigurationWatch()
 	m.setStatus(model.ClientAuthorizing, "", "", nil)
 	existing, err := m.store.Load()
@@ -251,10 +254,20 @@ func (m *Manager) Authorize(
 	}
 	if !bootstrap.Administrator {
 		return m.fail(model.NewError(
-			model.ErrorAuthRequired,
+			model.ErrorPermissionDenied,
 			"administrator access is required to register this device",
 			false,
 		))
+	}
+	logger.Info("gateway session validated", "administrator", true)
+	registrationReason := "no_saved_device"
+	if existing != nil && existing.FNID != fnID {
+		registrationReason = "different_server"
+	}
+	if existing != nil && existing.FNID == fnID && existing.DeviceID != "" &&
+		existing.PublicKey != privateKey.PublicKey().String() {
+		registrationReason = "identity_changed"
+		logger.Warn("saved device identity changed", "previous_device_id", existing.DeviceID)
 	}
 	if existing != nil &&
 		existing.FNID == fnID &&
@@ -280,10 +293,15 @@ func (m *Manager) Authorize(
 			if err := m.store.Save(*existing); err != nil {
 				return m.fail(err)
 			}
+			logger.Info("existing device reused", "device_id", existing.DeviceID,
+				"address", configuration.ClientAddress)
+			logger.Info("authorization saved", "device_id", existing.DeviceID)
 			return m.connectWithConfig(ctx, *existing)
 		}
+		registrationReason = "device_revoked"
 	}
 	publicKey := privateKey.PublicKey().String()
+	logger.Info("device registration requested", "reason", registrationReason, "device_name", model.SafeText(m.deviceName))
 	registration, err := remote.RegisterDevice(
 		ctx,
 		m.deviceName,
@@ -322,6 +340,9 @@ func (m *Manager) Authorize(
 	if err := m.store.Save(config); err != nil {
 		return m.fail(err)
 	}
+	logger.Info("device registration completed", "device_id", config.DeviceID,
+		"address", configuration.ClientAddress)
+	logger.Info("authorization saved", "device_id", config.DeviceID)
 	return m.connectWithConfig(ctx, config)
 }
 
@@ -359,6 +380,8 @@ func (m *Manager) Disconnect(ctx context.Context) error {
 }
 
 func (m *Manager) disconnect(ctx context.Context) error {
+	logger := logging.FromContext(ctx, m.logger)
+	logger.Info("client disconnect requested")
 	config, err := m.store.Load()
 	if err != nil {
 		return m.fail(err)
@@ -395,6 +418,7 @@ func (m *Manager) disconnect(ctx context.Context) error {
 	} else {
 		m.setStatus(model.ClientUnconfigured, "", "", nil)
 	}
+	logger.Info("client disconnected", "state", m.Status().State)
 	return nil
 }
 
@@ -480,6 +504,8 @@ func (m *Manager) Logout(ctx context.Context) error {
 		if err := m.store.ClearCookies(config.FNID); err != nil {
 			return m.fail(err)
 		}
+		logging.FromContext(ctx, m.logger).Info("client logged out",
+			"fn_id", config.FNID, "device_id", config.DeviceID, "identity_retained", true)
 		m.setStatus(
 			model.ClientAuthRequired,
 			"",
@@ -507,6 +533,8 @@ func (m *Manager) Forget(ctx context.Context) error {
 		if err := m.store.Forget(config.FNID); err != nil {
 			return m.fail(err)
 		}
+		logging.FromContext(ctx, m.logger).Info("client identity forgotten",
+			"fn_id", config.FNID, "device_id", config.DeviceID)
 	}
 	m.setStatus(model.ClientUnconfigured, "", "", nil)
 	return nil
@@ -522,6 +550,10 @@ func (m *Manager) Close(ctx context.Context) error {
 }
 
 func (m *Manager) Run(ctx context.Context) {
+	m.resume(ctx)
+	if ctx.Err() != nil {
+		return
+	}
 	previous := m.networkFingerprint()
 	maintenanceTicker := time.NewTicker(60 * time.Second)
 	defer maintenanceTicker.Stop()
@@ -540,6 +572,16 @@ func (m *Manager) Run(ctx context.Context) {
 			return
 		case err := <-bridgeEvents:
 			if err == nil {
+				m.mu.RLock()
+				relayError := m.maintenanceError && m.maintenancePhase == "relay"
+				m.mu.RUnlock()
+				if relayError {
+					m.clearMaintenanceError()
+				}
+				continue
+			}
+			if model.AsError(err).Retryable {
+				m.recordMaintenanceError("relay", err)
 				continue
 			}
 			m.operation.Lock()
@@ -580,6 +622,29 @@ func (m *Manager) Run(ctx context.Context) {
 			}
 			m.maintainPrivileged(ctx)
 		}
+	}
+}
+
+func (m *Manager) resume(ctx context.Context) {
+	m.operation.Lock()
+	defer m.operation.Unlock()
+	if ctx.Err() != nil || m.Status().State != model.ClientPaused {
+		return
+	}
+	// Re-read after taking the operation lock so a concurrent disconnect wins.
+	config, err := m.store.Load()
+	if err != nil {
+		_ = m.fail(err)
+		return
+	}
+	if config == nil {
+		return
+	}
+	if config.AutoConnect {
+		m.logger.Info("automatic connection requested", "fn_id", config.FNID, "device_id", config.DeviceID)
+		_ = m.connect(ctx)
+	} else {
+		m.convergeStoppedNetwork(ctx, *config, m.Status())
 	}
 }
 
@@ -730,10 +795,7 @@ func (m *Manager) waitConfigurationRetry(
 	}
 	m.logger.Warn(
 		"watch server configuration",
-		"retry_in",
-		*retryDelay,
-		"error",
-		err,
+		append(logging.ErrorAttrs(err), "retry_in", *retryDelay)...,
 	)
 	timer := time.NewTimer(*retryDelay)
 	select {
@@ -775,6 +837,7 @@ func (m *Manager) applyWatchedConfiguration(
 		return err
 	}
 	m.clearMaintenanceError()
+	m.logger.Info("client reconnect requested", "reason", "configuration_changed", "device_id", config.DeviceID)
 	_ = m.reconnect(ctx, *config)
 	return nil
 }
@@ -803,6 +866,11 @@ func (m *Manager) privilegedLifecycleEvents(ctx context.Context) <-chan struct{}
 		for ctx.Err() == nil {
 			result, err := watcher.WatchLifecycle(ctx, generation)
 			if err != nil {
+				if ctx.Err() != nil {
+					return
+				}
+				m.logger.Error("watch privileged lifecycle failed", logging.ErrorAttrs(
+					model.WithOperation(err, "privileged.watch_lifecycle"))...)
 				select {
 				case events <- struct{}{}:
 				default:
@@ -877,6 +945,7 @@ func (m *Manager) maintainPrivileged(ctx context.Context) {
 			true,
 		),
 	)
+	m.logger.Info("client reconnect requested", "reason", "privileged_reset", "device_id", config.DeviceID)
 	_ = m.reconnect(ctx, *config)
 }
 
@@ -898,6 +967,7 @@ func (m *Manager) maintainHealth(ctx context.Context) {
 	}
 	if status.State == model.ClientReconnecting ||
 		status.State == model.ClientPaused || status.State == model.ClientUnconfigured {
+		m.logger.Info("client reconnect requested", "reason", "retry_state", "device_id", config.DeviceID)
 		_ = m.reconnect(ctx, *config)
 		return
 	}
@@ -926,6 +996,7 @@ func (m *Manager) maintainHealth(ctx context.Context) {
 			}
 		}
 		if healthErr != nil {
+			m.logger.Warn("client network unhealthy", logging.ErrorAttrs(healthErr)...)
 			if status.State == model.ClientDirect {
 				m.directRetryAfter = time.Now().Add(5 * time.Minute)
 			}
@@ -935,6 +1006,7 @@ func (m *Manager) maintainHealth(ctx context.Context) {
 				status.Interface,
 				model.PublicError(healthErr),
 			)
+			m.logger.Info("client reconnect requested", "reason", "network_unhealthy", "device_id", config.DeviceID)
 			_ = m.reconnect(ctx, *config)
 			return
 		}
@@ -943,17 +1015,22 @@ func (m *Manager) maintainHealth(ctx context.Context) {
 		reachable := false
 		probeConfiguration := cloneLocalProbeConfiguration(m.localProbeConfig)
 		if probeConfiguration != nil && snapshotErr == nil {
-			reachable, _ = m.probe.Reachable(
+			var probeErr error
+			reachable, probeErr = m.probe.Reachable(
 				ctx,
 				*probeConfiguration,
 				config.DeviceID,
 				snapshot,
 			)
+			if probeErr != nil {
+				m.logger.Warn("local path check failed", logging.ErrorAttrs(probeErr)...)
+			}
 			if reachable {
 				m.localProbeConfig = probeConfiguration
 			}
 		}
 		if !reachable {
+			m.logger.Info("client reconnect requested", "reason", "local_path_lost", "device_id", config.DeviceID)
 			m.setStatus(
 				model.ClientReconnecting,
 				"local",
@@ -969,6 +1046,7 @@ func (m *Manager) maintainHealth(ctx context.Context) {
 		!m.directRetryAfter.IsZero() &&
 		time.Now().After(m.directRetryAfter) {
 		m.directRetryAfter = time.Time{}
+		m.logger.Info("client reconnect requested", "reason", "direct_retry", "device_id", config.DeviceID)
 		_ = m.reconnect(ctx, *config)
 	}
 }
@@ -994,6 +1072,7 @@ func (m *Manager) handleNetworkChange(
 	if !canAutoConnect(config, m.Status()) {
 		return
 	}
+	m.logger.Info("client reconnect requested", "reason", "physical_network_changed", "device_id", config.DeviceID)
 	_ = m.reconnect(ctx, *config)
 }
 
@@ -1056,12 +1135,18 @@ func (m *Manager) Diagnose(ctx context.Context) model.ClientDiagnostics {
 			Round(time.Second).
 			String()
 	}
-	if err != nil && diagnostics.Status.LastError == nil {
-		diagnostics.Status.LastError = model.PublicError(err)
-	} else if snapshotErr != nil && diagnostics.Status.LastError == nil {
-		diagnostics.Status.LastError = model.PublicError(snapshotErr)
-	} else if configErr != nil && diagnostics.Status.LastError == nil {
-		diagnostics.Status.LastError = model.PublicError(configErr)
+	for _, issue := range []*model.Error{
+		model.WithOperation(err, "diagnose.privileged"),
+		model.WithOperation(snapshotErr, "diagnose.network"),
+		model.WithOperation(configErr, "diagnose.configuration"),
+	} {
+		if issue != nil {
+			public := model.PublicError(issue)
+			diagnostics.Errors = append(diagnostics.Errors, public)
+			if diagnostics.Status.LastError == nil {
+				diagnostics.Status.LastError = public
+			}
+		}
 	}
 	return diagnostics
 }
@@ -1090,6 +1175,9 @@ func (m *Manager) connectWithOptionalConfiguration(
 	config LocalConfig,
 	known *model.ClientConfiguration,
 ) error {
+	connectionStarted := time.Now()
+	logger := logging.FromContext(ctx, m.logger).With("fn_id", config.FNID, "device_id", config.DeviceID)
+	logger.Info("client connection started")
 	m.setStatus(
 		model.ClientProbing,
 		"",
@@ -1124,6 +1212,7 @@ func (m *Manager) connectWithOptionalConfiguration(
 	}
 	latest := config.Configuration
 	if known == nil {
+		logger.Info("device configuration requested")
 		latest, err = remote.Configuration(ctx, config.DeviceID)
 		if err != nil {
 			return m.fail(err)
@@ -1144,11 +1233,14 @@ func (m *Manager) connectWithOptionalConfiguration(
 			return m.fail(err)
 		}
 	}
+	logger.Info("device configuration ready", "address", configuration.ClientAddress,
+		"route_count", len(configuration.AllowedIPs), "changed", changed)
 
 	networkSnapshot, err := m.probe.Snapshot()
 	if err != nil {
 		return m.fail(err)
 	}
+	logger.Info("local probe started")
 	probeConfiguration, probeErr := remote.LocalProbeConfiguration(
 		ctx,
 		config.DeviceID,
@@ -1162,11 +1254,12 @@ func (m *Manager) connectWithOptionalConfiguration(
 			networkSnapshot,
 		)
 		if err != nil {
-			m.logger.Warn("probe local server", "error", err)
+			logger.Warn("probe local server", logging.ErrorAttrs(err)...)
 		}
 	} else {
-		m.logger.Warn("get local probe configuration", "error", probeErr)
+		logger.Warn("get local probe configuration", logging.ErrorAttrs(probeErr)...)
 	}
+	logger.Info("local probe completed", "reachable", local)
 	if local {
 		m.localProbeConfig = cloneLocalProbeConfiguration(&probeConfiguration)
 		m.setStatus(
@@ -1175,17 +1268,24 @@ func (m *Manager) connectWithOptionalConfiguration(
 			"",
 			nil,
 		)
+		logger.Info("client connected", "state", model.ClientLocal, "path", "local",
+			"elapsed_ms", time.Since(connectionStarted).Milliseconds())
 		return nil
 	}
 	m.localProbeConfig = nil
+	logger.Info("FN Connect discovery started")
 	discovery, err := m.discoverer.Discover(ctx, config.FNID)
 	if err != nil {
 		return m.fail(err)
 	}
+	logger.Info("FN Connect discovery completed", "ipv6_candidates", len(discovery.PublicIPv6),
+		"local_public_ipv6", networkSnapshot.HasPublicIPv6, "ipv6_forbidden", discovery.ForbidPublicIPv6)
 	allowedIPs := routedPrefixes(
 		config.Configuration,
 		networkSnapshot.Prefixes,
 	)
+	logger.Info("client routes selected", "route_count", len(allowedIPs),
+		"lan_overlap", configurationHasLANOverlap(config.Configuration, networkSnapshot.Prefixes))
 	privateKey, err := m.store.EnsureWireGuardKey(config.FNID)
 	if err != nil {
 		return m.fail(err)
@@ -1208,6 +1308,7 @@ func (m *Manager) connectWithOptionalConfiguration(
 				allowedIPs,
 				1280,
 			)
+			logger.Info("direct connection attempted", "endpoint", plan.Endpoint)
 			started := time.Now()
 			status, applyErr := m.applyPlan(ctx, plan)
 			if applyErr != nil {
@@ -1215,6 +1316,8 @@ func (m *Manager) connectWithOptionalConfiguration(
 			}
 			status, handshakeErr := m.waitForHandshake(ctx, status, started)
 			if handshakeErr != nil {
+				logger.Warn("direct connection failed; trying next path", logging.ErrorAttrs(
+					model.WithOperation(handshakeErr, "direct.handshake"))...)
 				if cleanupErr := m.privileged.Remove(ctx); cleanupErr != nil {
 					return m.fail(errors.Join(handshakeErr, cleanupErr))
 				}
@@ -1226,6 +1329,9 @@ func (m *Manager) connectWithOptionalConfiguration(
 				"ipv6",
 				status,
 			)
+			logger.Info("client connected", "state", model.ClientDirect, "path", "ipv6",
+				"interface", status.Interface, "mtu", status.MTU,
+				"elapsed_ms", time.Since(connectionStarted).Milliseconds())
 			return nil
 		}
 		if directAttempted {
@@ -1237,6 +1343,7 @@ func (m *Manager) connectWithOptionalConfiguration(
 	if err != nil {
 		return m.fail(err)
 	}
+	logger.Info("relay path selected", "relay_url", model.SafeURL(relayURL))
 	endpoint, err := m.bridge.Start(ctx, relayURL, func() ([]Cookie, error) {
 		return m.store.LoadCookies(config.FNID)
 	})
@@ -1278,6 +1385,9 @@ func (m *Manager) connectWithOptionalConfiguration(
 		"fn-connect",
 		status,
 	)
+	logger.Info("client connected", "state", model.ClientRelay, "path", "fn-connect",
+		"interface", status.Interface, "mtu", status.MTU,
+		"elapsed_ms", time.Since(connectionStarted).Milliseconds())
 	return nil
 }
 
@@ -1287,14 +1397,16 @@ func selectClientConfiguration(
 ) (model.ClientConfiguration, bool, error) {
 	received, err := wgconfig.NormalizeClientConfiguration(received)
 	if err != nil {
-		return model.ClientConfiguration{}, false, err
+		return model.ClientConfiguration{}, false, model.WithOperation(
+			model.WrapError(model.ErrorProtocol, "server returned an invalid WireGuard configuration", false, err), "configuration.validate")
 	}
 	if current.DeviceID == "" {
 		return received, true, nil
 	}
 	current, err = wgconfig.NormalizeClientConfiguration(current)
 	if err != nil {
-		return model.ClientConfiguration{}, false, err
+		return model.ClientConfiguration{}, false, model.WithOperation(
+			model.WrapError(model.ErrorFailedPrecondition, "stored WireGuard configuration is invalid", false, err), "configuration.validate")
 	}
 	if clientConfigurationsEqual(current, received) {
 		return current, false, nil
@@ -1337,7 +1449,19 @@ func (m *Manager) applyPlan(
 	ctx context.Context,
 	plan model.ClientPlan,
 ) (model.ClientPrivilegedStatus, error) {
-	return m.privileged.Apply(ctx, plan)
+	logger := logging.FromContext(ctx, m.logger)
+	logger.Info("client network apply requested", "mode", plan.Mode, "address", plan.ClientAddress,
+		"route_count", len(plan.AllowedIPs), "mtu", plan.MTU)
+	status, err := m.privileged.Apply(ctx, plan)
+	if err == nil && status.LastError != nil {
+		err = status.LastError
+	}
+	if err != nil {
+		return status, model.WithOperation(err, "network.apply."+plan.Mode)
+	}
+	logger.Info("client network applied", "mode", plan.Mode, "interface", status.Interface,
+		"listen_port", status.ListenPort, "mtu", status.MTU)
+	return status, nil
 }
 
 func (m *Manager) waitForHandshake(
@@ -1345,12 +1469,16 @@ func (m *Manager) waitForHandshake(
 	status model.ClientPrivilegedStatus,
 	started time.Time,
 ) (model.ClientPrivilegedStatus, error) {
+	logger := logging.FromContext(ctx, m.logger)
+	logger.Info("WireGuard handshake waiting", "interface", status.Interface)
 	deadline := time.NewTimer(m.handshakeTimeout)
 	ticker := time.NewTicker(250 * time.Millisecond)
 	defer deadline.Stop()
 	defer ticker.Stop()
 	for {
 		if status.LastHandshake != nil && !status.LastHandshake.Before(started) {
+			logger.Info("WireGuard handshake confirmed", "interface", status.Interface,
+				"handshake_at", *status.LastHandshake, "elapsed_ms", time.Since(started).Milliseconds())
 			return status, nil
 		}
 		select {
@@ -1519,7 +1647,7 @@ func relayURLFromDiscovery(fnID string, discovery Discovery) (string, error) {
 	}
 	parsed, err := url.Parse("wss://" + host)
 	if err != nil || parsed.Host == "" {
-		return "", errors.New("invalid FN Connect relay endpoint")
+		return "", model.WithOperation(model.NewError(model.ErrorProtocol, "invalid FN Connect relay endpoint", false), "discovery.relay_endpoint")
 	}
 	parsed.Path = gatewayApplicationPath + "/relay/v1/wireguard"
 	return parsed.String(), nil
@@ -1527,15 +1655,11 @@ func relayURLFromDiscovery(fnID string, discovery Discovery) (string, error) {
 
 func (m *Manager) fail(err error) error {
 	typed := model.AsError(err)
-	m.logger.Error(
-		"client operation failed",
-		"code",
-		typed.Code,
-		"retryable",
-		typed.Retryable,
-		"error",
-		err,
-	)
+	if typed.Code == model.ErrorCanceled {
+		m.logger.Debug("client operation canceled", logging.ErrorAttrs(err)...)
+	} else {
+		m.logger.Error("client operation failed", logging.ErrorAttrs(err)...)
+	}
 	state := model.ClientError
 	switch {
 	case typed.Code == model.ErrorAuthRequired ||
@@ -1562,7 +1686,7 @@ func (m *Manager) setStatus(
 		State:     state,
 		Path:      path,
 		Interface: interfaceName,
-		LastError: lastError,
+		LastError: model.PublicError(lastError),
 		UpdatedAt: time.Now().UTC(),
 	}
 	m.maintenanceError = false
@@ -1576,24 +1700,17 @@ func (m *Manager) recordMaintenanceError(phase string, err error) {
 	previous := m.status.LastError
 	changed := previous == nil ||
 		previous.Code != public.Code ||
-		previous.Message != public.Message
+		previous.Message != public.Message ||
+		previous.Detail != public.Detail || previous.Operation != public.Operation ||
+		previous.HTTPStatus != public.HTTPStatus || previous.RemoteCode != public.RemoteCode
 	m.status.LastError = public
 	m.status.UpdatedAt = time.Now().UTC()
 	m.maintenanceError = true
+	m.maintenancePhase = phase
 	m.mu.Unlock()
 	if changed {
 		m.statusChanges.Notify()
-		m.logger.Error(
-			"synchronize client configuration",
-			"phase",
-			phase,
-			"code",
-			public.Code,
-			"retryable",
-			public.Retryable,
-			"error",
-			err,
-		)
+		m.logger.Error("synchronize client configuration", append(logging.ErrorAttrs(err), "phase", phase)...)
 	}
 }
 
@@ -1603,10 +1720,13 @@ func (m *Manager) clearMaintenanceError() {
 		m.mu.Unlock()
 		return
 	}
+	phase := m.maintenancePhase
 	m.status.LastError = nil
 	m.status.UpdatedAt = time.Now().UTC()
 	m.maintenanceError = false
+	m.maintenancePhase = ""
 	m.mu.Unlock()
+	m.logger.Info("client maintenance recovered", "phase", phase)
 	m.statusChanges.Notify()
 }
 
@@ -1651,6 +1771,9 @@ func (n IPCPrivilegedNetwork) Status(
 			"client privileged network engine is unavailable",
 			true,
 		)
+	}
+	if response.Network.LastError != nil {
+		return response.Network, response.Network.LastError
 	}
 	return response.Network, nil
 }
@@ -1709,6 +1832,7 @@ func (p SystemLocalProbe) Reachable(
 	_, _ = expected.Write(nonce)
 	expectedProof := expected.Sum(nil)
 
+	var failures []error
 	for _, endpoint := range configuration.Endpoints {
 		host, port, splitErr := net.SplitHostPort(endpoint)
 		if splitErr != nil {
@@ -1748,6 +1872,7 @@ func (p SystemLocalProbe) Reachable(
 			bytes.NewReader(body),
 		)
 		if err != nil {
+			failures = append(failures, err)
 			continue
 		}
 		request.Header.Set("Content-Type", "application/json")
@@ -1756,6 +1881,12 @@ func (p SystemLocalProbe) Reachable(
 			transport.CloseIdleConnections()
 		}
 		if err != nil {
+			failures = append(failures, err)
+			continue
+		}
+		if response.StatusCode != http.StatusOK {
+			failures = append(failures, HTTPResponseError(response, "local_probe.request", nil))
+			response.Body.Close()
 			continue
 		}
 		data, readErr := io.ReadAll(io.LimitReader(
@@ -1764,6 +1895,10 @@ func (p SystemLocalProbe) Reachable(
 		))
 		response.Body.Close()
 		if readErr != nil || len(data) > maxRemoteResponseSize {
+			if readErr == nil {
+				readErr = errors.New("local probe response exceeds size limit")
+			}
+			failures = append(failures, readErr)
 			continue
 		}
 		var probe model.LocalProbeResponse
@@ -1775,6 +1910,11 @@ func (p SystemLocalProbe) Reachable(
 			hmac.Equal(proof, expectedProof) {
 			return true, nil
 		}
+		failures = append(failures, model.NewError(model.ErrorProtocol, "local probe returned an invalid identity proof", false))
+	}
+	if len(failures) > 0 {
+		return false, model.WithOperation(model.NormalizeError(errors.Join(failures...), model.ErrorUnavailable,
+			"no local probe endpoint succeeded", true), "local_probe.request")
 	}
 	return false, nil
 }

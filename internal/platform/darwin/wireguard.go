@@ -108,6 +108,9 @@ func (r *WireGuardRuntime) Status() model.ClientPrivilegedStatus {
 	uapi, err := r.device.IpcGet()
 	if err != nil {
 		r.logger.Error("read wireguard status", "error", err)
+		status.Degraded = true
+		status.LastError = model.PublicError(model.WithOperation(
+			model.NormalizeError(err, model.ErrorUnavailable, "cannot read WireGuard status", true), "wireguard.status"))
 		return status
 	}
 	status.LastHandshake = parseLastHandshake(uapi)

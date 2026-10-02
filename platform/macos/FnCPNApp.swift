@@ -5,6 +5,18 @@ import WebKit
 private let protocolVersion = 4
 private let maximumFrameSize = 256 * 1024
 
+private func describeFailure(_ failure: [String: Any]?) -> String {
+    guard let failure else { return "" }
+    var parts = [failure["code"] as? String, failure["message"] as? String]
+        .compactMap { $0 }
+    if let operation = failure["operation"] as? String { parts.append("[\(operation)]") }
+    if let status = failure["httpStatus"] as? Int { parts.append("HTTP \(status)") }
+    if let code = failure["remoteCode"] as? String { parts.append("remote \(code)") }
+    if let detail = failure["detail"] as? String { parts.append(detail) }
+    if let id = failure["requestId"] as? String { parts.append("request \(id)") }
+    return parts.joined(separator: ": ")
+}
+
 private func normalizeFNID(_ input: String) -> String? {
     let value = input.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
     var candidate = value
@@ -107,11 +119,11 @@ private final class IPCClient {
             throw invalidResponse()
         }
         if !ok {
-            let message = responseError?["message"] as? String ?? "Operation failed"
+            let message = describeFailure(responseError)
             throw NSError(
                 domain: "FnCPN",
                 code: 3,
-                userInfo: [NSLocalizedDescriptionKey: message]
+                userInfo: [NSLocalizedDescriptionKey: message, "failure": responseError ?? [:]]
             )
         }
         return result as? [String: Any] ?? [:]
@@ -207,12 +219,59 @@ private final class IPCClient {
     }
 }
 
-private final class AuthorizationWindow: NSObject, WKNavigationDelegate, NSWindowDelegate {
+private final class AuthorizationWindow: NSObject, WKNavigationDelegate, NSWindowDelegate, WKHTTPCookieStoreObserver {
+    private struct CookieIdentity: Hashable {
+        let name: String
+        let value: String
+        let domain: String
+        let path: String
+    }
+
+    private enum BootstrapDecision: Equatable {
+        case waitingForLogin
+        case authenticated
+        case failed(String, code: String = "PROTOCOL_ERROR", httpStatus: Int = 0, retryable: Bool = false)
+    }
+
+    private static let bootstrapScript = """
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 10000);
+        try {
+            const response = await fetch(path, {
+                credentials: "same-origin",
+                cache: "no-store",
+                redirect: "manual",
+                signal: controller.signal
+            });
+            let body = null;
+            if ((response.headers.get("content-type") || "").includes("application/json")) {
+                try { body = await response.json(); } catch (_) {}
+            }
+            return { status: response.status, body };
+        } finally {
+            clearTimeout(timeout);
+        }
+        """
+
     private let fnID: String
     private let requestID: String
     private let completion: (Result<Void, Error>) -> Void
     private var completed = false
+    private var checking = false
+    private var recheck = false
+    private var submitting = false
+    private var navigationGeneration = 0
+    private var lastCheckedCookies: Set<CookieIdentity>?
+    private var webView: WKWebView?
     private var window: NSWindow?
+
+    private var relayURL: URL? {
+        URL(string: "https://\(fnID).fnos.net/")
+    }
+
+    private var applicationURL: URL? {
+        relayURL?.appendingPathComponent("app/fncpn", isDirectory: true)
+    }
 
     init(
         fnID: String,
@@ -225,13 +284,20 @@ private final class AuthorizationWindow: NSObject, WKNavigationDelegate, NSWindo
     }
 
     func show() {
+        guard let relayURL,
+              let relayCookie = Self.relayCookie(for: relayURL) else {
+            finish(.failure(authorizationError("Invalid FN Connect address", code: "INVALID_ARGUMENT")))
+            return
+        }
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = .nonPersistent()
         let webView = WKWebView(
             frame: NSRect(x: 0, y: 0, width: 900, height: 680),
             configuration: configuration
         )
+        self.webView = webView
         webView.navigationDelegate = self
+        configuration.websiteDataStore.httpCookieStore.add(self)
         let window = NSWindow(
             contentRect: webView.frame,
             styleMask: [.titled, .closable, .resizable],
@@ -239,15 +305,19 @@ private final class AuthorizationWindow: NSObject, WKNavigationDelegate, NSWindo
             defer: false
         )
         window.title = "FnCPN Authorization"
+        window.isReleasedWhenClosed = false
         window.delegate = self
         window.contentView = webView
         window.center()
         window.makeKeyAndOrderFront(nil)
         self.window = window
-        guard let url = URL(
-            string: "https://\(fnID).fnos.net/app/fncpn/"
-        ) else { return }
-        webView.load(URLRequest(url: url))
+        configuration.websiteDataStore.httpCookieStore.setCookie(relayCookie) {
+            [weak self, weak webView] in
+            DispatchQueue.main.async {
+                guard let self, !self.completed else { return }
+                webView?.load(URLRequest(url: relayURL))
+            }
+        }
     }
 
     func webView(
@@ -255,65 +325,190 @@ private final class AuthorizationWindow: NSObject, WKNavigationDelegate, NSWindo
         decidePolicyFor navigationAction: WKNavigationAction,
         decisionHandler: @escaping (WKNavigationActionPolicy) -> Void
     ) {
-        guard let host = navigationAction.request.url?.host?.lowercased(),
-              host == "fnos.net" || host == "\(fnID).fnos.net" else {
+        guard allowsNavigation(to: navigationAction.request.url) else {
+            decisionHandler(.cancel)
+            return
+        }
+        if navigationAction.targetFrame == nil {
+            webView.load(navigationAction.request)
             decisionHandler(.cancel)
             return
         }
         decisionHandler(.allow)
     }
 
+    func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
+        navigationGeneration += 1
+    }
+
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-        guard !completed,
-              let url = webView.url,
-              url.host?.lowercased() == "\(fnID).fnos.net",
-              url.path == "/app/fncpn" || url.path.hasPrefix("/app/fncpn/") else {
+        lastCheckedCookies = nil
+        checkAuthorization()
+    }
+
+    func cookiesDidChange(in cookieStore: WKHTTPCookieStore) {
+        DispatchQueue.main.async { [weak self] in
+            self?.checkAuthorization()
+        }
+    }
+
+    func webView(
+        _ webView: WKWebView,
+        didFailProvisionalNavigation navigation: WKNavigation!,
+        withError error: Error
+    ) {
+        navigationFailed(error)
+    }
+
+    func webView(
+        _ webView: WKWebView,
+        didFail navigation: WKNavigation!,
+        withError error: Error
+    ) {
+        navigationFailed(error)
+    }
+
+    private func navigationFailed(_ error: Error) {
+        let error = error as NSError
+        if error.domain == NSURLErrorDomain && error.code == NSURLErrorCancelled { return }
+        finish(.failure(error))
+    }
+
+    private func checkAuthorization() {
+        guard !completed, !submitting else { return }
+        if checking {
+            recheck = true
             return
         }
+        guard let webView, !webView.isLoading, isTargetPage(webView.url),
+              let applicationURL else { return }
+        checking = true
+        let generation = navigationGeneration
+        webView.configuration.websiteDataStore.httpCookieStore.getAllCookies {
+            [weak self, weak webView] cookies in
+            DispatchQueue.main.async {
+                guard let self, let webView, !self.completed else { return }
+                guard generation == self.navigationGeneration,
+                      !webView.isLoading, self.isTargetPage(webView.url) else {
+                    self.finishCheck()
+                    return
+                }
+                let matching = cookies.filter { self.cookie($0, appliesTo: applicationURL) }
+                let identity = Set(matching.filter { $0.name != "mode" }.map {
+                    CookieIdentity(name: $0.name, value: $0.value, domain: $0.domain, path: $0.path)
+                })
+                // The routing cookie is not a credential. Ignore duplicate cookie notifications.
+                if identity.isEmpty { self.lastCheckedCookies = nil }
+                guard !identity.isEmpty, identity != self.lastCheckedCookies else {
+                    self.finishCheck()
+                    return
+                }
+                self.lastCheckedCookies = identity
+                webView.callAsyncJavaScript(
+                    Self.bootstrapScript,
+                    arguments: ["path": "/app/fncpn/api/v1/bootstrap"],
+                    in: nil,
+                    in: .defaultClient
+                ) { [weak self, weak webView] result in
+                    DispatchQueue.main.async {
+                        guard let self, let webView, !self.completed else { return }
+                        guard generation == self.navigationGeneration,
+                              !webView.isLoading, self.isTargetPage(webView.url) else {
+                            self.finishCheck()
+                            return
+                        }
+                        switch result {
+                        case .failure(let error):
+                            self.finish(.failure(error))
+                        case .success(let response):
+                            switch Self.bootstrapDecision(response) {
+                            case .waitingForLogin:
+                                self.finishCheck()
+                            case .failed(let message, let code, let status, let retryable):
+                                self.finish(.failure(self.authorizationError(
+                                    message, code: code, httpStatus: status, retryable: retryable
+                                )))
+                            case .authenticated:
+                                if self.isApplicationPage(webView.url) {
+                                    self.submitAuthorization()
+                                } else {
+                                    self.checking = false
+                                    self.recheck = false
+                                    webView.load(URLRequest(url: applicationURL))
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func finishCheck() {
+        checking = false
+        if recheck {
+            recheck = false
+            checkAuthorization()
+        }
+    }
+
+    private func submitAuthorization() {
+        guard !completed, !submitting, let webView, let applicationURL else { return }
+        checking = false
+        submitting = true
+        let generation = navigationGeneration
+        // Bootstrap may refresh credentials; export the store only after its response.
         webView.configuration.websiteDataStore.httpCookieStore.getAllCookies {
             [weak self] cookies in
-            guard let self else { return }
-            let matching = cookies.filter {
-                self.cookie($0, appliesTo: url)
-            }
-            guard !matching.isEmpty else { return }
-            self.completed = true
-            DispatchQueue.global(qos: .userInitiated).async {
-                do {
-                    let values = matching.map { cookie -> [String: Any] in
-                        var value: [String: Any] = [
-                            "name": cookie.name,
-                            "value": cookie.value,
-                            "domain": cookie.domain,
-                            "path": cookie.path,
-                            "secure": cookie.isSecure,
-                            "httpOnly": cookie.isHTTPOnly,
-                            "hostOnly": cookie.domain.caseInsensitiveCompare(
-                                url.host ?? ""
-                            ) == .orderedSame,
-                        ]
-                        if let expires = cookie.expiresDate {
-                            value["expires"] = ISO8601DateFormatter().string(from: expires)
-                        }
-                        return value
+            DispatchQueue.main.async {
+                guard let self, !self.completed else { return }
+                guard generation == self.navigationGeneration,
+                      let currentView = self.webView, !currentView.isLoading,
+                      self.isApplicationPage(currentView.url) else {
+                    self.submitting = false
+                    self.lastCheckedCookies = nil
+                    self.checkAuthorization()
+                    return
+                }
+                let matching = cookies.filter { self.cookie($0, appliesTo: applicationURL) }
+                guard matching.contains(where: { $0.name != "mode" }) else {
+                    self.submitting = false
+                    self.lastCheckedCookies = nil
+                    self.checkAuthorization()
+                    return
+                }
+                let values = matching.map { cookie -> [String: Any] in
+                    var value: [String: Any] = [
+                        "name": cookie.name,
+                        "value": cookie.value,
+                        "domain": cookie.domain,
+                        "path": cookie.path,
+                        "secure": cookie.isSecure,
+                        "httpOnly": cookie.isHTTPOnly,
+                        "hostOnly": !cookie.domain.hasPrefix("."),
+                    ]
+                    if let expires = cookie.expiresDate {
+                        value["expires"] = ISO8601DateFormatter().string(from: expires)
                     }
-                    _ = try IPCClient().call(
-                        method: "authorize-complete",
-                        params: [
-                            "requestId": self.requestID,
-                            "fnId": self.fnID,
-                            "cookies": values,
-                        ]
-                    )
-                    DispatchQueue.main.async {
-                        self.window?.close()
-                        self.completion(.success(()))
+                    return value
+                }
+                DispatchQueue.global(qos: .userInitiated).async {
+                    let result: Result<Void, Error>
+                    do {
+                        _ = try IPCClient().call(
+                            method: "authorize-complete",
+                            params: [
+                                "requestId": self.requestID,
+                                "fnId": self.fnID,
+                                "cookies": values,
+                            ]
+                        )
+                        result = .success(())
+                    } catch {
+                        result = .failure(error)
                     }
-                } catch {
                     DispatchQueue.main.async {
-                        self.completed = true
-                        self.window?.close()
-                        self.completion(.failure(error))
+                        self.finish(result)
                     }
                 }
             }
@@ -323,12 +518,127 @@ private final class AuthorizationWindow: NSObject, WKNavigationDelegate, NSWindo
     func windowWillClose(_ notification: Notification) {
         guard !completed else { return }
         completed = true
+        stopObservingCookies()
+        cancelRequest()
+        releaseWebView()
+    }
+
+    private func finish(_ result: Result<Void, Error>) {
+        guard !completed else { return }
+        completed = true
+        stopObservingCookies()
+        if case .failure(let error) = result { cancelRequest(failure: error) }
+        window?.close()
+        releaseWebView()
+        completion(result)
+    }
+
+    private func stopObservingCookies() {
+        webView?.configuration.websiteDataStore.httpCookieStore.remove(self)
+    }
+
+    private func releaseWebView() {
+        webView?.stopLoading()
+        window?.contentView = nil
+        webView = nil
+        window = nil
+        lastCheckedCookies = nil
+    }
+
+    private func cancelRequest(failure: Error? = nil) {
+        let requestID = requestID
+        var params: [String: Any] = ["requestId": requestID]
+        if let failure {
+            let error = failure as NSError
+            let timedOut = error.domain == NSURLErrorDomain && error.code == NSURLErrorTimedOut
+            params["failure"] = error.userInfo["failure"] as? [String: Any] ?? [
+                "code": timedOut ? "TIMEOUT" : "UNAVAILABLE",
+                "message": "Authorization browser failed",
+                "retryable": true,
+                "operation": "authorization.browser",
+                "detail": "\(error.domain) (\(error.code)): \(error.localizedDescription)",
+            ]
+        }
+        let cancellation = params
         DispatchQueue.global(qos: .utility).async {
             _ = try? IPCClient().call(
                 method: "authorization-cancel",
-                params: ["requestId": self.requestID]
+                params: cancellation
             )
         }
+    }
+
+    private func authorizationError(
+        _ message: String, code: String = "PROTOCOL_ERROR", httpStatus: Int = 0, retryable: Bool = false
+    ) -> Error {
+        var failure: [String: Any] = [
+            "code": code, "message": message, "retryable": retryable,
+            "operation": "authorization.bootstrap"
+        ]
+        if httpStatus != 0 { failure["httpStatus"] = httpStatus }
+        return NSError(domain: "FnCPN", code: 5, userInfo: [
+            NSLocalizedDescriptionKey: describeFailure(failure), "failure": failure
+        ])
+    }
+
+    private func allowsNavigation(to url: URL?) -> Bool {
+        guard let url, url.scheme?.lowercased() == "https",
+              url.port == nil || url.port == 443,
+              url.user == nil, url.password == nil,
+              let host = url.host?.lowercased() else { return false }
+        return host == "fnos.net" || host == "\(fnID).fnos.net"
+    }
+
+    private func isTargetPage(_ url: URL?) -> Bool {
+        allowsNavigation(to: url) && url?.host?.lowercased() == "\(fnID).fnos.net"
+    }
+
+    private func isApplicationPage(_ url: URL?) -> Bool {
+        guard isTargetPage(url), let path = url?.path else { return false }
+        return path == "/app/fncpn" || path.hasPrefix("/app/fncpn/")
+    }
+
+    private static func relayCookie(for url: URL) -> HTTPCookie? {
+        HTTPCookie.cookies(
+            withResponseHeaderFields: ["Set-Cookie": "mode=relay; Path=/; Secure; HttpOnly"],
+            for: url
+        ).first
+    }
+
+    private static func bootstrapDecision(_ response: Any?) -> BootstrapDecision {
+        guard let response = response as? [String: Any],
+              let status = response["status"] as? Int else {
+            return .failed("Invalid FnCPN bootstrap response")
+        }
+        if status != 401,
+           let body = response["body"] as? [String: Any],
+           let failure = body["error"] as? [String: Any] {
+            return .failed(describeFailure(failure), code: failure["code"] as? String ?? "PROTOCOL_ERROR",
+                           httpStatus: status, retryable: failure["retryable"] as? Bool == true)
+        }
+        if status == 0 || status == 401 || status == 403 {
+            return .waitingForLogin
+        }
+        guard status == 200 else {
+            let code = status == 429 ? "RESOURCE_EXHAUSTED" : status >= 500 ? "UNAVAILABLE" : "PROTOCOL_ERROR"
+            return .failed("FnCPN bootstrap returned HTTP \(status)", code: code,
+                           httpStatus: status, retryable: status == 429 || status >= 500)
+        }
+        // Some fnOS gateways return an HTML login/invalid-token page with HTTP 200.
+        if response["body"] == nil || response["body"] is NSNull {
+            return .waitingForLogin
+        }
+        guard let body = response["body"] as? [String: Any],
+              let version = body["protocolVersion"] as? Int,
+              let administrator = body["administrator"] as? Bool else {
+            return .failed("Invalid FnCPN bootstrap response")
+        }
+        guard version == protocolVersion else {
+            return .failed("FnCPN client and server protocol versions do not match")
+        }
+        return administrator
+            ? .authenticated
+            : .failed("Administrator access is required to register this device", code: "PERMISSION_DENIED", httpStatus: status)
     }
 
     private func cookie(_ cookie: HTTPCookie, appliesTo url: URL) -> Bool {
@@ -336,8 +646,10 @@ private final class AuthorizationWindow: NSObject, WKNavigationDelegate, NSWindo
         let domain = cookie.domain
             .trimmingCharacters(in: CharacterSet(charactersIn: "."))
             .lowercased()
-        let domainMatches = host == domain || host.hasSuffix("." + domain)
-        guard domainMatches, !cookie.isSecure || url.scheme == "https" else {
+        let domainMatches = host == domain ||
+            (cookie.domain.hasPrefix(".") && host.hasSuffix("." + domain))
+        guard domainMatches, !cookie.isSecure || url.scheme == "https",
+              cookie.expiresDate.map({ $0 > Date() }) ?? true else {
             return false
         }
         let cookiePath = cookie.path.isEmpty ? "/" : cookie.path
@@ -369,6 +681,18 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
     private var window: NSWindow!
     private var refreshInFlight = false
 
+    @MainActor
+    static func main() {
+        let application = NSApplication.shared
+        let delegate = AppDelegate()
+        application.delegate = delegate
+        application.setActivationPolicy(.regular)
+        // There is no nib/storyboard to create or retain the delegate.
+        withExtendedLifetime(delegate) {
+            _ = NSApplicationMain(CommandLine.argc, CommandLine.unsafeArgv)
+        }
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         let content = NSView(frame: NSRect(x: 0, y: 0, width: 520, height: 444))
         let title = NSTextField(labelWithString: "FnCPN")
@@ -384,9 +708,23 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         addRow("最近错误", value: errorValue, y: 182, to: content)
 
         fnIDField.placeholderString = "FN ID"
-        fnIDField.frame = NSRect(x: 24, y: 92, width: 270, height: 30)
-        content.addSubview(fnIDField)
-        content.addSubview(button("授权", x: 306, y: 92, action: #selector(authorize)))
+        fnIDField.usesSingleLineMode = true
+        fnIDField.font = .systemFont(ofSize: NSFont.systemFontSize)
+        fnIDField.translatesAutoresizingMaskIntoConstraints = false
+        let authorizeButton = button("授权", x: 0, y: 0, action: #selector(authorize))
+        authorizeButton.translatesAutoresizingMaskIntoConstraints = false
+        let authorizationRow = NSStackView(views: [fnIDField, authorizeButton])
+        authorizationRow.orientation = .horizontal
+        authorizationRow.alignment = .centerY
+        authorizationRow.spacing = 12
+        authorizationRow.translatesAutoresizingMaskIntoConstraints = false
+        content.addSubview(authorizationRow)
+        NSLayoutConstraint.activate([
+            authorizationRow.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 24),
+            authorizationRow.centerYAnchor.constraint(equalTo: content.bottomAnchor, constant: -108),
+            fnIDField.widthAnchor.constraint(equalToConstant: 270),
+            authorizeButton.widthAnchor.constraint(equalToConstant: 96),
+        ])
         content.addSubview(button("连接", x: 24, y: 38, action: #selector(connect)))
         content.addSubview(button("断开", x: 132, y: 38, action: #selector(disconnect)))
         content.addSubview(button("重试", x: 240, y: 38, action: #selector(retryConnection)))
@@ -398,6 +736,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
             defer: false
         )
         window.title = "FnCPN"
+        window.isReleasedWhenClosed = false
         window.contentView = content
         window.center()
         window.makeKeyAndOrderFront(nil)
@@ -417,6 +756,14 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         _ sender: NSApplication
     ) -> Bool {
         false
+    }
+
+    func applicationShouldHandleReopen(
+        _ sender: NSApplication,
+        hasVisibleWindows flag: Bool
+    ) -> Bool {
+        if !flag { showWindow() }
+        return true
     }
 
     func application(_ application: NSApplication, open urls: [URL]) {
@@ -452,6 +799,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func showWindow() {
+        window.deminiaturize(nil)
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
     }
@@ -609,10 +957,8 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
                         self?.handshakeValue.stringValue = "-"
                     }
                     let lastError = status["lastError"] as? [String: Any]
-                    let errorText =
-                        [lastError?["code"] as? String, lastError?["message"] as? String]
-                            .compactMap { $0 }
-                            .joined(separator: ": ")
+                    let errorText = describeFailure(lastError)
+                    self?.errorValue.toolTip = errorText
                     let overlap = diagnostics["lanOverlap"] as? Bool == true
                     let displayedError = overlap && errorText.isEmpty
                         ? "LAN_OVERLAP"

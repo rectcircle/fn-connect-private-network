@@ -1,5 +1,5 @@
 appname=fncpn
-version=0.1.0
+version=0.1.16
 display_name=FN Connect Private Network
 desc=通过 FN Connect 自动建立 WireGuard 异地私有网络。
 source=thirdparty

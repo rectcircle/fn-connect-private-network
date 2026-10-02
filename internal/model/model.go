@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"os"
+	"syscall"
 	"time"
 )
 
@@ -31,13 +33,21 @@ const (
 	ErrorTimeout            ErrorCode = "TIMEOUT"
 	ErrorCanceled           ErrorCode = "CANCELED"
 	ErrorInternal           ErrorCode = "INTERNAL"
+	ErrorProtocol           ErrorCode = "PROTOCOL_ERROR"
+	ErrorResourceExhausted  ErrorCode = "RESOURCE_EXHAUSTED"
+	ErrorDiscoveryFailed    ErrorCode = "DISCOVERY_FAILED"
 )
 
 type Error struct {
-	Code      ErrorCode `json:"code"`
-	Message   string    `json:"message"`
-	Retryable bool      `json:"retryable"`
-	Cause     error     `json:"-"`
+	Code       ErrorCode `json:"code"`
+	Message    string    `json:"message"`
+	Retryable  bool      `json:"retryable"`
+	Operation  string    `json:"operation,omitempty"`
+	Detail     string    `json:"detail,omitempty"`
+	HTTPStatus int       `json:"httpStatus,omitempty"`
+	RemoteCode string    `json:"remoteCode,omitempty"`
+	RequestID  string    `json:"requestId,omitempty"`
+	Cause      error     `json:"-"`
 }
 
 func (e *Error) Error() string {
@@ -77,6 +87,11 @@ func NormalizeError(
 	}
 	var typed *Error
 	if errors.As(err, &typed) {
+		if err != typed {
+			result := *typed
+			result.Cause = err
+			return &result
+		}
 		return typed
 	}
 	if errors.Is(err, context.Canceled) {
@@ -84,6 +99,12 @@ func NormalizeError(
 	}
 	if errors.Is(err, context.DeadlineExceeded) {
 		return WrapError(ErrorTimeout, "operation timed out", true, err)
+	}
+	if errors.Is(err, os.ErrPermission) {
+		return WrapError(ErrorPermissionDenied, "system permission denied", false, err)
+	}
+	if errors.Is(err, syscall.ENOSPC) || errors.Is(err, syscall.EMFILE) || errors.Is(err, syscall.ENFILE) {
+		return WrapError(ErrorResourceExhausted, "system resource limit reached", false, err)
 	}
 	var networkError net.Error
 	if errors.As(err, &networkError) && networkError.Timeout() {
@@ -97,11 +118,17 @@ func PublicError(err error) *Error {
 	if typed == nil {
 		return nil
 	}
-	return &Error{
-		Code:      typed.Code,
-		Message:   typed.Message,
-		Retryable: typed.Retryable,
+	result := *typed
+	result.Message = SafeText(typed.Message)
+	result.Detail = SafeText(typed.Detail)
+	if typed.Cause != nil {
+		result.Detail = joinDetail(result.Detail, ErrorDetail(typed.Cause))
 	}
+	result.Operation = SafeText(typed.Operation)
+	result.RemoteCode = SafeText(typed.RemoteCode)
+	result.RequestID = SafeRequestID(typed.RequestID)
+	result.Cause = nil
+	return &result
 }
 
 type ClientState string
@@ -131,6 +158,7 @@ type ClientStatus struct {
 
 type ClientDiagnostics struct {
 	Status              ClientStatus `json:"status"`
+	Errors              []*Error     `json:"errors,omitempty"`
 	PrivilegedAvailable bool         `json:"privilegedAvailable"`
 	PrivilegedActive    bool         `json:"privilegedActive"`
 	PrivilegedDegraded  bool         `json:"privilegedDegraded"`
@@ -186,6 +214,7 @@ type ServerState struct {
 }
 
 type ClientPrivilegedStatus struct {
+	LastError     *Error     `json:"lastError,omitempty"`
 	Active        bool       `json:"active"`
 	Degraded      bool       `json:"degraded"`
 	Interface     string     `json:"interface,omitempty"`
@@ -195,6 +224,7 @@ type ClientPrivilegedStatus struct {
 }
 
 type ServerPrivilegedStatus struct {
+	LastError  *Error                 `json:"lastError,omitempty"`
 	Active     bool                   `json:"active"`
 	Degraded   bool                   `json:"degraded"`
 	Interface  string                 `json:"interface,omitempty"`
@@ -270,7 +300,7 @@ func DecodeStrict(data []byte, destination any) error {
 func ValidateProtocolVersion(version int) error {
 	if version != ProtocolVersion {
 		return NewError(
-			ErrorInvalidArgument,
+			ErrorProtocol,
 			fmt.Sprintf("unsupported protocol version %d", version),
 			false,
 		)

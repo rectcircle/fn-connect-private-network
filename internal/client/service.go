@@ -4,10 +4,12 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"log/slog"
 	"sync"
 	"time"
 
 	"github.com/rectcircle/fn-connect-private-network/internal/ipc"
+	"github.com/rectcircle/fn-connect-private-network/internal/logging"
 	"github.com/rectcircle/fn-connect-private-network/internal/model"
 )
 
@@ -50,6 +52,11 @@ type AuthorizationRequest struct {
 	FNID      string `json:"fnId,omitempty"`
 }
 
+type AuthorizationCancelRequest struct {
+	RequestID string       `json:"requestId"`
+	Failure   *model.Error `json:"failure,omitempty"`
+}
+
 type AuthorizationResult struct {
 	RequestID string       `json:"requestId"`
 	State     string       `json:"state"`
@@ -78,6 +85,7 @@ type pendingAuthorization struct {
 }
 
 type Service struct {
+	Logger           *slog.Logger
 	mu               sync.RWMutex
 	runtime          Runtime
 	pending          map[string]pendingAuthorization
@@ -219,6 +227,7 @@ func (s *Service) beginAuthorization(request ipc.Request) ipc.Response {
 	})
 	s.pending[id] = pending
 	s.mu.Unlock()
+	s.logger().Info("authorization requested", "authorization_id", id, "fn_id", fnID)
 	return ipc.Success(request.ID, AuthorizationResult{
 		RequestID: id,
 		State:     "pending",
@@ -321,7 +330,7 @@ func authorizationResult(
 }
 
 func (s *Service) cancelAuthorization(request ipc.Request) ipc.Response {
-	input, err := ipc.DecodeParams[AuthorizationRequest](request)
+	input, err := ipc.DecodeParams[AuthorizationCancelRequest](request)
 	if err != nil {
 		return ipc.Failure(request.ID, err)
 	}
@@ -352,8 +361,19 @@ func (s *Service) cancelAuthorization(request ipc.Request) ipc.Response {
 	}
 	pending.state = "canceled"
 	pending.err = model.NewError(model.ErrorCanceled, "authorization canceled", false)
+	if input.Failure != nil {
+		if !model.IsErrorCode(input.Failure.Code) {
+			input.Failure.Code = model.ErrorInternal
+		}
+		pending.state = "failed"
+		pending.err = model.PublicError(model.WithOperation(input.Failure, "authorization.browser"))
+	}
 	closeAuthorizationChange(pending)
 	s.pending[input.RequestID] = pending
+	if input.Failure != nil {
+		return ipc.Failure(request.ID, pending.err)
+	}
+	s.logger().Info("authorization canceled", "authorization_id", input.RequestID, "fn_id", pending.fnID)
 	return ipc.Success(request.ID, AuthorizationResult{
 		RequestID: input.RequestID,
 		State:     pending.state,
@@ -411,6 +431,9 @@ func (s *Service) startAuthorization(
 	pending.started = true
 	pending.cancel = cancel
 	s.pending[authorization.RequestID] = pending
+	logger := logging.FromContext(ctx, s.logger()).With("authorization_id", authorization.RequestID)
+	logger.Info("authorization credentials received", "fn_id", pending.fnID)
+	authorizationContext = logging.WithLogger(authorizationContext, logger)
 	return authorizationContext, nil
 }
 
@@ -444,6 +467,9 @@ func (s *Service) finishAuthorization(requestID string, err error) error {
 	if err == nil {
 		pending.state = "succeeded"
 		pending.err = nil
+		s.logger().Info("authorization completed",
+			"authorization_id", requestID, "fn_id", pending.fnID,
+			"elapsed_ms", time.Since(pending.createdAt).Milliseconds())
 	} else {
 		pending.state = "failed"
 		pending.err = model.PublicError(err)
@@ -482,9 +508,19 @@ func (s *Service) expireAuthorizationLocked(
 		"authorization request expired",
 		true,
 	)
+	pending.err.Operation = "authorization.wait"
+	pending.err.RequestID = model.SafeRequestID(requestID)
+	s.logger().Error("authorization expired", logging.ErrorAttrs(pending.err)...)
 	closeAuthorizationChange(pending)
 	s.pending[requestID] = pending
 	return pending
+}
+
+func (s *Service) logger() *slog.Logger {
+	if s.Logger != nil {
+		return s.Logger
+	}
+	return slog.Default()
 }
 
 func closeAuthorizationChange(pending pendingAuthorization) {

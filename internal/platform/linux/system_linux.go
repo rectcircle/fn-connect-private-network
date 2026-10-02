@@ -393,6 +393,9 @@ func (systemFirewallManager) Apply(
 			})
 		}
 	}
+	if err := stageDockerForwarding(connection, tableName, interfaceName, plan); err != nil {
+		return err
+	}
 	if err := connection.Flush(); err != nil {
 		return fmt.Errorf("apply nftables rules: %w", err)
 	}
@@ -416,6 +419,9 @@ func (systemFirewallManager) Remove(ctx context.Context, tableName string) error
 			connection.DelTable(table)
 		}
 	}
+	if err := stageDockerForwarding(connection, tableName, "", model.ServerPlan{}); err != nil {
+		return err
+	}
 	if err := connection.Flush(); err != nil {
 		return fmt.Errorf("remove nftables table: %w", err)
 	}
@@ -432,15 +438,20 @@ func interfaceMatch(key expr.MetaKey, interfaceName string) []expr.Any {
 }
 
 func ipv4PrefixMatch(offset uint32, prefix netip.Prefix) []expr.Any {
-	address := prefix.Masked().Addr().As4()
-	mask := net.CIDRMask(prefix.Bits(), 32)
-	return []expr.Any{
+	return append([]expr.Any{
 		&expr.Meta{Key: expr.MetaKeyNFPROTO, Register: 1},
 		&expr.Cmp{
 			Op:       expr.CmpOpEq,
 			Register: 1,
 			Data:     []byte{unix.NFPROTO_IPV4},
 		},
+	}, ipv4AddressMatch(offset, prefix)...)
+}
+
+func ipv4AddressMatch(offset uint32, prefix netip.Prefix) []expr.Any {
+	address := prefix.Masked().Addr().As4()
+	mask := net.CIDRMask(prefix.Bits(), 32)
+	return []expr.Any{
 		&expr.Payload{
 			DestRegister: 1,
 			Base:         expr.PayloadBaseNetworkHeader,

@@ -85,17 +85,7 @@ func defaultLANAddresses() ([]netip.Prefix, error) {
 	if err != nil {
 		return nil, err
 	}
-	bestIndex := 0
-	bestPriority := int(^uint(0) >> 1)
-	for _, route := range routes {
-		if route.Dst != nil || route.LinkIndex <= 0 {
-			continue
-		}
-		if route.Priority < bestPriority {
-			bestPriority = route.Priority
-			bestIndex = route.LinkIndex
-		}
-	}
+	bestIndex := defaultIPv4Interface(routes)
 	if bestIndex == 0 {
 		return nil, errors.New("default IPv4 route was not found")
 	}

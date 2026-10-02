@@ -2,8 +2,19 @@
 
 set -eu
 
-TOOL="/Library/PrivilegedHelperTools/com.rectcircle.fncpn/fncpn"
+HELPER_ROOT="/Library/PrivilegedHelperTools"
+TOOL="${HELPER_ROOT}/com.rectcircle.fncpn/fncpn"
 AGENT_LABEL="com.rectcircle.fncpn.client"
+
+# Protect the shared parent before the package writes any privileged executable.
+if [ -L "$HELPER_ROOT" ]; then
+  echo "FnCPN helper parent must not be a symbolic link: $HELPER_ROOT" >&2
+  exit 1
+fi
+/bin/mkdir -p "$HELPER_ROOT"
+/usr/sbin/chown root:wheel "$HELPER_ROOT"
+/bin/chmod -N "$HELPER_ROOT"
+/bin/chmod 0755 "$HELPER_ROOT"
 
 if [ -x "$TOOL" ]; then
   /bin/ps -axo uid=,pid=,command= | while read -r uid pid command; do

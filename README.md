@@ -4,19 +4,24 @@
 
 - [产品需求与技术架构](docs/03-fncpn-product-requirements.md)
 - [PoC 架构与验证结论](docs/02-fncpn-poc-architecture-and-validation.md)
+- [错误码与全链路诊断](docs/05-error-diagnostics.md)
+- [发布验收与实机记录](docs/04-release-acceptance.md#实机验收记录)
 
 本仓库仅包含正式实现。PoC 源码在本地 `tmp/demo/` 留存，不纳入版本控制；
 相关结论见上方 PoC 架构与验证文档。
 
 ## 当前状态
 
-当前为 P0 初版实现，尚未完成端到端实机验证。已实现：
+当前为 P0 初版实现。截至 2026-10-02，已完成一轮 RELAY 基础访问、LAN 转发、
+断开清理、升级保留凭据/暂停意图、服务端停启恢复、Mac 重启自动连接，以及设备清理、
+MTU 大包和文件下载的实机验证。完整 P0 发布验收尚未完成；版本、证据类型和剩余范围
+见 [实机验收记录](docs/04-release-acceptance.md#实机验收记录)。已实现：
 
 - Go `1.27` 模块，module 为 `github.com/rectcircle/fn-connect-private-network`。
 - 单一 `fncpn` Go 二进制和多子命令进程模型。
 - 版本化 framed JSON IPC。
 - 客户端状态模型和 CLI 到 client daemon 的 Unix Socket 通讯。
-- server daemon 的 bootstrap、只读设备状态和网络配置 API。
+- server daemon 的 bootstrap、设备状态、离线设备删除和网络配置 API。
 - overlay 校验、最低可用地址分配、地址复用和全量重分配。
 - 服务端业务状态使用单个原子写入的 `state.json`，兼容读取旧版拆分文件。
 - Darwin/Linux Unix peer credential 识别和 privileged-daemon 调用者授权。
@@ -29,15 +34,16 @@
 - fnOS 内核 WireGuard、IPv4 forwarding、专属 nftables 规则和服务端密钥。
 - server daemon 统一串行提交并发布配置/网络快照，root 按完整 Plan 声明式收敛。
 - 幂等设备注册、配置长轮询同步和受限二进制 WebSocket relay。
-- macOS Keychain 私钥与 Cookie 存储，以及非敏感本地配置。
+- macOS root 私有文件保存私钥与 Cookie，按系统 peer UID 隔离，以及非敏感本地配置。
 - FN Connect 地址发现、局域网优先、IPv6 直连、WSS fallback 和冲突路由。
 - 网络变化事件、relay 自动重连和遵循用户连接意图的统一后台恢复。
 - macOS App/PKG 与 fnOS 管理页面/FPK。
 
-尚需在真实安装环境完成端到端验收，包括 fnOS 内核规则、WebKit 登录、
-公网 IPv6、FN Connect 中继、升级和卸载清理。
+尚需验证 LOCAL、公网 IPv6 DIRECT、多路径/网络切换、睡眠唤醒、网段冲突、
+多客户端并发、配置变更与故障回滚、Cookie 无感续期、最新版卸载及安全负向场景。
+单次下载正常不代表吞吐、文件哈希或长期稳定性验收已完成。
 
-macOS 接口和路由写入不依赖 CGO；正式 macOS 包为 Keychain、
+macOS 接口和路由写入不依赖 CGO；正式 macOS 包为
 SCDynamicStore 网络与控制台用户监听启用 CGO。
 
 ## Package 结构
@@ -112,7 +118,13 @@ FPK 构建要求通过 `FNPACK` 或 `PATH` 显式提供 `fnpack`，不依赖本�
 - `fncpn-<version>-x86.fpk`：x86_64 fnOS 服务端。
 - `fncpn-<version>-arm.fpk`：ARM64 fnOS 服务端。
 
-macOS 卸载默认保留当前用户配置、日志和 Keychain。需要同时清除指定用户数据时：
+macOS 凭据保存在 `/var/db/fncpn/credentials/<uid>/`：root 所有，目录 `0700`、
+文件 `0600`，普通客户端通过受限特权 IPC 存取，不再调用 Keychain。
+从仍使用 Keychain 的旧测试版切换时，不迁移旧凭据，需要重新授权；
+旧 Keychain 条目不会自动读取或删除。已使用文件凭据的版本保留配置升级时不应主动
+清空身份，`0.1.13` 升至 `0.1.14` 后复用原设备和凭据重连已通过实机验证。
+
+macOS 卸载默认保留用户配置、日志和 root 凭据文件。需要同时清除指定用户数据时：
 
 ```bash
 sudo /Library/PrivilegedHelperTools/com.rectcircle.fncpn/uninstall.sh \

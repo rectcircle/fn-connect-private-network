@@ -39,7 +39,7 @@ PoC 已证明内核 WireGuard、macOS 用户态隧道、IPv6 UDP 直连、FN Con
 |---|---|---|
 | fnOS 管理员 | 安装服务端、授权客户端注册和管理可访问网段 | P0 仅管理员可注册新设备，不提供设备级授权管理 |
 | 已注册设备用户 | 连接、断开、查看状态和重新授权当前设备 | 不能修改服务端网络策略；P0 不提供设备 owner 和委托授权 |
-| 客户端 privileged-daemon | 以 root 身份执行严格校验后的接口和路由变更 | 不能访问 Cookie，不能执行调用者指定的命令或读取任意路径 |
+| 客户端 privileged-daemon | 以 root 身份执行网络变更，并按系统 peer UID 保存客户端凭据 | 凭据仅作为不透明数据保存；不能执行调用者指定的命令、读取任意路径或发起 HTTP 请求 |
 | 服务端 privileged-daemon | 以 root 身份管理 WireGuard、转发和防火墙状态 | 不接收 HTTP/WSS，不解析浏览器输入 |
 
 ### 2.3 核心对象
@@ -49,7 +49,7 @@ PoC 已证明内核 WireGuard、macOS 用户态隧道、IPv6 UDP 直连、FN Con
 | 服务端配置 | FN ID、服务端公钥、overlay 网段、监听端口、可访问 LAN 网段和配置版本 | fnOS 服务端 |
 | 设备记录 | 设备 ID、展示名称、公钥、分配地址和最近握手信息；P0 仅服务自动注册和 WireGuard peer | fnOS 服务端 |
 | 本地配置 | 服务端标识、设备 ID、连接偏好和最后一次有效配置 | macOS 当前用户 |
-| 授权凭证集 | FN Connect 域名对应的有效 Cookie 及属性，不等同于单个字符串 | macOS 当前用户 Keychain |
+| 授权凭证集 | FN Connect 域名对应的有效 Cookie 及属性，不等同于单个字符串 | macOS root 私有文件，按用户 UID 和 FN ID 隔离 |
 | 连接会话 | 当前路径、接口、路由、握手状态、重连状态和错误原因 | macOS 用户态守护进程 |
 
 ## 3. 范围与优先级
@@ -62,6 +62,7 @@ PoC 已证明内核 WireGuard、macOS 用户态隧道、IPv6 UDP 直连、FN Con
 - 自动按“局域网直达 → IPv6 UDP 直连 → FN Connect WSS 中继”选择路径。
 - 支持访问 NAS overlay 地址和自动识别的主要 LAN 网段。
 - 支持多个自动注册设备，每台设备具有独立密钥和地址。
+- 管理员可查看设备活性，并在确认后按设备 ID 删除离线记录。
 - 支持自动连接、断线重连、网络切换和睡眠唤醒恢复。
 - 提供 macOS 状态界面、菜单栏入口和最小 CLI。
 - 每个平台只安装一个 `fncpn` Go 二进制，不依赖 Homebrew、用户手工安装或额外第三方运行时命令。
@@ -81,7 +82,7 @@ PoC 已证明内核 WireGuard、macOS 用户态隧道、IPv6 UDP 直连、FN Con
 
 ### 3.3 明确不进入 P0
 
-- 设备 owner、设备级认证与授权、邀请、启停、撤销、删除、审计和重新授权。
+- 设备 owner、设备级认证与授权、邀请、启停、安全撤销、审计和重新授权；仅离线记录清理进入 P0。
 - 要求用户复制浏览器 Cookie、编辑 JSON 或手工维护 WireGuard 配置。
 - 把 PoC 的 `fncpn-client bridge` 作为用户长期运行的公开命令。
 - 依赖 fnOS 或 macOS 预装第三方网络工具。
@@ -111,7 +112,7 @@ PoC 已证明内核 WireGuard、macOS 用户态隧道、IPv6 UDP 直连、FN Con
 ### 4.2 首次授权详细流程
 
 1. 客户端要求用户输入 FN ID 或完整 FN Connect 地址，并规范化为服务端标识。
-2. 客户端守护进程生成本机 WireGuard 密钥；私钥立即写入 Keychain。
+2. 客户端守护进程生成本机 WireGuard 密钥；通过特权 IPC 将私钥写入 root 私有凭据文件。
 3. App 为每次授权创建独立的 non-persistent WebKit 数据空间；关闭窗口后不保留
    WebKit 登录态。
 4. 用户完成 fnOS 登录后，App 判断已进入当前服务端的 FnCPN 路径。
@@ -147,7 +148,7 @@ PoC 已证明内核 WireGuard、macOS 用户态隧道、IPv6 UDP 直连、FN Con
 | 服务 | 正常、受限可用、不可用；接口地址和启动时间 | 启动、停止、重试 |
 | 连接能力 | IPv6 UDP 可用性、FN Connect 中继入口、最近错误 | 刷新检测 |
 | 网络范围 | overlay 网段、主要 LAN 网段和是否已启用转发 | 进入网络设置 |
-| 设备摘要 | 自动注册设备总数、在线数和最近握手时间 | 只读查看 |
+| 设备摘要 | 自动注册设备总数、活性状态和最近握手时间 | 查看、删除离线设备 |
 
 ### SRV-03 设备自动注册
 
@@ -157,9 +158,21 @@ PoC 已证明内核 WireGuard、macOS 用户态隧道、IPv6 UDP 直连、FN Con
 - 每台设备生成独立 WireGuard 密钥；客户端私钥不离开本机，服务端只保存公钥。
 - 同一公钥是注册幂等键；重复注册返回现有设备和最新配置，不能重复占用地址。
 - 设备名称只用于展示，不参与身份判断或授权。
-- P0 不提供设备重命名、启停、删除、撤销和 owner 绑定；这些能力进入 P1 统一设计。
+- P0 不提供设备重命名、启停、安全撤销和 owner 绑定；这些能力进入 P1 统一设计。
+- 管理页独立展示启用状态和连接状态；连接状态是 `connected`、`disconnected` 或
+  `unknown`，仅存在于管理响应，不写入设备记录或客户端配置。
+- 客户端现有 keepalive 为 25 秒。服务端每 5 秒采样各公钥的 WireGuard RX 计数，
+  增量表示近期接收活动；超过 90 秒没有增量视为离线，不以累计流量、TX 或握手时间替代。
+- 服务端监测启动、计数重置、peer/接口变化或监测中断后先标记未知；收到增量后在线，
+  否则需要重新完成 90 秒连续观测。状态过期、不可用或 degraded 时禁止删除。
+- 删除按钮只对离线设备可用，确认中展示设备名和地址；后端仍需管理员权限，并在
+  串行写操作内重新读取实时 RX 状态。新收包时拒绝删除，未知状态时也拒绝。
+- 成功删除会移除对应 WireGuard peer 和持久化记录，并通知配置与管理页监听；
+  其他设备的 ID、密钥和地址不变。同名记录不自动合并或删除。
 - 管理员拥有注册新设备的权限，因此仅删除一个 peer 不能构成安全撤销，不得在 P0
   对外宣称为设备撤销能力。
+- 离线是超时策略，不是 WireGuard 的确定断开信号；删除检查后再次建联的时序不由
+  此策略锁定。LOCAL 不使用 WireGuard 隧道，也不作为本活性判据的在线证据。
 
 ### SRV-04 网络范围
 
@@ -314,8 +327,8 @@ fnOS
 | `internal/client` | 授权、配置同步、自动选路、连接状态机和 WSS bridge | 用户意图 + 网络事件 → 客户端状态 |
 | `internal/server` | 服务端设置、设备、地址池、HTTP API、中继和配置版本 | 管理请求 → 服务端期望状态 |
 | `internal/ipc` | framed JSON、请求响应和本地 Unix Socket 通讯 | 本地进程请求 ↔ 结构化响应 |
-| `internal/privileged` | client/server 特权操作白名单和计划调度 | 已校验计划 → 平台网络适配 |
-| `internal/platform/darwin` | utun、路由、Keychain 和系统事件适配 | 网络计划 ↔ macOS |
+| `internal/privileged` | client/server 特权操作白名单、客户端凭据文件和计划调度 | 已校验请求 → 网络适配或受限凭据存储 |
+| `internal/platform/darwin` | utun、路由和系统事件适配 | 网络计划 ↔ macOS |
 | `internal/platform/linux` | netlink、内核 WireGuard、转发和 nftables 适配 | 服务端期望状态 ↔ Linux |
 | `internal/command` | 子命令解析、进程组装和生命周期入口 | 命令行 → 对应进程职责 |
 
@@ -386,7 +399,7 @@ macOS 和 fnOS 分别构建适配自身平台的 `fncpn`，但每个平台的安
 
 - 发布产物记录 Go 工具链版本、依赖锁定版本和源码校验值。
 - 控制协议使用独立版本号，不与 App 版本隐式绑定。
-- 升级必须保持本地配置、Keychain 数据、服务端私钥和设备表。
+- 升级必须保持本地配置、root 凭据文件、服务端私钥和设备表。切换存储的测试版本不自动访问或删除旧 Keychain 条目，需重新授权生成文件凭据。
 
 ## 11. Client CLI 接口
 
@@ -436,7 +449,7 @@ macOS 和 fnOS 分别构建适配自身平台的 `fncpn`，但每个平台的安
 
 ```json
 {
-  "version": 2,
+  "version": 4,
   "id": "2e52c41c-8124-4eb7-8fd7-2ff452e41e66",
   "method": "status",
   "params": {}
@@ -447,7 +460,7 @@ macOS 和 fnOS 分别构建适配自身平台的 `fncpn`，但每个平台的安
 
 ```json
 {
-  "version": 2,
+  "version": 4,
   "id": "2e52c41c-8124-4eb7-8fd7-2ff452e41e66",
   "ok": true,
   "result": {
@@ -462,7 +475,7 @@ macOS 和 fnOS 分别构建适配自身平台的 `fncpn`，但每个平台的安
 
 ```json
 {
-  "version": 1,
+  "version": 4,
   "id": "2e52c41c-8124-4eb7-8fd7-2ff452e41e66",
   "ok": false,
   "error": {
@@ -487,17 +500,27 @@ macOS 和 fnOS 分别构建适配自身平台的 `fncpn`，但每个平台的安
 - `TIMEOUT`
 - `CANCELED`
 - `INTERNAL`
+- `PROTOCOL_ERROR`
+- `RESOURCE_EXHAUSTED`
+- `DISCOVERY_FAILED`
+
+错误还携带 `operation`、脱敏 `detail`、`httpStatus`、`remoteCode` 和 `requestId`。
+本地保留 cause 链，跨 HTTP/IPC 传递安全详情；401 与 403 不混为同一类认证错误。
+完整分类、记录职责和日志路径见 [错误码与全链路诊断](05-error-diagnostics.md)。
 
 ### 12.3 client daemon 与 client privileged-daemon
 
-- 使用独立的 `/var/run/fncpn-privileged.sock`，协议与用户 IPC 分开版本化。
-- 方法只允许 `status`、`apply` 和 `remove`。
+- 使用独立的 `/var/run/fncpn-client-privileged.sock`，与用户 IPC 分离。
+- 方法只允许 `status`、`watch-lifecycle`、`apply`、`remove` 以及
+  `get-client-secret`、`put-client-secret`、`delete-client-secret`。
 - `apply` 接收完整结构化网络计划，privileged-daemon 独立复验并收敛地址、接口、
   路由和 endpoint。
 - privileged-daemon 只接受 root 或当前控制台用户进程。
 - 任何错误必须保留请求 ID；鉴权发生在解码前时允许空 ID 错误响应。
-- root 只持有运行时资源 ownership 和清理状态；Cookie 和 FN Connect URL
-  不进入 privileged-daemon。
+- 凭据请求仅允许 WireGuard 私钥与 Cookie 两种命名空间；用户 UID 取自操作系统
+  Unix Socket peer identity，请求不能指定 UID 或路径。FN ID 和凭据类型哈希后生成文件名。
+- root 保存不透明凭据字节，不参与 FN Connect 会话、Cookie 解析或 HTTP/WSS 请求。
+- 安装健康检查只依赖 IPC 就绪；自动连接在后台执行，不等待网络或用户授权后才监听 IPC。
 
 ### 12.4 server daemon 与 server privileged-daemon
 
@@ -515,8 +538,8 @@ macOS 和 fnOS 分别构建适配自身平台的 `fncpn`，但每个平台的安
 
 | 数据 | 位置 | 权限与规则 |
 |---|---|---|
-| WireGuard 私钥 | macOS Keychain | 由 `fncpn client daemon` 创建和读取；不可导出到日志或普通文件 |
-| FN Connect 凭证集 | macOS Keychain | 按 FN ID 隔离；更新时原子替换 |
+| WireGuard 私钥 | `/var/db/fncpn/credentials/<uid>/<hash>.secret` | 普通 daemon 通过特权 IPC 存取；root 属主，文件 `0600` |
+| FN Connect 凭证集 | 同上，使用独立的凭据类型 | 按 UID、FN ID 隔离；更新时原子替换，不写入日志或普通配置 |
 | 服务端与设备配置 | `~/Library/Application Support/FnCPN/` | 目录 `0700`，文件 `0600`，采用临时文件加原子重命名 |
 | 运行时 socket | 用户私有运行目录 | 目录 `0700`，socket `0600`，退出后删除 |
 | 日志 | `~/Library/Logs/FnCPN/` | 轮转、限制大小、默认脱敏 |
@@ -526,7 +549,13 @@ macOS 和 fnOS 分别构建适配自身平台的 `fncpn`，但每个平台的安
 - `/var/db/fncpn/state.json` 只保存活动接口、精确地址/路由、owner token、进程实例和
   当前控制台用户等回滚信息。
 - 目录归属 `root:wheel` 且权限 `0700`。
-- WireGuard 私钥只在 apply 请求和进程内 WireGuard 配置阶段进入 client privileged-daemon，不写入临时配置文件。
+- `credentials/` 及每个 UID 子目录均为 root 所有、`0700`；文件为 `0600`，
+  临时文件同样受保护，写入后 fsync、原子重命名并同步目录。
+- 存取拒绝符号链接、错误属主、宽权限和超限文件。凭据最多 64 KiB。
+- 凭据文件不提供额外磁盘加密或应用签名隔离；IPC 按当前控制台 UID 授权，
+  不能防御同一用户下通过 IPC 读取凭据的进程或已取得 root 权限的进程。
+- 默认卸载保留所有用户凭据；`--purge-user-data UID` 仅删除指定用户的凭据、
+  配置和日志。旧 Keychain 条目不自动迁移或删除；首次重新授权会注册新设备。
 - 重启或异常退出后，client privileged-daemon 根据状态执行幂等清理。
 
 ### 13.3 fnOS 服务端
@@ -542,7 +571,14 @@ macOS 和 fnOS 分别构建适配自身平台的 `fncpn`，但每个平台的安
 重命名后目录同步失败仍以新状态为准并报告错误。
 
 Linux root 只持久化 `server.key` 和最小 cleanup journal。journal 记录带随机 owner token
-的 WireGuard 接口 alias 与专属 nftables table，不保存完整 `ServerPlan`。FnCPN 会按需
+的 WireGuard 接口 alias 与专属 nftables table，不保存完整 `ServerPlan`。
+当宿主机存在 iptables-nft 的 `ip filter / DOCKER-USER` 链时，FnCPN 仅在该扩展链中
+维护带 `<firewallTable>:forward` 注释的规则，限定隧道接口、overlay 源/目标和已启用
+的 LAN 源/目标。规则放在现有管理员规则之后、无条件 `RETURN` 之前，不修改
+Docker 的全局策略或其他链。更新和清理与专属表在同一 nftables 事务提交；
+即使专属表已被删除，仍根据 journal 中的表名清理自己的扩展规则。
+现有每分钟网络 reconcile 会重新同步这些规则，不新增独立后台循环。
+FnCPN 会按需
 启用系统 IPv4 forwarding，但停止或卸载时不自动关闭这一全局能力，以免破坏运行期间
 开始依赖它的其他服务。
 
@@ -558,16 +594,18 @@ Linux root 只持久化 `server.key` 和最小 cleanup journal。journal 记录�
 ### 14.1 授权窗口规则
 
 - 每次授权使用新的 non-persistent WebKit Website Data Store，与浏览器和上次授权隔离。
-- 只允许导航到 `fnos.net`、目标 `*.fnos.net` 及登录流程必要域名。
+- 在目标域预置仅本次会话有效的 `mode=relay; Path=/; Secure; HttpOnly` Cookie，等待写入完成后打开 `https://<fn-id>.fnos.net/` 登录入口，不让用户手动选择访问方式。
+- 只允许导航到 `fnos.net` 和当前目标 `<fn-id>.fnos.net` 的 HTTPS 标准端口，不进入其他 NAS 或 HTTP 公网 IP。
+- 页面加载完成和 Cookie 变化时通过同源 bootstrap 检查登录状态；仅有路由 Cookie、401/403、认证重定向或 HTTP 200 登录 HTML 都不能触发授权提交。管理员身份确认后自动进入 FnCPN 应用页面。
 - 检测到目标应用页面且 bootstrap 返回有效管理员身份后，才判定授权成功。
-- 从 `WKHTTPCookieStore` 获取 Cookie 对象，保留 domain、path、secure、httpOnly 和 expires 属性。
-- App 通过用户私有 IPC 把凭证集交给 `fncpn client daemon`；由 daemon 写入 Keychain。
-- 授权成功后清除内存中的明文副本并关闭授权窗口。
+- bootstrap 可能续期凭证，因此校验完成后重新从 `WKHTTPCookieStore` 获取最新的匹配 Cookie，保留 domain、path、secure、httpOnly、hostOnly 和 expires 属性，不硬编码认证 Cookie 名称。
+- App 通过用户私有 IPC 把凭证集交给 `fncpn client daemon`；daemon 独立复核管理员身份后注册设备，通过特权 IPC 保存凭据文件。
+- 授权成功、失败或用户关闭窗口时移除 Cookie 监听并释放临时 WebView 和 Cookie 快照；取消或页面跳转前发出的异步校验结果不得继续提交授权。
 
 ### 14.2 凭证使用与刷新
 
 - `fncpn client daemon` 使用标准 Cookie jar 为控制请求和 WSS 握手选择匹配 Cookie。
-- 响应中的 `Set-Cookie` 必须更新 Cookie jar 和 Keychain，不把 Cookie 当作固定字符串。
+- 响应中的 `Set-Cookie` 必须更新 Cookie jar 和 root 凭据文件，不把 Cookie 当作固定字符串。
 - 发现接口无需用户凭证时，不附带 Cookie。
 - 收到明确的 invalid token、认证重定向或 401/403 后，只执行一次受控重试。
 - 若现有 Cookie 可通过正常响应完成续期，则用户无感。
@@ -579,7 +617,7 @@ FN Connect 统一网关当前要求有效 fnOS 登录态，因此客户端保存
 
 正式实现必须：
 
-- 把凭证限制在当前用户 Keychain。
+- 把凭据保存为 root 私有文件，特权 IPC 按系统确认的调用用户 UID 隔离。
 - 明确提供“退出登录”和“忘记此服务端”操作。
 - 不在日志、诊断数据和普通配置文件中写入 Cookie。
 
@@ -609,6 +647,8 @@ P0 使用两层认证，不自行接收 fnOS 用户名和密码：
   设备级配置授权进入 P1。
 - WSS 建立成功只代表网关会话有效。中继中的每个 datagram 仍必须通过 WireGuard 公钥认证，
   未注册密钥或伪造报文由 WireGuard 丢弃，不能访问 overlay 或 LAN。
+- 仅此密文中继接口不校验 Origin。原生程序可以自行设置 Origin，网关还可能改写 Host；
+  不用两者匹配代替身份认证。保留网关登录及资源限制，接受浏览器会话被借用占用连接的剩余风险。
 - server privileged-daemon 不接收 Cookie 和 HTTP Header，只接受专用普通用户通过
   `0660` Unix Socket 提交的结构化 `ServerPlan`，并独立复验所有网络参数。
 
@@ -624,7 +664,9 @@ fnOS 管理员身份之外的设备 owner、委托授权或安全撤销。
 | 同步当前设备配置 | `GET /api/v1/devices/{id}/config` | 已登录用户；设备必须存在 | 服务端公钥、网络、端口和配置版本 |
 | 网络设置 | `/api/v1/admin/networks` | 管理员 | 读取和更新 overlay 与允许的 LAN 网段 |
 | 中继数据 | `GET /relay/v1/wireguard` | 已登录用户 | 升级为二进制 WebSocket |
-| 设备管理（P1） | `/api/v1/admin/devices` | 管理员和设备级授权策略 | 列表、重命名、启停、撤销和删除 |
+| 设备列表 | `GET /api/v1/admin/devices` | 管理员 | 设备及连接状态、网络观测状态 |
+| 清理离线设备 | `DELETE /api/v1/admin/devices/{id}` | 管理员；实时观测为离线 | 204；在线返回 412，未知返回 503，不存在返回 404 |
+| 完整设备管理（P1） | `/api/v1/admin/devices` | 管理员和设备级授权策略 | 重命名、启停、安全撤销和重新授权 |
 
 接口规则：
 
@@ -637,7 +679,7 @@ fnOS 管理员身份之外的设备 owner、委托授权或安全撤销。
 ## 16. 安全与权限边界
 
 - 每台设备独立密钥；客户端私钥不上传，服务端私钥不导出。
-- 服务端只允许管理员注册设备；设备级授权、撤销和删除进入 P1。
+- 服务端只允许管理员注册设备和清理离线记录；设备级授权和安全撤销进入 P1。
 - 客户端 Cookie、私钥和配置分层存储；client privileged-daemon 不接触 Cookie。
 - 用户态 IPC 校验同 UID；root IPC 校验 peer credential 和当前控制台用户。P0 仅允许
   当前控制台用户持有系统 VPN，快速用户切换时 root 清理旧用户网络状态。
@@ -667,6 +709,7 @@ fnOS 管理员身份之外的设备 owner、委托授权或安全撤销。
 | AC-10 | 清理 | 停止和卸载后不存在残留接口、路由、socket 或子进程 |
 | AC-11 | overlay 配置 | 管理员可修改 overlay 网段；成功时全部设备获得新地址，失败时旧配置完整保留 |
 | AC-12 | 服务端鉴权 | NAS 任意 IPv4/IPv6 地址均不暴露 FnCPN HTTP TCP listener；未登录请求不能访问 API/WSS；网关必须剥离外部伪造的 `X-Trim-*` Header；非管理员不能注册设备或修改网络；无有效 WireGuard 私钥不能访问 overlay/LAN |
+| AC-13 | 离线设备清理 | 90 秒无 RX 增量才可删除；在线/未知/非管理员请求被拒绝；失败按持久化提交点回滚；同名其他设备不变；刷新不恢复已删除行 |
 
 ## 18. 待确认事项
 

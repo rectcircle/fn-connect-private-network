@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/rectcircle/fn-connect-private-network/internal/logging"
 	"github.com/rectcircle/fn-connect-private-network/internal/model"
 	wgconfig "github.com/rectcircle/fn-connect-private-network/internal/wireguard"
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
@@ -128,6 +129,8 @@ func (e *ServerEngine) Status() model.ServerPrivilegedStatus {
 			status.Peers = peers
 		} else {
 			status.Degraded = true
+			status.LastError = model.PublicError(model.WithOperation(
+				model.NormalizeError(err, model.ErrorUnavailable, "cannot read WireGuard peers", true), "wireguard.peer_status"))
 			e.logger.Error("read WireGuard peer status", "error", err)
 		}
 	}
@@ -165,7 +168,7 @@ func (e *ServerEngine) Recover(ctx context.Context) error {
 func (e *ServerEngine) Apply(ctx context.Context, plan model.ServerPlan) error {
 	normalized, err := wgconfig.NormalizeServerPlan(plan)
 	if err != nil {
-		return err
+		return model.WrapError(model.ErrorInvalidArgument, "invalid server network plan", false, err)
 	}
 	if !e.Available() {
 		return unavailableServerError()
@@ -244,6 +247,9 @@ func (e *ServerEngine) applyFreshLocked(
 	e.publicKey = privateKey.PublicKey().String()
 	e.listenPort = plan.ListenPort
 	e.degraded = false
+	logging.FromContext(ctx, e.logger).Info("server network applied",
+		"interface", e.interfaceName, "firewall_table", firewallTable,
+		"listen_port", plan.ListenPort, "peer_count", len(plan.Peers), "lan_cidrs", plan.LANCIDRs)
 	return nil
 }
 
@@ -317,6 +323,8 @@ func (e *ServerEngine) removeLocked(ctx context.Context) error {
 		return err
 	}
 	e.resetLocked()
+	logging.FromContext(ctx, e.logger).Info("server network removed",
+		"interface", interfaceName, "firewall_table", firewallTable)
 	return nil
 }
 

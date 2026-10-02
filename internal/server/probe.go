@@ -256,43 +256,51 @@ func (s *LocalProbeService) ServeHTTP(
 	writer http.ResponseWriter,
 	request *http.Request,
 ) {
+	requestID, err := newID()
+	if err != nil {
+		writeHTTPError(s.store.logger, writer, request, model.WithOperation(err, "local_probe.request_id"))
+		return
+	}
+	writer.Header().Set("X-Request-ID", requestID)
 	writer.Header().Set("Cache-Control", "no-store")
 	writer.Header().Set("X-Content-Type-Options", "nosniff")
 	if request.Method != http.MethodPost || request.URL.Path != "/probe" {
-		http.NotFound(writer, request)
+		writeHTTPError(s.store.logger, writer, request, model.NewError(model.ErrorNotFound, "local probe endpoint was not found", false))
 		return
 	}
 	if request.Header.Get("Cookie") != "" {
-		http.Error(writer, "cookies are not accepted", http.StatusBadRequest)
+		writeHTTPError(s.store.logger, writer, request, model.NewError(model.ErrorInvalidArgument, "cookies are not accepted", false))
 		return
 	}
 	data, err := io.ReadAll(io.LimitReader(request.Body, maxProbeRequestSize+1))
 	if err != nil || len(data) > maxProbeRequestSize {
-		http.Error(writer, "invalid request", http.StatusBadRequest)
+		writeHTTPError(s.store.logger, writer, request, model.WrapError(model.ErrorInvalidArgument, "local probe request is unreadable or too large", false, err))
 		return
 	}
 	var input model.LocalProbeRequest
 	if err := model.DecodeStrict(data, &input); err != nil {
-		http.Error(writer, "invalid request", http.StatusBadRequest)
+		writeHTTPError(s.store.logger, writer, request, model.WrapError(model.ErrorInvalidArgument, "invalid local probe JSON", false, err))
 		return
 	}
 	nonce, err := base64.RawURLEncoding.DecodeString(input.Nonce)
 	if err != nil || len(nonce) != probeNonceSize {
-		http.Error(writer, "invalid request", http.StatusBadRequest)
+		writeHTTPError(s.store.logger, writer, request, model.NewError(model.ErrorInvalidArgument, "invalid local probe nonce", false))
 		return
 	}
 	device, err := FindDevice(s.store.Snapshot(), input.DeviceID)
 	if err != nil || !device.Enabled {
-		http.NotFound(writer, request)
+		writeHTTPError(s.store.logger, writer, request, model.NewError(model.ErrorNotFound, "local probe device is unavailable", false))
 		return
 	}
 	mac := hmac.New(sha256.New, s.deviceKey(device))
 	_, _ = mac.Write([]byte(model.LocalProbeDomain))
 	_, _ = mac.Write(nonce)
 	writer.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(writer).Encode(model.LocalProbeResponse{
+	if err := json.NewEncoder(writer).Encode(model.LocalProbeResponse{
 		Proof: base64.RawURLEncoding.EncodeToString(mac.Sum(nil)),
-	})
+	}); err != nil {
+		s.store.logger.Error("write local probe response", "request_id", requestID, "error", err)
+	}
 }
 
 func (s *LocalProbeService) deviceKey(device model.Device) []byte {

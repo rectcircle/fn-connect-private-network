@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -127,19 +126,13 @@ func (c *RemoteClient) WatchConfiguration(
 		return ConfigurationWatchResult{}, err
 	}
 	defer response.Body.Close()
-	decoder := json.NewDecoder(io.LimitReader(response.Body, maxLocalConfigSize+1))
-	decoder.DisallowUnknownFields()
 	var result ConfigurationWatchResult
-	if err := decoder.Decode(&result); err != nil {
-		return ConfigurationWatchResult{}, fmt.Errorf(
-			"decode server response: %w",
-			err,
-		)
+	if err := decodeResponse(response, &result); err != nil {
+		return ConfigurationWatchResult{}, err
 	}
 	if result.Cursor == "" {
-		return ConfigurationWatchResult{}, errors.New(
-			"server configuration watch cursor is required",
-		)
+		return ConfigurationWatchResult{}, model.WithOperation(model.NewError(
+			model.ErrorProtocol, "server configuration watch cursor is required", false), "configuration.watch")
 	}
 	return result, nil
 }
@@ -174,12 +167,7 @@ func (c *RemoteClient) call(
 	if result == nil {
 		return nil
 	}
-	decoder := json.NewDecoder(io.LimitReader(response.Body, maxLocalConfigSize+1))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(result); err != nil {
-		return fmt.Errorf("decode server response: %w", err)
-	}
-	return nil
+	return decodeResponse(response, result)
 }
 
 func (c *RemoteClient) do(
@@ -219,21 +207,24 @@ func (c *RemoteClient) do(
 	}
 	response, err := httpClient.Do(request)
 	if err != nil {
-		return nil, model.NormalizeError(
+		return nil, model.WithOperation(model.NormalizeError(
 			err,
 			model.ErrorUnavailable,
 			"server configuration is unavailable",
 			true,
-		)
+		), method+" "+model.SafeURL(target.String()))
 	}
-	if err := c.captureCookies(response); err != nil {
-		response.Body.Close()
-		return nil, err
-	}
+	cookieErr := c.captureCookies(response)
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		err := remoteStatusError(response)
+		err := HTTPResponseError(response, responseOperation(response), cookieErr)
 		response.Body.Close()
 		return nil, err
+	}
+	if cookieErr != nil {
+		response.Body.Close()
+		failure := model.WithOperation(cookieErr, "credentials.save_response")
+		failure.HTTPStatus = response.StatusCode
+		return nil, failure
 	}
 	return response, nil
 }
@@ -256,58 +247,4 @@ func (c *RemoteClient) captureCookies(response *http.Response) error {
 		return c.onCookies(c.cookies.Records())
 	}
 	return nil
-}
-
-func remoteStatusError(response *http.Response) error {
-	data, _ := io.ReadAll(io.LimitReader(response.Body, maxRemoteResponseSize+1))
-	var envelope struct {
-		Error *model.Error `json:"error"`
-	}
-	if json.Unmarshal(data, &envelope) == nil && envelope.Error != nil {
-		return envelope.Error
-	}
-	switch response.StatusCode {
-	case http.StatusUnauthorized:
-		return model.NewError(
-			model.ErrorAuthRequired,
-			"FN Connect authorization is required",
-			false,
-		)
-	case http.StatusForbidden:
-		return model.NewError(
-			model.ErrorPermissionDenied,
-			"permission denied",
-			false,
-		)
-	case http.StatusNotFound:
-		return model.NewError(model.ErrorNotFound, "resource was not found", false)
-	case http.StatusConflict:
-		return model.NewError(model.ErrorConflict, "request conflicts with current state", false)
-	case http.StatusPreconditionFailed:
-		return model.NewError(
-			model.ErrorFailedPrecondition,
-			"request precondition failed",
-			false,
-		)
-	case http.StatusRequestTimeout, http.StatusGatewayTimeout:
-		return model.NewError(model.ErrorTimeout, "server request timed out", true)
-	case http.StatusGone:
-		return model.NewError(
-			model.ErrorDeviceRevoked,
-			"device was revoked",
-			false,
-		)
-	case http.StatusServiceUnavailable, http.StatusBadGateway:
-		return model.NewError(
-			model.ErrorUnavailable,
-			fmt.Sprintf("server returned HTTP %d", response.StatusCode),
-			true,
-		)
-	default:
-		return model.NewError(
-			model.ErrorInternal,
-			"server returned an unexpected response",
-			false,
-		)
-	}
 }

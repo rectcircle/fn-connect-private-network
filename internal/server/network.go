@@ -26,6 +26,9 @@ func (c IPCNetwork) Apply(
 	}
 	var status model.ServerPrivilegedStatus
 	err = c.Client.Call(ctx, privileged.MethodApply, plan, &status)
+	if err == nil && status.LastError != nil {
+		err = status.LastError
+	}
 	return status, err
 }
 
@@ -43,6 +46,9 @@ func (c IPCNetwork) Status(
 			true,
 		)
 		return model.ServerPrivilegedStatus{}, err
+	}
+	if response.Network.LastError != nil {
+		return response.Network, response.Network.LastError
 	}
 	return response.Network, nil
 }

@@ -7,11 +7,10 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
-	"net/url"
-	"strings"
 	"time"
 
 	"github.com/coder/websocket"
+	"github.com/rectcircle/fn-connect-private-network/internal/logging"
 	"github.com/rectcircle/fn-connect-private-network/internal/model"
 )
 
@@ -47,32 +46,28 @@ func newRelayHandler(
 func (h *relayHandler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 	userID := request.Header.Get("X-Trim-Userid")
 	if userID == "" {
-		http.Error(writer, "authentication required", http.StatusUnauthorized)
+		writeHTTPError(h.logger, writer, request, model.NewError(model.ErrorAuthRequired, "authenticated user is required", false))
 		return
 	}
 	if h.network == nil {
-		http.Error(writer, "server network unavailable", http.StatusServiceUnavailable)
+		writeHTTPError(h.logger, writer, request, model.NewError(model.ErrorUnavailable, "server network provider is unavailable", true))
 		return
 	}
 	snapshot := h.network.NetworkSnapshot()
 	if !snapshot.Fresh {
-		http.Error(writer, "server network unavailable", http.StatusServiceUnavailable)
+		writeHTTPError(h.logger, writer, request, model.WrapError(model.ErrorUnavailable, "server network status is stale", true, snapshot.LastError))
 		return
 	}
 	status := snapshot.Network
 	if !status.Active || status.Degraded || status.ListenPort == 0 {
-		http.Error(writer, "server network unavailable", http.StatusServiceUnavailable)
-		return
-	}
-	if err := validateRelayOrigin(request); err != nil {
-		http.Error(writer, "forbidden origin", http.StatusForbidden)
+		writeHTTPError(h.logger, writer, request, model.NewError(model.ErrorUnavailable, "server network is inactive, degraded, or has no listen port", true))
 		return
 	}
 	select {
 	case h.slots <- struct{}{}:
 		defer func() { <-h.slots }()
 	default:
-		http.Error(writer, "relay is at capacity", http.StatusServiceUnavailable)
+		writeHTTPError(h.logger, writer, request, model.NewError(model.ErrorResourceExhausted, "relay connection limit reached", true))
 		return
 	}
 
@@ -81,19 +76,38 @@ func (h *relayHandler) ServeHTTP(writer http.ResponseWriter, request *http.Reque
 		Port: int(status.ListenPort),
 	})
 	if err != nil {
-		h.logger.Error("open relay UDP socket", "error", err)
-		http.Error(writer, "relay unavailable", http.StatusServiceUnavailable)
+		writeHTTPError(h.logger, writer, request, model.WithOperation(
+			model.WrapError(model.ErrorUnavailable, "cannot open relay UDP socket", true, err), "relay.udp_open"))
 		return
 	}
 	defer udp.Close()
+	logger := logging.FromContext(request.Context(), h.logger)
+	logger.Info("relay WebSocket upgrade requested", "wireguard_port", status.ListenPort)
 
-	connection, err := websocket.Accept(writer, request, relayAcceptOptions(request))
+	// This endpoint only transports WireGuard ciphertext. Gateway authentication
+	// identifies the user; WireGuard authenticates devices and protects plaintext.
+	// Origin is not a native-client identity and FN Connect rewrites Host. Do not
+	// require an Origin match here; retain authentication and resource limits.
+	tracked, ok := writer.(*errorResponseWriter)
+	if !ok {
+		tracked = &errorResponseWriter{ResponseWriter: writer}
+	}
+	connection, err := websocket.Accept(tracked, request, &websocket.AcceptOptions{
+		CompressionMode:    websocket.CompressionDisabled,
+		InsecureSkipVerify: true, // Disables the library's Origin check, not TLS.
+	})
 	if err != nil {
-		h.logger.Error("accept relay websocket", "error", err)
+		failure := model.WithOperation(model.WrapError(model.ErrorProtocol, "invalid WebSocket upgrade", false, err), "relay.upgrade")
+		failure.HTTPStatus = tracked.status
+		failure.RequestID = model.SafeRequestID(writer.Header().Get("X-Request-ID"))
+		tracked.logged = true
+		h.logger.Error("accept relay websocket", logging.ErrorAttrs(failure)...)
 		return
 	}
 	defer connection.CloseNow()
 	connection.SetReadLimit(maxRelayDatagramSize)
+	started := time.Now()
+	logger.Info("relay session established", "wireguard_port", status.ListenPort)
 
 	ctx, cancel := context.WithCancel(request.Context())
 	defer cancel()
@@ -111,10 +125,16 @@ func (h *relayHandler) ServeHTTP(writer http.ResponseWriter, request *http.Reque
 	bridgeError := <-errorsChannel
 	cancel()
 	_ = udp.Close()
-	_ = connection.Close(websocket.StatusNormalClosure, "relay closed")
 	if !expectedRelayClose(bridgeError) {
-		h.logger.Error("relay session failed", "user_id", userID, "error", bridgeError)
+		failure := model.WithOperation(model.NormalizeError(bridgeError, model.ErrorUnavailable, "relay session failed", true), "relay.session")
+		failure.RequestID = model.SafeRequestID(writer.Header().Get("X-Request-ID"))
+		h.logger.Error("relay session failed", logging.ErrorAttrs(failure)...)
+		_ = connection.Close(websocket.StatusInternalError, "relay session failed")
+	} else {
+		_ = connection.Close(websocket.StatusNormalClosure, "relay closed")
 	}
+	logger.Info("relay session ended", "normal", expectedRelayClose(bridgeError),
+		"elapsed_ms", time.Since(started).Milliseconds())
 }
 
 func relayWebSocketToUDP(
@@ -170,24 +190,6 @@ func relayUDPToWebSocket(
 			return fmt.Errorf("write relay websocket: %w", err)
 		}
 	}
-}
-
-func relayAcceptOptions(request *http.Request) *websocket.AcceptOptions {
-	return &websocket.AcceptOptions{
-		CompressionMode: websocket.CompressionDisabled,
-		OriginPatterns:  []string{request.Host},
-	}
-}
-
-func validateRelayOrigin(request *http.Request) error {
-	origin, err := url.Parse(request.Header.Get("Origin"))
-	if err != nil ||
-		(origin.Scheme != "http" && origin.Scheme != "https") ||
-		origin.Host == "" ||
-		!strings.EqualFold(origin.Host, request.Host) {
-		return errors.New("relay origin does not match request host")
-	}
-	return nil
 }
 
 func expectedRelayClose(err error) bool {

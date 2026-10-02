@@ -4,11 +4,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strconv"
-	"strings"
 	"sync"
+
+	"github.com/rectcircle/fn-connect-private-network/internal/model"
 )
 
 const (
@@ -140,15 +142,36 @@ func (w *RotatingWriter) rotate() error {
 }
 
 func Redact(value string) string {
-	lower := strings.ToLower(value)
-	for _, marker := range []string{
-		"cookie", "authorization", "privatekey", "private_key", "token",
-	} {
-		if strings.Contains(lower, marker) {
-			return "[redacted sensitive error]"
-		}
+	return model.SafeText(value)
+}
+
+// RedactError preserves HTTP failure context without URL credentials or queries.
+func RedactError(err error) string {
+	return model.ErrorDetail(err)
+}
+
+func ErrorAttrs(err error) []any {
+	public := model.PublicError(err)
+	if public == nil {
+		return nil
 	}
-	return value
+	return []any{
+		"code", public.Code, "retryable", public.Retryable,
+		"operation", public.Operation, "error", public.Message,
+		"detail", public.Detail, "http_status", public.HTTPStatus,
+		"remote_code", public.RemoteCode, "request_id", public.RequestID,
+		"cause", RedactError(model.AsError(err).Cause),
+	}
+}
+
+func RedactAttr(_ []string, attr slog.Attr) slog.Attr {
+	if err, ok := attr.Value.Any().(error); ok {
+		return slog.String(attr.Key, model.FormatError(err))
+	}
+	if attr.Value.Kind() == slog.KindString {
+		attr.Value = slog.StringValue(Redact(attr.Value.String()))
+	}
+	return attr
 }
 
 func MultiWriter(file io.Writer, fallback io.Writer) io.Writer {

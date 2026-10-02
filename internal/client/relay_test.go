@@ -2,6 +2,7 @@ package client
 
 import (
 	"context"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -11,7 +12,97 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+	"github.com/rectcircle/fn-connect-private-network/internal/model"
 )
+
+func TestRelayReconnectLogsAndReportsPermanentRejection(t *testing.T) {
+	var attempts atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if attempts.Add(1) > 1 {
+			http.Error(w, "relay policy rejected", http.StatusForbidden)
+			return
+		}
+		conn, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		_ = conn.Close(websocket.StatusGoingAway, "reconnect")
+	}))
+	defer server.Close()
+	var output diagnosticBuffer
+	bridge := &RelayBridge{Logger: slog.New(slog.NewJSONHandler(&output, nil))}
+	defer bridge.Stop()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if _, err := bridge.Start(ctx, "ws"+strings.TrimPrefix(server.URL, "http"),
+		func() ([]Cookie, error) { return nil, nil }); err != nil {
+		t.Fatal(err)
+	}
+	for {
+		select {
+		case <-ctx.Done():
+			t.Fatal("reconnect rejection was not reported")
+		case err := <-bridge.Events():
+			if err == nil || model.AsError(err).Retryable {
+				continue
+			}
+			failure := model.PublicError(err)
+			if failure.Code != model.ErrorPermissionDenied || failure.HTTPStatus != 403 ||
+				!strings.Contains(failure.Detail, "relay policy rejected") {
+				t.Fatalf("reconnect error = %+v", failure)
+			}
+			if !strings.Contains(output.String(), "relay policy rejected") {
+				t.Fatal("reconnect error was not logged")
+			}
+			return
+		}
+	}
+}
+
+func TestRelayReconnectSuccessIsLogged(t *testing.T) {
+	var attempts atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		connection, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer connection.CloseNow()
+		if attempts.Add(1) == 1 {
+			_ = connection.Close(websocket.StatusGoingAway, "reconnect fixture")
+			return
+		}
+		_, _, _ = connection.Read(r.Context())
+	}))
+	defer server.Close()
+	var output diagnosticBuffer
+	bridge := &RelayBridge{Logger: slog.New(slog.NewJSONHandler(&output, nil))}
+	defer bridge.Stop()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if _, err := bridge.Start(ctx, "ws"+strings.TrimPrefix(server.URL, "http"),
+		func() ([]Cookie, error) { return nil, nil }); err != nil {
+		t.Fatal(err)
+	}
+	for {
+		select {
+		case <-ctx.Done():
+			t.Fatal("relay did not reconnect")
+		case err := <-bridge.Events():
+			if err != nil {
+				continue
+			}
+			for _, message := range []string{"relay WebSocket reconnecting", "relay WebSocket reconnected"} {
+				if !strings.Contains(output.String(), `"msg":"`+message+`"`) {
+					t.Fatalf("missing reconnect milestone %q: %s", message, output.String())
+				}
+			}
+			if attempts.Load() != 2 {
+				t.Fatalf("unexpected reconnect count: %d", attempts.Load())
+			}
+			return
+		}
+	}
+}
 
 func TestRelayBridgeCarriesWireGuardDatagrams(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(
@@ -19,7 +110,7 @@ func TestRelayBridgeCarriesWireGuardDatagrams(t *testing.T) {
 		request *http.Request,
 	) {
 		cookie, err := request.Cookie("fnos-token")
-		if err != nil || cookie.Value != "token" {
+		if err != nil || cookie.Value != "relay-cookie-canary" {
 			http.Error(writer, "unauthorized", http.StatusUnauthorized)
 			return
 		}
@@ -40,12 +131,13 @@ func TestRelayBridgeCarriesWireGuardDatagrams(t *testing.T) {
 	}))
 	defer server.Close()
 
-	bridge := &RelayBridge{ListenAddress: "127.0.0.1:0"}
+	var output diagnosticBuffer
+	bridge := &RelayBridge{ListenAddress: "127.0.0.1:0", Logger: slog.New(slog.NewJSONHandler(&output, nil))}
 	endpoint, err := bridge.Start(
 		context.Background(),
-		"ws"+strings.TrimPrefix(server.URL, "http"),
+		"ws"+strings.TrimPrefix(server.URL, "http")+"/?token=relay-query-canary",
 		func() ([]Cookie, error) {
-			return []Cookie{{Name: "fnos-token", Value: "token"}}, nil
+			return []Cookie{{Name: "fnos-token", Value: "relay-cookie-canary"}}, nil
 		},
 	)
 	if err != nil {
@@ -75,6 +167,19 @@ func TestRelayBridgeCarriesWireGuardDatagrams(t *testing.T) {
 	}
 	if string(response[:count]) != string(payload) {
 		t.Fatalf("response = %q", response[:count])
+	}
+	bridge.Stop()
+	for _, message := range []string{
+		"relay WebSocket connecting", "relay WebSocket established", "relay bridge ready", "relay bridge stopped",
+	} {
+		if !strings.Contains(output.String(), `"msg":"`+message+`"`) {
+			t.Fatalf("missing relay milestone %q: %s", message, output.String())
+		}
+	}
+	for _, secret := range []string{"relay-cookie-canary", "relay-query-canary", string(payload)} {
+		if strings.Contains(output.String(), secret) {
+			t.Fatal("relay logs contain a cookie, URL query or packet payload")
+		}
 	}
 }
 

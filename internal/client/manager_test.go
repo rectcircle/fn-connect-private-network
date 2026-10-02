@@ -366,9 +366,13 @@ func TestManagerStartCleansPausedResidualNetwork(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new manager: %v", err)
 	}
-	if err := manager.Start(context.Background()); err != nil {
+	if err := manager.Start(); err != nil {
 		t.Fatalf("start manager: %v", err)
 	}
+	if privileged.removed != 0 {
+		t.Fatal("startup performed network work before IPC readiness")
+	}
+	manager.resume(context.Background())
 	if privileged.removed != 1 ||
 		manager.Status().State != model.ClientPaused ||
 		manager.Status().LastError != nil {
@@ -774,7 +778,7 @@ func TestManagerMaintenanceReportsLocalConfigurationReadFailure(t *testing.T) {
 	status := manager.Status()
 	if status.State != model.ClientLocal ||
 		status.LastError == nil ||
-		status.LastError.Code != model.ErrorInternal {
+		status.LastError.Code != model.ErrorFailedPrecondition {
 		t.Fatalf("configuration read failure status = %+v", status)
 	}
 
@@ -1160,8 +1164,8 @@ func TestSystemLocalProbeUsesDeviceHMACWithoutCookies(t *testing.T) {
 		"device-1",
 		NetworkSnapshot{InterfaceIndex: 7},
 	)
-	if err != nil {
-		t.Fatalf("probe with wrong key: %v", err)
+	if err == nil || model.AsError(err).Code != model.ErrorProtocol {
+		t.Fatalf("probe with wrong key should report protocol failure: %v", err)
 	}
 	if reachable {
 		t.Fatal("probe accepted a proof for another device key")

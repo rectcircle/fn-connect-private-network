@@ -2,7 +2,8 @@
 
 set -eu
 
-if ! "${TRIM_APPDEST}/cmd/main" start; then
+CMD_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if ! "${CMD_DIR}/main" start; then
   echo "FnCPN upgrade healthcheck failed" >&2
   exit 1
 fi

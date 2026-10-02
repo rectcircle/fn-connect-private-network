@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/rectcircle/fn-connect-private-network/internal/logging"
 	"github.com/rectcircle/fn-connect-private-network/internal/model"
 	"github.com/rectcircle/fn-connect-private-network/internal/notify"
 )
@@ -20,15 +21,16 @@ const (
 )
 
 type serverSnapshot struct {
-	state   model.ServerState
-	network model.ServerNetworkSnapshot
+	state    model.ServerState
+	network  model.ServerNetworkSnapshot
+	activity map[string]deviceActivity
 }
 
 type adminSnapshot struct {
 	ProtocolVersion int                         `json:"protocolVersion"`
 	Settings        model.ServerSettings        `json:"settings"`
 	ServerAddress   string                      `json:"serverAddress"`
-	Devices         []model.Device              `json:"devices"`
+	Devices         []adminDevice               `json:"devices"`
 	Network         model.ServerNetworkSnapshot `json:"network"`
 }
 
@@ -52,6 +54,10 @@ func NewHTTPHandler(service *Service, probe *LocalProbeService) *HTTPServer {
 	mux.HandleFunc(
 		"GET /api/v1/admin/devices",
 		server.authenticated(true, server.listDevices),
+	)
+	mux.HandleFunc(
+		"DELETE /api/v1/admin/devices/{id}",
+		server.authenticated(true, server.deleteDevice),
 	)
 	mux.HandleFunc(
 		"GET /api/v1/admin/snapshot",
@@ -82,7 +88,23 @@ func NewHTTPHandler(service *Service, probe *LocalProbeService) *HTTPServer {
 }
 
 func (s *HTTPServer) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
-	s.handler.ServeHTTP(writer, request)
+	requestID, err := newID()
+	if err != nil {
+		writeHTTPError(s.logger, writer, request, model.WithOperation(err, "http.request_id"))
+		return
+	}
+	writer.Header().Set("X-Request-ID", requestID)
+	request = request.WithContext(logging.WithLogger(request.Context(),
+		s.logger.With("http_request_id", requestID)))
+	tracked := &errorResponseWriter{ResponseWriter: writer}
+	s.handler.ServeHTTP(tracked, request)
+	if tracked.status >= 400 && !tracked.logged {
+		failure := model.NewError(model.ErrorProtocol, http.StatusText(tracked.status), false)
+		failure.HTTPStatus = tracked.status
+		failure.RequestID = requestID
+		failure.Operation = request.Method + " " + request.URL.Path
+		s.logger.Error("HTTP request rejected", logging.ErrorAttrs(failure)...)
+	}
 }
 
 func (s *HTTPServer) localProbeConfiguration(
@@ -90,7 +112,7 @@ func (s *HTTPServer) localProbeConfiguration(
 	request *http.Request,
 ) {
 	if s.probe == nil {
-		s.writeError(writer, model.NewError(
+		s.writeError(writer, request, model.NewError(
 			model.ErrorUnavailable,
 			"local probe is unavailable",
 			true,
@@ -99,7 +121,7 @@ func (s *HTTPServer) localProbeConfiguration(
 	}
 	configuration, err := s.probe.Configuration(request.PathValue("id"))
 	if err != nil {
-		s.writeError(writer, err)
+		s.writeError(writer, request, err)
 		return
 	}
 	s.writeJSON(writer, http.StatusOK, configuration)
@@ -110,7 +132,7 @@ func (s *HTTPServer) bootstrap(writer http.ResponseWriter, request *http.Request
 	state := view.state
 	serverAddress, err := ServerAddress(state.Settings.OverlayCIDR)
 	if err != nil {
-		s.writeError(writer, err)
+		s.writeError(writer, request, err)
 		return
 	}
 	response := map[string]any{
@@ -126,20 +148,25 @@ func (s *HTTPServer) bootstrap(writer http.ResponseWriter, request *http.Request
 	if s.network != nil {
 		response["network"] = view.network
 	}
+	logging.FromContext(request.Context(), s.logger).Info("bootstrap authorization checked",
+		"administrator", response["administrator"], "device_count", len(state.Devices))
 	s.writeJSON(writer, http.StatusOK, response)
 }
 
 func (s *HTTPServer) listDevices(writer http.ResponseWriter, request *http.Request) {
 	view := s.snapshot()
-	if s.network != nil {
-		if view.network.Fresh {
-			applyPeerStatus(view.state.Devices, view.network.Network.Peers)
-		}
-	}
 	s.writeJSON(writer, http.StatusOK, map[string]any{
-		"devices": view.state.Devices,
+		"devices": deviceViews(view, time.Now()),
 		"network": view.network,
 	})
+}
+
+func (s *HTTPServer) deleteDevice(writer http.ResponseWriter, request *http.Request) {
+	if err := s.DeleteDevice(request.Context(), request.PathValue("id")); err != nil {
+		s.writeError(writer, request, err)
+		return
+	}
+	writer.WriteHeader(http.StatusNoContent)
 }
 
 func (s *HTTPServer) adminSnapshot(
@@ -152,21 +179,18 @@ func (s *HTTPServer) adminSnapshot(
 		if err != nil {
 			return nil, err
 		}
-		if view.network.Fresh {
-			applyPeerStatus(view.state.Devices, view.network.Network.Peers)
-		}
 		return adminSnapshot{
 			ProtocolVersion: model.ProtocolVersion,
 			Settings:        view.state.Settings,
 			ServerAddress:   serverAddress,
-			Devices:         view.state.Devices,
+			Devices:         deviceViews(view, time.Now()),
 			Network:         view.network,
 		}, nil
 	}
 	if request.URL.Query().Get("watch") != "1" {
 		snapshot, err := value()
 		if err != nil {
-			s.writeError(writer, err)
+			s.writeError(writer, request, err)
 			return
 		}
 		s.writeJSON(writer, http.StatusOK, snapshot)
@@ -197,7 +221,7 @@ func (s *HTTPServer) createDevice(writer http.ResponseWriter, request *http.Requ
 		PublicKey string `json:"publicKey"`
 	}
 	if err := decodeBody(request, &input); err != nil {
-		s.writeError(writer, err)
+		s.writeError(writer, request, err)
 		return
 	}
 	result, created, err := s.RegisterDevice(
@@ -206,7 +230,7 @@ func (s *HTTPServer) createDevice(writer http.ResponseWriter, request *http.Requ
 		input.PublicKey,
 	)
 	if err != nil {
-		s.writeError(writer, err)
+		s.writeError(writer, request, err)
 		return
 	}
 	statusCode := http.StatusOK
@@ -221,7 +245,7 @@ func (s *HTTPServer) deviceConfiguration(
 	request *http.Request,
 ) {
 	if s.network == nil {
-		s.writeError(writer, model.NewError(
+		s.writeError(writer, request, model.NewError(
 			model.ErrorUnavailable,
 			"server network is unavailable",
 			true,
@@ -235,7 +259,7 @@ func (s *HTTPServer) deviceConfiguration(
 	if request.URL.Query().Get("watch") != "1" {
 		configuration, err := value()
 		if err != nil {
-			s.writeError(writer, err)
+			s.writeError(writer, request, err)
 			return
 		}
 		s.writeJSON(writer, http.StatusOK, configuration)
@@ -267,7 +291,7 @@ func (s *HTTPServer) updateNetworks(writer http.ResponseWriter, request *http.Re
 		LANCIDRs    *[]string `json:"lanCIDRs"`
 	}
 	if err := decodeBody(request, &input); err != nil {
-		s.writeError(writer, err)
+		s.writeError(writer, request, err)
 		return
 	}
 	state, err := s.UpdateNetworks(request.Context(), NetworkUpdate{
@@ -276,49 +300,14 @@ func (s *HTTPServer) updateNetworks(writer http.ResponseWriter, request *http.Re
 		LANCIDRs:    input.LANCIDRs,
 	})
 	if err != nil {
-		s.writeError(writer, err)
+		s.writeError(writer, request, err)
 		return
 	}
 	s.writeJSON(writer, http.StatusOK, state)
 }
 
-func (s *HTTPServer) writeError(writer http.ResponseWriter, err error) {
-	typed := model.AsError(err)
-	status := http.StatusInternalServerError
-	switch typed.Code {
-	case model.ErrorInvalidArgument:
-		status = http.StatusBadRequest
-	case model.ErrorAuthRequired:
-		status = http.StatusUnauthorized
-	case model.ErrorPermissionDenied:
-		status = http.StatusForbidden
-	case model.ErrorNotFound:
-		status = http.StatusNotFound
-	case model.ErrorAlreadyExists:
-		status = http.StatusConflict
-	case model.ErrorFailedPrecondition:
-		status = http.StatusPreconditionFailed
-	case model.ErrorDeviceRevoked:
-		status = http.StatusGone
-	case model.ErrorConflict:
-		status = http.StatusConflict
-	case model.ErrorUnavailable:
-		status = http.StatusServiceUnavailable
-	case model.ErrorTimeout:
-		status = http.StatusGatewayTimeout
-	case model.ErrorCanceled:
-		status = 499
-	}
-	if typed.Code == model.ErrorInternal || typed.Code == model.ErrorUnavailable {
-		s.logger.Error(
-			"server request failed",
-			"code",
-			typed.Code,
-			"error",
-			err,
-		)
-	}
-	s.writeJSON(writer, status, map[string]any{"error": model.PublicError(err)})
+func (s *HTTPServer) writeError(writer http.ResponseWriter, request *http.Request, err error) {
+	writeHTTPError(s.logger, writer, request, err)
 }
 
 func (s *HTTPServer) writeJSON(writer http.ResponseWriter, status int, value any) {
@@ -339,7 +328,7 @@ func (s *HTTPServer) writeWatchJSON(
 ) {
 	current, err := value()
 	if err != nil {
-		s.writeError(writer, err)
+		s.writeError(writer, request, err)
 		return
 	}
 	after := strings.TrimSpace(request.URL.Query().Get("after"))
@@ -348,7 +337,7 @@ func (s *HTTPServer) writeWatchJSON(
 		generation := changes.Current()
 		current, err = value()
 		if err != nil {
-			s.writeError(writer, err)
+			s.writeError(writer, request, err)
 			return
 		}
 		cursor = cursorFor(current)
@@ -358,7 +347,7 @@ func (s *HTTPServer) writeWatchJSON(
 			cancel()
 			current, err = value()
 			if err != nil {
-				s.writeError(writer, err)
+				s.writeError(writer, request, err)
 				return
 			}
 			cursor = cursorFor(current)
@@ -379,13 +368,18 @@ func adminSnapshotCursor(value any) string {
 }
 
 func semanticSnapshotCursor(view serverSnapshot) string {
+	// Compare connection states at each observation time so keepalive expiry
+	// notifies the admin watch even when peer counters have not changed.
+	devices := deviceViews(view, view.network.RefreshedAt)
 	view.network.RefreshedAt = time.Time{}
 	return valueCursor(struct {
-		State   model.ServerState
-		Network model.ServerNetworkSnapshot
+		Settings model.ServerSettings
+		Devices  []adminDevice
+		Network  model.ServerNetworkSnapshot
 	}{
-		State:   view.state,
-		Network: view.network,
+		Settings: view.state.Settings,
+		Devices:  devices,
+		Network:  view.network,
 	})
 }
 
@@ -415,7 +409,7 @@ func (s *HTTPServer) authenticated(
 ) http.HandlerFunc {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		if strings.TrimSpace(request.Header.Get("X-Trim-Userid")) == "" {
-			s.writeError(writer, model.NewError(
+			s.writeError(writer, request, model.NewError(
 				model.ErrorAuthRequired,
 				"authenticated user is required",
 				false,
@@ -424,7 +418,7 @@ func (s *HTTPServer) authenticated(
 		}
 		if administrator &&
 			!strings.EqualFold(request.Header.Get("X-Trim-Isadmin"), "true") {
-			s.writeError(writer, model.NewError(
+			s.writeError(writer, request, model.NewError(
 				model.ErrorPermissionDenied,
 				"administrator access is required",
 				false,

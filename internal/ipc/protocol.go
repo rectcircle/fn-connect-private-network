@@ -65,11 +65,18 @@ func Success(id string, result any) Response {
 }
 
 func Failure(id string, err error) Response {
+	failure := model.PublicError(err)
+	// Keep the local cause until the server logs the failure. Cause is never
+	// serialized; only the sanitized Detail crosses the process boundary.
+	failure.Cause = err
+	if failure.RequestID == "" {
+		failure.RequestID = model.SafeRequestID(id)
+	}
 	return Response{
 		Version: model.ProtocolVersion,
 		ID:      id,
 		OK:      false,
-		Error:   model.PublicError(err),
+		Error:   failure,
 	}
 }
 

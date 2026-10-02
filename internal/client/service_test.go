@@ -3,12 +3,44 @@ package client
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/rectcircle/fn-connect-private-network/internal/ipc"
 	"github.com/rectcircle/fn-connect-private-network/internal/model"
 )
+
+func TestAuthorizationBrowserFailureIsRetainedAndSanitized(t *testing.T) {
+	service := NewWithRuntime(&recordingRuntime{})
+	request, _ := ipc.NewRequest("begin", MethodAuthorizationBegin, AuthorizationRequest{FNID: "home-nas"})
+	begin := service.Handle(context.Background(), request)
+	var pending AuthorizationResult
+	if err := json.Unmarshal(begin.Result, &pending); err != nil {
+		t.Fatal(err)
+	}
+	failure := model.NewError(model.ErrorPermissionDenied, "browser request rejected", false)
+	failure.HTTPStatus = 403
+	failure.Detail = "https://user:secret@home-nas.fnos.net/app/fncpn?token=canary"
+	request, _ = ipc.NewRequest("cancel", MethodAuthorizationCancel, AuthorizationCancelRequest{
+		RequestID: pending.RequestID, Failure: failure,
+	})
+	response := service.Handle(context.Background(), request)
+	if response.OK || response.Error == nil || response.Error.HTTPStatus != 403 ||
+		response.Error.Operation != "authorization.browser" {
+		t.Fatalf("failure response = %+v", response)
+	}
+	request, _ = ipc.NewRequest("status", MethodAuthorizationStatus, AuthorizationRequest{RequestID: pending.RequestID})
+	response = service.Handle(context.Background(), request)
+	var result AuthorizationResult
+	if err := json.Unmarshal(response.Result, &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.State != "failed" || result.Error == nil || result.Error.Code != model.ErrorPermissionDenied ||
+		strings.Contains(result.Error.Detail, "secret") || strings.Contains(result.Error.Detail, "canary") {
+		t.Fatalf("recorded browser failure = %+v", result)
+	}
+}
 
 func TestServiceDelegatesCommandsToRuntime(t *testing.T) {
 	runtime := &recordingRuntime{status: model.ClientStatus{State: model.ClientPaused}}
@@ -342,10 +374,10 @@ func TestRuntimeServiceWatchesStatus(t *testing.T) {
 
 type recordingRuntime struct {
 	lastCommand string
-	status    model.ClientStatus
-	fnID      string
-	cookies   []Cookie
-	authorize func(context.Context, string, []Cookie) error
+	status      model.ClientStatus
+	fnID        string
+	cookies     []Cookie
+	authorize   func(context.Context, string, []Cookie) error
 }
 
 func (r *recordingRuntime) Status() model.ClientStatus {

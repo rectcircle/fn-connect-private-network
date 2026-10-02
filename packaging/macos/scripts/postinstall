@@ -29,17 +29,18 @@ PRIVILEGED_SOCKET="/var/run/fncpn-client-privileged.sock"
 /bin/launchctl kickstart -k system/com.rectcircle.fncpn.privileged
 
 count=0
+health_error=""
 while [ "$count" -lt 50 ]; do
-  if "$TOOL" internal-healthcheck \
+  if health_error="$("$TOOL" internal-healthcheck \
     --role client-privileged \
-    --socket "$PRIVILEGED_SOCKET" >/dev/null 2>&1; then
+    --socket "$PRIVILEGED_SOCKET" 2>&1)"; then
     break
   fi
   /bin/sleep 0.1
   count=$((count + 1))
 done
 if [ "$count" -ge 50 ]; then
-  echo "FnCPN privileged daemon failed its healthcheck" >&2
+  printf 'FnCPN privileged healthcheck failed: %s\nLog: /var/log/fncpn/client-privileged.log\n' "$health_error" >&2
   exit 1
 fi
 
@@ -55,16 +56,17 @@ if [ -n "$CONSOLE_UID" ] && [ "$CONSOLE_UID" -ge 500 ]; then
     NFSHomeDirectory | /usr/bin/awk '{print $2}')"
   CLIENT_SOCKET="${HOME_DIR}/Library/Application Support/FnCPN/run/client.sock"
   count=0
+  health_error=""
   while [ "$count" -lt 50 ]; do
-    if /bin/launchctl asuser "$CONSOLE_UID" "$TOOL" internal-healthcheck \
-      --role client --socket "$CLIENT_SOCKET" >/dev/null 2>&1; then
+    if health_error="$(/bin/launchctl asuser "$CONSOLE_UID" "$TOOL" internal-healthcheck \
+      --role client --socket "$CLIENT_SOCKET" 2>&1)"; then
       break
     fi
     /bin/sleep 0.1
     count=$((count + 1))
   done
   if [ "$count" -ge 50 ]; then
-    echo "FnCPN client daemon failed its healthcheck" >&2
+    printf 'FnCPN client healthcheck failed: %s\nLog: %s/Library/Logs/FnCPN/client.log\n' "$health_error" "$HOME_DIR" >&2
     exit 1
   fi
 fi

@@ -8,8 +8,10 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"syscall"
 	"time"
 
+	"github.com/rectcircle/fn-connect-private-network/internal/logging"
 	"github.com/rectcircle/fn-connect-private-network/internal/model"
 )
 
@@ -69,6 +71,8 @@ func (s Server) Serve(ctx context.Context) error {
 	if err := os.Chmod(s.SocketPath, mode); err != nil {
 		return fmt.Errorf("set IPC socket mode: %w", err)
 	}
+	logger.Info("IPC listener ready", "socket", s.SocketPath)
+	defer logger.Info("IPC listener stopped", "socket", s.SocketPath)
 
 	go func() {
 		<-ctx.Done()
@@ -122,6 +126,9 @@ func (s Server) handleConnection(
 	_ = connection.SetDeadline(time.Now().Add(timeout + responseWriteGrace))
 	ctx, cancel := context.WithTimeout(parent, timeout)
 	defer cancel()
+	ctx = logging.WithLogger(ctx, logger.With(
+		"ipc_request_id", model.SafeRequestID(request.ID), "ipc_method", request.Method,
+	))
 	response := s.Handler.Handle(ctx, request)
 	if response.Version == 0 {
 		response.Version = model.ProtocolVersion
@@ -129,7 +136,21 @@ func (s Server) handleConnection(
 	if response.ID == "" {
 		response.ID = request.ID
 	}
+	if !response.OK && response.Error != nil {
+		response.Error = model.WithOperation(response.Error, "ipc."+request.Method)
+		attrs := append(logging.ErrorAttrs(response.Error), "method", request.Method, "ipc_request_id", request.ID)
+		if response.Error.Code == model.ErrorCanceled {
+			logger.Debug("IPC request canceled", attrs...)
+		} else {
+			logger.Error("IPC request failed", attrs...)
+		}
+	}
 	if err := WriteResponse(connection, response); err != nil {
+		if (request.Method == "watch-client-status" || request.Method == "watch-lifecycle") &&
+			(errors.Is(err, syscall.EPIPE) || errors.Is(err, syscall.ECONNRESET)) {
+			logger.Debug("IPC watcher disconnected", "method", request.Method, "request_id", request.ID)
+			return
+		}
 		logger.Error(
 			"write IPC response",
 			"method",
@@ -148,6 +169,7 @@ func (s Server) writeFailure(
 	err error,
 	logger *slog.Logger,
 ) {
+	logger.Error("reject IPC request", logging.ErrorAttrs(model.WithOperation(err, "ipc.read_or_authorize"))...)
 	if writeErr := WriteResponse(connection, Failure(id, err)); writeErr != nil {
 		logger.Error("write failed IPC response", "error", writeErr)
 	}

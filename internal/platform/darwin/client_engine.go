@@ -76,7 +76,7 @@ func (e *ClientEngine) Status() model.ClientPrivilegedStatus {
 		return model.ClientPrivilegedStatus{}
 	}
 	status := e.runtime.Status()
-	status.Degraded = e.degraded
+	status.Degraded = status.Degraded || e.degraded
 	return status
 }
 
@@ -108,7 +108,7 @@ func (e *ClientEngine) Apply(
 ) error {
 	normalized, err := wireguard.NormalizeClientPlan(plan)
 	if err != nil {
-		return err
+		return model.WrapError(model.ErrorInvalidArgument, "invalid client network plan", false, err)
 	}
 	if !e.Available() {
 		return unavailableNetworkError()

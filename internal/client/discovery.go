@@ -8,7 +8,10 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
+	"math/big"
 	"net/http"
 	"strconv"
 	"time"
@@ -50,10 +53,18 @@ type DiscoveryClient struct {
 func (c DiscoveryClient) Discover(
 	ctx context.Context,
 	fnID string,
-) (Discovery, error) {
+) (discovery Discovery, failure error) {
+	var httpStatus int
+	defer func() {
+		if failure != nil {
+			typed := model.WithOperation(failure, "discovery.request")
+			typed.HTTPStatus = httpStatus
+			failure = typed
+		}
+	}()
 	fnID, err := normalizeFNID(fnID)
 	if err != nil {
-		return Discovery{}, err
+		return Discovery{}, model.WrapError(model.ErrorInvalidArgument, "invalid FN ID", false, err)
 	}
 	body, err := json.Marshal(struct {
 		FNID string `json:"fnId"`
@@ -97,38 +108,44 @@ func (c DiscoveryClient) Discover(
 	}
 	response, err := client.Do(request)
 	if err != nil {
-		return Discovery{}, model.WrapError(
+		return Discovery{}, model.NormalizeError(
+			err,
 			model.ErrorUnavailable,
 			"FN Connect discovery is unavailable",
 			true,
-			err,
 		)
 	}
 	defer response.Body.Close()
+	httpStatus = response.StatusCode
 	if response.StatusCode != http.StatusOK {
-		return Discovery{}, model.NewError(
-			model.ErrorUnavailable,
-			fmt.Sprintf("FN Connect discovery returned HTTP %d", response.StatusCode),
-			true,
-		)
+		return Discovery{}, HTTPResponseError(response, "discovery.request", nil)
 	}
 	var envelope struct {
-		Code int       `json:"code"`
-		Msg  string    `json:"msg"`
-		Data Discovery `json:"data"`
+		Code *int       `json:"code"`
+		Msg  string     `json:"msg"`
+		Data *Discovery `json:"data"`
 	}
-	decoder := json.NewDecoder(response.Body)
-	if err := decoder.Decode(&envelope); err != nil {
-		return Discovery{}, fmt.Errorf("decode FN Connect discovery: %w", err)
+	data, readErr := io.ReadAll(io.LimitReader(response.Body, maxRemoteResponseSize+1))
+	if readErr == nil && len(data) > maxRemoteResponseSize {
+		readErr = errors.New("discovery response exceeds size limit")
 	}
-	if envelope.Code != 0 {
-		return Discovery{}, fmt.Errorf(
-			"FN Connect discovery failed with code %d: %s",
-			envelope.Code,
-			envelope.Msg,
-		)
+	if readErr == nil {
+		readErr = json.Unmarshal(data, &envelope)
 	}
-	return envelope.Data, nil
+	if readErr != nil {
+		return Discovery{}, model.NormalizeError(readErr, model.ErrorProtocol, "invalid FN Connect discovery response", false)
+	}
+	if envelope.Code == nil || *envelope.Code == 0 && envelope.Data == nil {
+		return Discovery{}, model.NewError(model.ErrorProtocol, "FN Connect discovery response is missing code or data", false)
+	}
+	if *envelope.Code != 0 {
+		err := model.NewError(model.ErrorDiscoveryFailed, "FN Connect discovery was rejected", false)
+		err.HTTPStatus = response.StatusCode
+		err.RemoteCode = strconv.Itoa(*envelope.Code)
+		err.Detail = model.SafeText(envelope.Msg)
+		return Discovery{}, err
+	}
+	return *envelope.Data, nil
 }
 
 func discoveryFNSign(fnID, timestamp string) string {
@@ -151,11 +168,12 @@ func discoveryAuthSign(body []byte, nonce, timestamp string) string {
 }
 
 func discoveryNonce() (string, error) {
-	var value [16]byte
-	if _, err := rand.Read(value[:]); err != nil {
+	// FN Connect expects the browser's six-digit decimal nonce format.
+	value, err := rand.Int(rand.Reader, big.NewInt(900000))
+	if err != nil {
 		return "", err
 	}
-	return hex.EncodeToString(value[:]), nil
+	return strconv.FormatInt(value.Int64()+100000, 10), nil
 }
 
 func valueOrDefault(value, fallback string) string {

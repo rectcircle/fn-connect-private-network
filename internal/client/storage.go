@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/rectcircle/fn-connect-private-network/internal/model"
+	"github.com/rectcircle/fn-connect-private-network/internal/privileged"
 	wgconfig "github.com/rectcircle/fn-connect-private-network/internal/wireguard"
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 )
@@ -18,8 +19,8 @@ import (
 const (
 	localConfigVersion = 2
 	maxLocalConfigSize = 256 * 1024
-	wireGuardSecret    = "com.rectcircle.fncpn.wireguard"
-	cookieSecret       = "com.rectcircle.fncpn.cookies"
+	wireGuardSecret    = privileged.WireGuardSecret
+	cookieSecret       = privileged.CookieSecret
 )
 
 type Cookie struct {
@@ -58,7 +59,12 @@ func NewConfigStore(path string, secrets SecretStore) *ConfigStore {
 	return &ConfigStore{path: path, secrets: secrets}
 }
 
-func (s *ConfigStore) Load() (*LocalConfig, error) {
+func (s *ConfigStore) Load() (_ *LocalConfig, failure error) {
+	defer func() {
+		if failure != nil {
+			failure = model.WithOperation(failure, "configuration.load")
+		}
+	}()
 	file, err := os.Open(s.path)
 	if os.IsNotExist(err) {
 		return nil, nil
@@ -72,7 +78,7 @@ func (s *ConfigStore) Load() (*LocalConfig, error) {
 		return nil, fmt.Errorf("stat client config: %w", err)
 	}
 	if !info.Mode().IsRegular() || info.Mode().Perm()&0o077 != 0 {
-		return nil, errors.New("client config permissions are invalid")
+		return nil, model.NewError(model.ErrorFailedPrecondition, "client config permissions are invalid", false)
 	}
 	data, err := io.ReadAll(io.LimitReader(file, maxLocalConfigSize+1))
 	if err != nil {
@@ -83,7 +89,7 @@ func (s *ConfigStore) Load() (*LocalConfig, error) {
 	}
 	var config LocalConfig
 	if err := model.DecodeStrict(data, &config); err != nil {
-		return nil, fmt.Errorf("decode client config: %w", err)
+		return nil, model.WrapError(model.ErrorFailedPrecondition, "invalid client configuration JSON", false, err)
 	}
 	if err := validateLocalConfig(config); err != nil {
 		return nil, err
@@ -91,7 +97,12 @@ func (s *ConfigStore) Load() (*LocalConfig, error) {
 	return &config, nil
 }
 
-func (s *ConfigStore) Save(config LocalConfig) error {
+func (s *ConfigStore) Save(config LocalConfig) (failure error) {
+	defer func() {
+		if failure != nil {
+			failure = model.WithOperation(failure, "configuration.save")
+		}
+	}()
 	if config.Version == 0 {
 		config.Version = localConfigVersion
 	}
@@ -111,14 +122,24 @@ func (s *ConfigStore) Save(config LocalConfig) error {
 	return writeClientFileAtomic(s.path, append(data, '\n'))
 }
 
-func (s *ConfigStore) Clear() error {
+func (s *ConfigStore) Clear() (failure error) {
+	defer func() {
+		if failure != nil {
+			failure = model.WithOperation(failure, "configuration.clear")
+		}
+	}()
 	if err := os.Remove(s.path); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("remove client config: %w", err)
 	}
 	return nil
 }
 
-func (s *ConfigStore) EnsureWireGuardKey(fnID string) (wgtypes.Key, error) {
+func (s *ConfigStore) EnsureWireGuardKey(fnID string) (_ wgtypes.Key, failure error) {
+	defer func() {
+		if failure != nil {
+			failure = model.WithOperation(failure, "credentials.wireguard")
+		}
+	}()
 	if s.secrets == nil {
 		return wgtypes.Key{}, errors.New("client secret store is unavailable")
 	}
@@ -151,7 +172,12 @@ func (s *ConfigStore) EnsureWireGuardKey(fnID string) (wgtypes.Key, error) {
 	return key, nil
 }
 
-func (s *ConfigStore) SaveCookies(fnID string, cookies []Cookie) error {
+func (s *ConfigStore) SaveCookies(fnID string, cookies []Cookie) (failure error) {
+	defer func() {
+		if failure != nil {
+			failure = model.WithOperation(failure, "credentials.save_cookies")
+		}
+	}()
 	if s.secrets == nil {
 		return errors.New("client secret store is unavailable")
 	}
@@ -166,7 +192,12 @@ func (s *ConfigStore) SaveCookies(fnID string, cookies []Cookie) error {
 	return s.secrets.Put(cookieSecret, account, data)
 }
 
-func (s *ConfigStore) LoadCookies(fnID string) ([]Cookie, error) {
+func (s *ConfigStore) LoadCookies(fnID string) (_ []Cookie, failure error) {
+	defer func() {
+		if failure != nil {
+			failure = model.WithOperation(failure, "credentials.load_cookies")
+		}
+	}()
 	if s.secrets == nil {
 		return nil, errors.New("client secret store is unavailable")
 	}
@@ -188,7 +219,12 @@ func (s *ConfigStore) LoadCookies(fnID string) ([]Cookie, error) {
 	return cookies, nil
 }
 
-func (s *ConfigStore) ClearCookies(fnID string) error {
+func (s *ConfigStore) ClearCookies(fnID string) (failure error) {
+	defer func() {
+		if failure != nil {
+			failure = model.WithOperation(failure, "credentials.clear_cookies")
+		}
+	}()
 	if s.secrets == nil {
 		return errors.New("client secret store is unavailable")
 	}
@@ -199,7 +235,12 @@ func (s *ConfigStore) ClearCookies(fnID string) error {
 	return s.secrets.Delete(cookieSecret, account)
 }
 
-func (s *ConfigStore) Forget(fnID string) error {
+func (s *ConfigStore) Forget(fnID string) (failure error) {
+	defer func() {
+		if failure != nil {
+			failure = model.WithOperation(failure, "credentials.forget")
+		}
+	}()
 	account, err := normalizeFNID(fnID)
 	if err != nil {
 		return err

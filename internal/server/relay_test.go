@@ -1,7 +1,9 @@
 package server
 
 import (
+	"bytes"
 	"context"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -25,21 +27,29 @@ func TestRelayRequiresGatewayIdentity(t *testing.T) {
 	}
 }
 
-func TestRelayRejectsMissingOrForeignOrigin(t *testing.T) {
+func TestRelayAllowsOriginsAfterGatewayHostRewrite(t *testing.T) {
 	handler := newRelayHandler(staticNetworkStatus{
 		status: model.ServerPrivilegedStatus{Active: true, ListenPort: 54789},
 	}, nil)
-	for _, origin := range []string{"", "https://evil.example"} {
-		request := httptest.NewRequest(http.MethodGet, "/relay/v1/wireguard", nil)
-		request.Header.Set("X-Trim-Userid", "user")
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		request.Host = "gateway-internal"
+		handler.ServeHTTP(writer, request)
+	}))
+	defer server.Close()
+	for _, origin := range []string{"", "https://nas.fnos.net", "https://other.example", "null"} {
+		headers := http.Header{"X-Trim-Userid": {"user"}}
 		if origin != "" {
-			request.Header.Set("Origin", origin)
+			headers.Set("Origin", origin)
 		}
-		response := httptest.NewRecorder()
-		handler.ServeHTTP(response, request)
-		if response.Code != http.StatusForbidden {
-			t.Fatalf("origin %q status = %d", origin, response.Code)
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		connection, response, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(server.URL, "http"),
+			&websocket.DialOptions{HTTPHeader: headers})
+		if err != nil {
+			cancel()
+			t.Fatalf("origin %q rejected: %v (%v)", origin, err, response)
 		}
+		_ = connection.Close(websocket.StatusNormalClosure, "test complete")
+		cancel()
 	}
 }
 
@@ -63,7 +73,7 @@ func TestRelayLimitsGlobalConnections(t *testing.T) {
 	request.Header.Set("Origin", "https://example.com")
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
-	if response.Code != http.StatusServiceUnavailable {
+	if response.Code != http.StatusTooManyRequests {
 		t.Fatalf("relay over capacity status = %d", response.Code)
 	}
 }
@@ -86,15 +96,22 @@ func TestRelayBridgesBinaryDatagrams(t *testing.T) {
 	}()
 
 	port := uint16(udp.LocalAddr().(*net.UDPAddr).Port)
+	var output bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&output, nil))
 	handler := newRelayHandler(staticNetworkStatus{status: model.ServerPrivilegedStatus{
 		Active:     true,
 		ListenPort: port,
-	}}, nil)
-	server := httptest.NewServer(handler)
+	}}, logger)
+	done := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		defer close(done)
+		handler.ServeHTTP(writer, request)
+	}))
 	defer server.Close()
 	headers := http.Header{}
 	headers.Set("X-Trim-Userid", "user")
 	headers.Set("Origin", server.URL)
+	headers.Set("Cookie", "session=server-relay-cookie-canary")
 	connection, _, err := websocket.Dial(
 		context.Background(),
 		"ws"+strings.TrimPrefix(server.URL, "http"),
@@ -117,5 +134,20 @@ func TestRelayBridgesBinaryDatagrams(t *testing.T) {
 	}
 	if messageType != websocket.MessageBinary || string(response) != string(payload) {
 		t.Fatalf("relay response type=%v payload=%q", messageType, response)
+	}
+	_ = connection.Close(websocket.StatusNormalClosure, "test complete")
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("relay handler did not finish")
+	}
+	for _, message := range []string{"relay WebSocket upgrade requested", "relay session established", "relay session ended"} {
+		if !strings.Contains(output.String(), `"msg":"`+message+`"`) {
+			t.Fatalf("missing server relay milestone %q: %s", message, output.String())
+		}
+	}
+	if !strings.Contains(output.String(), `"normal":true`) ||
+		strings.Contains(output.String(), "server-relay-cookie-canary") || strings.Contains(output.String(), string(payload)) {
+		t.Fatal("relay closure was misclassified or log exposed a cookie/packet")
 	}
 }
