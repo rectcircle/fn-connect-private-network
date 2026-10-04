@@ -7,6 +7,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"golang.org/x/net/publicsuffix"
 )
 
 type cookieSet struct {
@@ -15,7 +17,7 @@ type cookieSet struct {
 }
 
 func newCookieSet(records []Cookie) (*cookieSet, error) {
-	jar, err := cookiejar.New(nil)
+	jar, err := cookiejar.New(&cookiejar.Options{PublicSuffixList: publicsuffix.List})
 	if err != nil {
 		return nil, err
 	}
@@ -103,7 +105,7 @@ func (s *cookieSet) Records() []Cookie {
 
 // Let the standard jar validate scope even for deletion/expired cookies.
 func acceptsCookie(cookie *http.Cookie, origin *url.URL) bool {
-	jar, _ := cookiejar.New(nil)
+	jar, _ := cookiejar.New(&cookiejar.Options{PublicSuffixList: publicsuffix.List})
 	probe := *cookie
 	probe.MaxAge = 0
 	probe.Expires = time.Time{}
@@ -159,7 +161,50 @@ func (c Cookie) httpCookie() *http.Cookie {
 func cookieKey(cookie Cookie) string {
 	return cookie.Name + "\x00" +
 		strings.TrimPrefix(strings.ToLower(cookie.Domain), ".") + "\x00" +
-		cookie.Path
+		valueOrDefault(cookie.Path, "/")
+}
+
+func mergeCookies(current, before, after []Cookie) []Cookie {
+	old := make(map[string]Cookie, len(before))
+	next := make(map[string]Cookie, len(after))
+	for _, cookie := range before {
+		old[cookieKey(cookie)] = cookie
+	}
+	for _, cookie := range after {
+		next[cookieKey(cookie)] = cookie
+	}
+	result := append([]Cookie(nil), current...)
+	for key, previous := range old {
+		replacement, exists := next[key]
+		if exists && replacement == previous {
+			continue
+		}
+		for index, cookie := range result {
+			if cookieKey(cookie) != key || cookie != previous {
+				continue
+			}
+			if exists {
+				result[index] = replacement
+			} else {
+				result = append(result[:index], result[index+1:]...)
+			}
+			break
+		}
+	}
+	for _, cookie := range after {
+		key := cookieKey(cookie)
+		if _, exists := old[key]; exists {
+			continue
+		}
+		found := false
+		for _, current := range result {
+			found = found || cookieKey(current) == key
+		}
+		if !found {
+			result = append(result, cookie)
+		}
+	}
+	return result
 }
 
 func sameSiteName(value http.SameSite) string {

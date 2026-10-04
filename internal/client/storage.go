@@ -7,7 +7,9 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/rectcircle/fn-connect-private-network/internal/model"
@@ -17,10 +19,11 @@ import (
 )
 
 const (
-	localConfigVersion = 2
-	maxLocalConfigSize = 256 * 1024
-	wireGuardSecret    = privileged.WireGuardSecret
-	cookieSecret       = privileged.CookieSecret
+	localConfigVersion  = 2
+	maxLocalConfigSize  = 256 * 1024
+	wireGuardSecret     = privileged.WireGuardSecret
+	cookieSecret        = privileged.CookieSecret
+	nativeSessionSecret = privileged.NativeSessionSecret
 )
 
 type Cookie struct {
@@ -51,8 +54,9 @@ type SecretStore interface {
 }
 
 type ConfigStore struct {
-	path    string
-	secrets SecretStore
+	path         string
+	secrets      SecretStore
+	credentialMu sync.Mutex
 }
 
 func NewConfigStore(path string, secrets SecretStore) *ConfigStore {
@@ -173,6 +177,12 @@ func (s *ConfigStore) EnsureWireGuardKey(fnID string) (_ wgtypes.Key, failure er
 }
 
 func (s *ConfigStore) SaveCookies(fnID string, cookies []Cookie) (failure error) {
+	s.credentialMu.Lock()
+	defer s.credentialMu.Unlock()
+	return s.saveCookies(fnID, cookies)
+}
+
+func (s *ConfigStore) saveCookies(fnID string, cookies []Cookie) (failure error) {
 	defer func() {
 		if failure != nil {
 			failure = model.WithOperation(failure, "credentials.save_cookies")
@@ -193,6 +203,12 @@ func (s *ConfigStore) SaveCookies(fnID string, cookies []Cookie) (failure error)
 }
 
 func (s *ConfigStore) LoadCookies(fnID string) (_ []Cookie, failure error) {
+	s.credentialMu.Lock()
+	defer s.credentialMu.Unlock()
+	return s.loadCookies(fnID)
+}
+
+func (s *ConfigStore) loadCookies(fnID string) (_ []Cookie, failure error) {
 	defer func() {
 		if failure != nil {
 			failure = model.WithOperation(failure, "credentials.load_cookies")
@@ -220,6 +236,8 @@ func (s *ConfigStore) LoadCookies(fnID string) (_ []Cookie, failure error) {
 }
 
 func (s *ConfigStore) ClearCookies(fnID string) (failure error) {
+	s.credentialMu.Lock()
+	defer s.credentialMu.Unlock()
 	defer func() {
 		if failure != nil {
 			failure = model.WithOperation(failure, "credentials.clear_cookies")
@@ -233,6 +251,108 @@ func (s *ConfigStore) ClearCookies(fnID string) (failure error) {
 		return err
 	}
 	return s.secrets.Delete(cookieSecret, account)
+}
+
+// Merge only the response's changes, and never overwrite a newer session value.
+func (s *ConfigStore) MergeCookies(fnID string, before, after []Cookie) error {
+	s.credentialMu.Lock()
+	defer s.credentialMu.Unlock()
+	current, err := s.loadCookies(fnID)
+	if err != nil {
+		return err
+	}
+	merged := mergeCookies(current, before, after)
+	return s.saveCookies(fnID, merged)
+}
+
+func (s *ConfigStore) SaveNativeSession(session NativeSession) (failure error) {
+	s.credentialMu.Lock()
+	defer s.credentialMu.Unlock()
+	defer func() {
+		if failure != nil {
+			failure = model.WithOperation(failure, "credentials.save_native_session")
+		}
+	}()
+	if s.secrets == nil {
+		return errors.New("client secret store is unavailable")
+	}
+	if err := validateNativeSession(session); err != nil {
+		return err
+	}
+	data, err := json.Marshal(session)
+	if err != nil {
+		return fmt.Errorf("encode native session: %w", err)
+	}
+	return s.secrets.Put(nativeSessionSecret, session.FNID, data)
+}
+
+func (s *ConfigStore) LoadNativeSession(fnID string) (_ NativeSession, found bool, failure error) {
+	s.credentialMu.Lock()
+	defer s.credentialMu.Unlock()
+	defer func() {
+		if failure != nil {
+			failure = model.WithOperation(failure, "credentials.load_native_session")
+		}
+	}()
+	if s.secrets == nil {
+		return NativeSession{}, false, errors.New("client secret store is unavailable")
+	}
+	account, err := normalizeFNID(fnID)
+	if err != nil {
+		return NativeSession{}, false, err
+	}
+	data, found, err := s.secrets.Get(nativeSessionSecret, account)
+	if err != nil {
+		return NativeSession{}, false, fmt.Errorf("read native session: %w", err)
+	}
+	if !found {
+		return NativeSession{}, false, nil
+	}
+	var session NativeSession
+	if err := model.DecodeStrict(data, &session); err != nil {
+		return NativeSession{}, false, fmt.Errorf("decode native session: %w", err)
+	}
+	if err := validateNativeSession(session); err != nil {
+		return NativeSession{}, false, err
+	}
+	if session.FNID != account {
+		return NativeSession{}, false, errors.New("native session account mismatch")
+	}
+	return session, true, nil
+}
+
+func (s *ConfigStore) ClearNativeSession(fnID string) (failure error) {
+	s.credentialMu.Lock()
+	defer s.credentialMu.Unlock()
+	defer func() {
+		if failure != nil {
+			failure = model.WithOperation(failure, "credentials.clear_native_session")
+		}
+	}()
+	if s.secrets == nil {
+		return errors.New("client secret store is unavailable")
+	}
+	account, err := normalizeFNID(fnID)
+	if err != nil {
+		return err
+	}
+	return s.secrets.Delete(nativeSessionSecret, account)
+}
+
+func (s *ConfigStore) SaveNativeGatewayCookies(fnID, token string) error {
+	s.credentialMu.Lock()
+	defer s.credentialMu.Unlock()
+	current, err := s.loadCookies(fnID)
+	if err != nil {
+		return err
+	}
+	current = slices.DeleteFunc(current, func(cookie Cookie) bool {
+		return cookie.Name == "mode" || cookie.Name == "fnos-token"
+	})
+	for _, cookie := range nativeGatewayCookies(fnID, token) {
+		current = append(current, cookie)
+	}
+	return s.saveCookies(fnID, current)
 }
 
 func (s *ConfigStore) Forget(fnID string) (failure error) {
@@ -251,6 +371,7 @@ func (s *ConfigStore) Forget(fnID string) (failure error) {
 			cleanupErrors,
 			s.secrets.Delete(wireGuardSecret, account),
 			s.secrets.Delete(cookieSecret, account),
+			s.secrets.Delete(nativeSessionSecret, account),
 		)
 	}
 	cleanupErrors = append(cleanupErrors, s.Clear())

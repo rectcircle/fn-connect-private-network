@@ -25,7 +25,7 @@ func TestHTTPAndWebSocketFailuresRetainReasons(t *testing.T) {
 	}{
 		{"gateway_auth", 200, "invalid token", model.ErrorAuthRequired, false, "invalid token"},
 		{"gateway_auth_whitespace", 200, " \ninvalid token\r\n", model.ErrorAuthRequired, false, "invalid token"},
-		{"gateway_auth_forbidden", 403, "invalid token", model.ErrorPermissionDenied, false, "invalid token"},
+		{"gateway_auth_forbidden", 403, "invalid token", model.ErrorAuthRequired, false, "invalid token"},
 		{"unauthorized", 401, "session expired", model.ErrorAuthRequired, false, "session expired"},
 		{"forbidden", 403, "forbidden origin", model.ErrorPermissionDenied, false, "forbidden origin"},
 		{"not_found", 404, "not found", model.ErrorNotFound, false, "not found"},

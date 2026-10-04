@@ -20,7 +20,7 @@ func TestMacOSAppEntryPointInstallsDelegate(t *testing.T) {
 	// the development machine's installed app, daemons, or user state.
 	command := exec.Command(swift,
 		"-emit-silgen", "-parse-as-library", "-module-name", "FnCPNApp",
-		"-framework", "AppKit", "-framework", "WebKit",
+		"-framework", "AppKit",
 		filepath.Join("..", "platform", "macos", "FnCPNApp.swift"),
 	)
 	output, err := command.CombinedOutput()

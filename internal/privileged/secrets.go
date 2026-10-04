@@ -19,12 +19,13 @@ import (
 )
 
 const (
-	MethodGetSecret    = "get-client-secret"
-	MethodPutSecret    = "put-client-secret"
-	MethodDeleteSecret = "delete-client-secret"
-	WireGuardSecret    = "com.rectcircle.fncpn.wireguard"
-	CookieSecret       = "com.rectcircle.fncpn.cookies"
-	maxSecretSize      = 64 * 1024
+	MethodGetSecret     = "get-client-secret"
+	MethodPutSecret     = "put-client-secret"
+	MethodDeleteSecret  = "delete-client-secret"
+	WireGuardSecret     = "com.rectcircle.fncpn.wireguard"
+	CookieSecret        = "com.rectcircle.fncpn.cookies"
+	NativeSessionSecret = "com.rectcircle.fncpn.native-session"
+	maxSecretSize       = 64 * 1024
 )
 
 // UID is deliberately absent: the server derives it from the Unix peer.
@@ -67,7 +68,9 @@ func (s *SecretStore) Handle(ctx context.Context, request ipc.Request) ipc.Respo
 	if err != nil {
 		return ipc.Failure(request.ID, err)
 	}
-	if (input.Service != WireGuardSecret && input.Service != CookieSecret) ||
+	if (input.Service != WireGuardSecret &&
+		input.Service != CookieSecret &&
+		input.Service != NativeSessionSecret) ||
 		len(input.Account) == 0 || len(input.Account) > 63 ||
 		len(input.Value) > maxSecretSize ||
 		(request.Method == MethodPutSecret && len(input.Value) == 0) ||

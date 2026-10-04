@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"path"
+	"slices"
 	"sync"
 	"time"
 
@@ -50,13 +51,17 @@ func NewRemoteClient(
 	if httpClient == nil {
 		httpClient = &http.Client{Timeout: 30 * time.Second}
 	}
+	cloned := *httpClient
+	// A login redirect is not an API response. Do not forward NAS cookies to it.
+	cloned.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	cloned.Jar = nil
 	cookieSet, err := newCookieSet(cookies)
 	if err != nil {
 		return nil, fmt.Errorf("initialize cookie jar: %w", err)
 	}
 	return &RemoteClient{
 		baseURL:    parsed,
-		httpClient: httpClient,
+		httpClient: &cloned,
 		cookies:    cookieSet,
 		onCookies:  onCookies,
 	}, nil
@@ -114,20 +119,17 @@ func (c *RemoteClient) WatchConfiguration(
 	if cursor != "" {
 		query.Set("after", cursor)
 	}
-	response, err := c.do(
+	var result ConfigurationWatchResult
+	err := c.callQuery(
 		ctx,
 		http.MethodGet,
 		requestPath,
 		nil,
+		&result,
 		query,
 		30*time.Second,
 	)
 	if err != nil {
-		return ConfigurationWatchResult{}, err
-	}
-	defer response.Body.Close()
-	var result ConfigurationWatchResult
-	if err := decodeResponse(response, &result); err != nil {
 		return ConfigurationWatchResult{}, err
 	}
 	if result.Cursor == "" {
@@ -159,15 +161,44 @@ func (c *RemoteClient) call(
 	body any,
 	result any,
 ) error {
-	response, err := c.do(ctx, method, requestPath, body, nil, 0)
-	if err != nil {
+	return c.callQuery(ctx, method, requestPath, body, result, nil, 0)
+}
+
+func (c *RemoteClient) callQuery(
+	ctx context.Context,
+	method string,
+	requestPath string,
+	body any,
+	result any,
+	query url.Values,
+	minimumTimeout time.Duration,
+) error {
+	request := func() error {
+		response, err := c.do(ctx, method, requestPath, body, query, minimumTimeout)
+		if err != nil {
+			return err
+		}
+		defer response.Body.Close()
+		if result == nil {
+			return nil
+		}
+		return decodeResponse(response, result)
+	}
+	c.mu.Lock()
+	before := c.cookies.Records()
+	c.mu.Unlock()
+	err := request()
+	if err == nil || model.AsError(err).Code != model.ErrorAuthRequired {
 		return err
 	}
-	defer response.Body.Close()
-	if result == nil {
-		return nil
+	c.mu.Lock()
+	after := c.cookies.Records()
+	c.mu.Unlock()
+	// Retry only a definite authentication rejection that also renewed credentials.
+	if len(after) > 0 && !slices.Equal(before, after) {
+		return request()
 	}
-	return decodeResponse(response, result)
+	return err
 }
 
 func (c *RemoteClient) do(
@@ -215,16 +246,16 @@ func (c *RemoteClient) do(
 		), method+" "+model.SafeURL(target.String()))
 	}
 	cookieErr := c.captureCookies(response)
-	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		err := HTTPResponseError(response, responseOperation(response), cookieErr)
-		response.Body.Close()
-		return nil, err
-	}
 	if cookieErr != nil {
 		response.Body.Close()
 		failure := model.WithOperation(cookieErr, "credentials.save_response")
 		failure.HTTPStatus = response.StatusCode
 		return nil, failure
+	}
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		err := HTTPResponseError(response, responseOperation(response), nil)
+		response.Body.Close()
+		return nil, err
 	}
 	return response, nil
 }

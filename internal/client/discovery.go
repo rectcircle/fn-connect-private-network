@@ -13,10 +13,14 @@ import (
 	"io"
 	"math/big"
 	"net/http"
+	"net/netip"
+	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/rectcircle/fn-connect-private-network/internal/model"
+	wgconfig "github.com/rectcircle/fn-connect-private-network/internal/wireguard"
 )
 
 const (
@@ -41,6 +45,20 @@ type Discovery struct {
 type DiscoveryPorts struct {
 	HTTPS uint16 `json:"httpsPort"`
 	HTTP  uint16 `json:"httpPort"`
+}
+
+func (d Discovery) DirectIPv6Candidates() []netip.Addr {
+	var result []netip.Addr
+	// Some NAS versions advertise global addresses in ipv6, not publicIpv6.
+	for _, values := range [][]string{d.PublicIPv6, d.IPv6} {
+		for _, value := range values {
+			address, err := netip.ParseAddr(strings.TrimSpace(value))
+			if err == nil && wgconfig.IsPublicIPv6(address) && !slices.Contains(result, address) {
+				result = append(result, address)
+			}
+		}
+	}
+	return result
 }
 
 type DiscoveryClient struct {

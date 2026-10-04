@@ -20,6 +20,7 @@ const (
 	MethodDisconnect          = "disconnect"
 	MethodRetry               = "retry"
 	MethodAuthorize           = "authorize-complete"
+	MethodAuthorizeNative     = "authorize-native"
 	MethodAuthorizationBegin  = "authorization-begin"
 	MethodAuthorizationStatus = "authorization-status"
 	MethodAuthorizationWait   = "authorization-wait"
@@ -34,6 +35,7 @@ type Runtime interface {
 	Status() model.ClientStatus
 	Diagnose(context.Context) model.ClientDiagnostics
 	Authorize(context.Context, string, []Cookie) error
+	AuthorizeNative(context.Context, string, string, string) error
 	Connect(context.Context) error
 	Disconnect(context.Context) error
 	Retry(context.Context) error
@@ -45,6 +47,13 @@ type Authorization struct {
 	RequestID string   `json:"requestId"`
 	FNID      string   `json:"fnId"`
 	Cookies   []Cookie `json:"cookies"`
+}
+
+type NativeAuthorization struct {
+	RequestID string `json:"requestId"`
+	FNID      string `json:"fnId"`
+	Username  string `json:"username"`
+	Password  string `json:"password"`
 }
 
 type AuthorizationRequest struct {
@@ -148,10 +157,7 @@ func (s *Service) Handle(
 		if decodeErr != nil {
 			err = decodeErr
 		} else {
-			authorizationContext, startErr := s.startAuthorization(
-				ctx,
-				authorization,
-			)
+			authorizationContext, startErr := s.startAuthorization(ctx, authorization.RequestID, authorization.FNID)
 			if startErr != nil {
 				err = startErr
 			} else {
@@ -159,6 +165,24 @@ func (s *Service) Handle(
 					authorizationContext,
 					authorization.FNID,
 					authorization.Cookies,
+				)
+				err = s.finishAuthorization(authorization.RequestID, err)
+			}
+		}
+	case MethodAuthorizeNative:
+		authorization, decodeErr := ipc.DecodeParams[NativeAuthorization](request)
+		if decodeErr != nil {
+			err = decodeErr
+		} else {
+			authorizationContext, startErr := s.startAuthorization(ctx, authorization.RequestID, authorization.FNID)
+			if startErr != nil {
+				err = startErr
+			} else {
+				err = s.runtime.AuthorizeNative(
+					authorizationContext,
+					authorization.FNID,
+					authorization.Username,
+					authorization.Password,
 				)
 				err = s.finishAuthorization(authorization.RequestID, err)
 			}
@@ -366,7 +390,7 @@ func (s *Service) cancelAuthorization(request ipc.Request) ipc.Response {
 			input.Failure.Code = model.ErrorInternal
 		}
 		pending.state = "failed"
-		pending.err = model.PublicError(model.WithOperation(input.Failure, "authorization.browser"))
+		pending.err = model.PublicError(model.WithOperation(input.Failure, "authorization.ui"))
 	}
 	closeAuthorizationChange(pending)
 	s.pending[input.RequestID] = pending
@@ -383,11 +407,12 @@ func (s *Service) cancelAuthorization(request ipc.Request) ipc.Response {
 
 func (s *Service) startAuthorization(
 	ctx context.Context,
-	authorization Authorization,
+	requestID string,
+	fnID string,
 ) (context.Context, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	pending, ok := s.pending[authorization.RequestID]
+	pending, ok := s.pending[requestID]
 	if !ok {
 		return nil, model.NewError(
 			model.ErrorFailedPrecondition,
@@ -396,7 +421,7 @@ func (s *Service) startAuthorization(
 		)
 	}
 	pending = s.expireAuthorizationLocked(
-		authorization.RequestID,
+		requestID,
 		pending,
 		time.Now(),
 	)
@@ -410,7 +435,7 @@ func (s *Service) startAuthorization(
 			false,
 		)
 	}
-	if pending.fnID != authorization.FNID {
+	if pending.fnID != fnID {
 		return nil, model.NewError(
 			model.ErrorInvalidArgument,
 			"authorization FN ID does not match its request",
@@ -430,8 +455,8 @@ func (s *Service) startAuthorization(
 	)
 	pending.started = true
 	pending.cancel = cancel
-	s.pending[authorization.RequestID] = pending
-	logger := logging.FromContext(ctx, s.logger()).With("authorization_id", authorization.RequestID)
+	s.pending[requestID] = pending
+	logger := logging.FromContext(ctx, s.logger()).With("authorization_id", requestID)
 	logger.Info("authorization credentials received", "fn_id", pending.fnID)
 	authorizationContext = logging.WithLogger(authorizationContext, logger)
 	return authorizationContext, nil

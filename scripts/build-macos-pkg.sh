@@ -5,8 +5,8 @@ export COPYFILE_DISABLE=1
 export COPY_EXTENDED_ATTRIBUTES_DISABLE=1
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-VERSION="${VERSION:-0.1.17}"
-BUILD_NUMBER="${BUILD_NUMBER:-17}"
+VERSION="${VERSION:-0.1.19}"
+BUILD_NUMBER="${BUILD_NUMBER:-19}"
 ARCH="$(go env GOARCH)"
 BUILD_DIR="${TMPDIR:-/tmp}/fncpn-macos-pkg-${UID}"
 PAYLOAD="${BUILD_DIR}/root"
@@ -51,7 +51,6 @@ swiftc \
   -O \
   -parse-as-library \
   -framework AppKit \
-  -framework WebKit \
   "${ROOT_DIR}/platform/macos/FnCPNApp.swift" \
   -o "${APP_DIR}/Contents/MacOS/FnCPN"
 

@@ -82,6 +82,18 @@ func TestConfigStoreKeepsSecretsOutsideConfigFile(t *testing.T) {
 	if !reflect.DeepEqual(actual, cookies) {
 		t.Fatalf("cookies = %#v, want %#v", actual, cookies)
 	}
+	session := NativeSession{
+		Version: nativeSessionVersion, FNID: "home-nas", Username: "admin",
+		DeviceID: "stable-device", Token: "short", LongToken: "long",
+		Secret: "c2VjcmV0", UpdatedAt: time.Now().UTC().Truncate(time.Second),
+	}
+	if err := store.SaveNativeSession(session); err != nil {
+		t.Fatalf("save native session: %v", err)
+	}
+	reloadedSession, found, err := store.LoadNativeSession("home-nas")
+	if err != nil || !found || !reflect.DeepEqual(reloadedSession, session) {
+		t.Fatalf("native session = %#v, found=%v, err=%v", reloadedSession, found, err)
+	}
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
 		t.Fatalf("secret operation unexpectedly created config file: %v", err)
 	}

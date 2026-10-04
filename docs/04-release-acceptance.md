@@ -97,10 +97,10 @@ go vet ./...
 node --test internal/server/web/index.test.cjs
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build ./...
 CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build ./...
-swiftc -typecheck -parse-as-library -framework AppKit -framework WebKit \
+swiftc -typecheck -parse-as-library -framework AppKit \
   platform/macos/FnCPNApp.swift
-# macOS + WindowServer: offscreen AppKit/WebKit fixtures, no real NAS or installed daemon.
-FNCPN_LAYOUT_CHECK=1 FNCPN_WEBKIT_CHECK=1 go test ./packaging -count=1
+# macOS + WindowServer: offscreen AppKit fixture, no real NAS or installed daemon.
+FNCPN_LAYOUT_CHECK=1 go test ./packaging -count=1
 ./scripts/build-macos-pkg.sh
 FNPACK=/absolute/path/to/fnpack ./scripts/build-fpk.sh
 ```

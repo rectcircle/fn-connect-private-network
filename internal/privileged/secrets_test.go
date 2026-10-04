@@ -27,6 +27,7 @@ func TestSecretStorePersistsAndIsolatesCredentials(t *testing.T) {
 		{501, CookieSecret, "home-nas", "user-one-cookie"},
 		{502, CookieSecret, "home-nas", "user-two-cookie"},
 		{501, CookieSecret, "other-nas", "other-account"},
+		{501, NativeSessionSecret, "home-nas", "native-session"},
 		{501, WireGuardSecret, "home-nas", "private-key"},
 	}
 	for _, entry := range entries {

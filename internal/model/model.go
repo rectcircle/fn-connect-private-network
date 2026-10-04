@@ -157,18 +157,32 @@ type ClientStatus struct {
 }
 
 type ClientDiagnostics struct {
-	Status              ClientStatus `json:"status"`
-	Errors              []*Error     `json:"errors,omitempty"`
-	PrivilegedAvailable bool         `json:"privilegedAvailable"`
-	PrivilegedActive    bool         `json:"privilegedActive"`
-	PrivilegedDegraded  bool         `json:"privilegedDegraded"`
-	NetworkInterface    string       `json:"networkInterface,omitempty"`
-	NetworkFingerprint  string       `json:"networkFingerprint,omitempty"`
-	HandshakeAge        string       `json:"handshakeAge,omitempty"`
-	MTU                 int          `json:"mtu,omitempty"`
-	LANOverlap          bool         `json:"lanOverlap"`
-	RoutePolicy         string       `json:"routePolicy,omitempty"`
-	CheckedAt           time.Time    `json:"checkedAt"`
+	Status              ClientStatus      `json:"status"`
+	FNID                string            `json:"fnId,omitempty"`
+	Username            string            `json:"username,omitempty"`
+	ClientAddress       string            `json:"clientAddress,omitempty"`
+	Direct              DirectDiagnostics `json:"direct"`
+	Errors              []*Error          `json:"errors,omitempty"`
+	PrivilegedAvailable bool              `json:"privilegedAvailable"`
+	PrivilegedActive    bool              `json:"privilegedActive"`
+	PrivilegedDegraded  bool              `json:"privilegedDegraded"`
+	NetworkInterface    string            `json:"networkInterface,omitempty"`
+	NetworkFingerprint  string            `json:"networkFingerprint,omitempty"`
+	HandshakeAge        string            `json:"handshakeAge,omitempty"`
+	MTU                 int               `json:"mtu,omitempty"`
+	LANOverlap          bool              `json:"lanOverlap"`
+	RoutePolicy         string            `json:"routePolicy,omitempty"`
+	CheckedAt           time.Time         `json:"checkedAt"`
+}
+
+type DirectDiagnostics struct {
+	LocalPublicIPv6 bool       `json:"localPublicIPv6"`
+	CandidateCount  int        `json:"candidateCount"`
+	AttemptCount    int        `json:"attemptCount"`
+	Endpoint        string     `json:"endpoint,omitempty"`
+	Reason          string     `json:"reason,omitempty"`
+	RetryAfter      *time.Time `json:"retryAfter,omitempty"`
+	LastError       *Error     `json:"lastError,omitempty"`
 }
 
 type NetworkChange struct {

@@ -89,9 +89,19 @@ func HTTPResponseError(response *http.Response, operation string, cause error) *
 }
 
 func gatewayAuthenticationError(response *http.Response, data []byte) *model.Error {
+	if response.StatusCode >= 300 && response.StatusCode < 400 &&
+		response.Request != nil && response.Request.URL != nil &&
+		strings.HasPrefix(response.Request.URL.Path, gatewayApplicationPath+"/") {
+		location, err := response.Location()
+		if err == nil && (location.Path == "/" || location.Path == "" ||
+			location.Path == "/login" || strings.HasPrefix(location.Path, "/login/")) {
+			return model.NewError(model.ErrorAuthRequired, "FN Connect redirected to login; authorize again", false)
+		}
+	}
 	// fnOS rejects expired or missing sessions with plain text and HTTP 200,
 	// before the request reaches the application. Match only this known response.
-	if response.StatusCode != http.StatusOK || strings.TrimSpace(string(data)) != "invalid token" {
+	if (response.StatusCode != http.StatusOK && response.StatusCode != http.StatusUnauthorized &&
+		response.StatusCode != http.StatusForbidden) || strings.TrimSpace(string(data)) != "invalid token" {
 		return nil
 	}
 	return &model.Error{

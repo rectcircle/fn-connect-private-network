@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -48,6 +49,7 @@ func (b *RelayBridge) Start(
 	requestContext context.Context,
 	relayURL string,
 	cookies CookieProvider,
+	onCookies ...func([]Cookie, []Cookie) error,
 ) (string, error) {
 	parsed, err := url.Parse(relayURL)
 	if err != nil ||
@@ -71,7 +73,7 @@ func (b *RelayBridge) Start(
 
 	logger := logging.FromContext(requestContext, b.logger()).With("relay_url", model.SafeURL(relayURL))
 	logger.Info("relay WebSocket connecting")
-	connection, err := dialRelay(requestContext, parsed, cookies)
+	connection, err := dialRelay(requestContext, parsed, cookies, onCookies...)
 	if err != nil {
 		return "", fmt.Errorf("connect relay: %w", err)
 	}
@@ -105,7 +107,7 @@ func (b *RelayBridge) Start(
 	b.mu.Unlock()
 
 	logger.Info("relay bridge ready", "udp_endpoint", udp.LocalAddr().String())
-	go b.run(ctx, done, udp, connection, parsed, cookies, events)
+	go b.run(ctx, done, udp, connection, parsed, cookies, events, onCookies...)
 	return udp.LocalAddr().String(), nil
 }
 
@@ -165,6 +167,7 @@ func (b *RelayBridge) run(
 	relayURL *url.URL,
 	cookies CookieProvider,
 	events chan error,
+	onCookies ...func([]Cookie, []Cookie) error,
 ) {
 	defer close(done)
 	defer b.connected.Store(false)
@@ -199,7 +202,7 @@ func (b *RelayBridge) run(
 			}
 			logger.Info("relay WebSocket reconnecting", "backoff_ms", backoff.Milliseconds())
 			dialContext, cancel := context.WithTimeout(ctx, 15*time.Second)
-			next, dialErr := dialRelay(dialContext, relayURL, cookies)
+			next, dialErr := dialRelay(dialContext, relayURL, cookies, onCookies...)
 			cancel()
 			if dialErr != nil {
 				b.logFailure(dialErr)
@@ -349,11 +352,32 @@ func dialRelay(
 	ctx context.Context,
 	target *url.URL,
 	cookies CookieProvider,
+	onCookies ...func([]Cookie, []Cookie) error,
 ) (*websocket.Conn, error) {
 	records, err := cookies()
 	if err != nil {
 		return nil, fmt.Errorf("load relay cookies: %w", err)
 	}
+	connection, err := dialRelayOnce(ctx, target, records, onCookies...)
+	if err == nil || model.AsError(err).Code != model.ErrorAuthRequired {
+		return connection, err
+	}
+	current, loadErr := cookies()
+	if loadErr != nil {
+		return nil, errors.Join(err, loadErr)
+	}
+	if len(current) > 0 && !slices.Equal(records, current) {
+		return dialRelayOnce(ctx, target, current, onCookies...)
+	}
+	return nil, err
+}
+
+func dialRelayOnce(
+	ctx context.Context,
+	target *url.URL,
+	records []Cookie,
+	onCookies ...func([]Cookie, []Cookie) error,
+) (*websocket.Conn, error) {
 	headers := make(http.Header)
 	originScheme := "http"
 	if target.Scheme == "wss" {
@@ -369,8 +393,31 @@ func dialRelay(
 		&websocket.DialOptions{
 			HTTPHeader:      headers,
 			CompressionMode: websocket.CompressionDisabled,
+			HTTPClient: &http.Client{
+				CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+			},
 		},
 	)
+	var cookieErr error
+	if response != nil && len(response.Cookies()) > 0 {
+		set, setErr := newCookieSet(records)
+		cookieErr = setErr
+		if setErr == nil && set.ApplyResponse(response) {
+			for _, save := range onCookies {
+				if save != nil {
+					cookieErr = errors.Join(cookieErr, save(records, set.Records()))
+				}
+			}
+		}
+	}
+	if cookieErr != nil {
+		if connection != nil {
+			connection.CloseNow()
+		}
+		failure := model.WithOperation(cookieErr, "credentials.save_relay_response")
+		failure.HTTPStatus = response.StatusCode
+		return nil, failure
+	}
 	if err != nil {
 		operation := "relay.handshake " + model.SafeURL(target.String())
 		if response != nil {

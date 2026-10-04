@@ -147,7 +147,7 @@ internal/
   command/          子命令解析与进程组装
 
 ui/
-  macos/            AppKit/WebKit 薄 UI
+  macos/            AppKit 薄 UI
   fnos/             fnOS 薄 UI
 ```
 
@@ -252,14 +252,10 @@ NAS LAN:    192.168.1.0/24
 
 问题在于：后续 CLI 连接 `/app/fncpn/ws` 时，fnOS 统一网关仍会先要求系统登录态。公开文档没有说明如何对指定 WebSocket 路径关闭系统认证，也没有公开的第三方登录 OAuth。[cite:3][cite:7]
 
-可选方案按优先级排序：
-
-1. **向飞牛确认官方能力**：第三方应用公开网关路径、设备授权 API，或 FN Connect SDK。
-2. **macOS App 使用内置 WebView 管理 fnOS 会话**：可行但与纯 CLI 目标不一致，且要处理 Cookie 生命周期。
-3. **CLI 启动独立浏览器配置并通过 CDP 取会话**：技术可行，但依赖浏览器实现、风险高，不建议作为正式方案。
-4. **直接调用 fnOS 私有登录 API**：最易实现，但升级兼容性和安全责任最大，不建议首选。
-
-认证是当前方案的第一阻塞项。
+后续真机验证确认 FN Connect 可以转发 fnOS 原生认证 WebSocket。正式客户端因此使用
+`user.login` 获取 `token + longToken + secret`，短 token 失效后通过
+`user.tokenLogin` 恢复；影视 OAuth、WebView Cookie 导出和浏览器 CDP 均不作为主路径。
+该协议属于 fnOS 原生但未公开承诺的接口，版本兼容性仍需回归测试。
 
 ## fnOS 应用实现约束
 

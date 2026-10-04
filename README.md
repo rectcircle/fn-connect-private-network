@@ -7,6 +7,9 @@
 - [错误码与全链路诊断](docs/05-error-diagnostics.md)
 - [发布验收与实机记录](docs/04-release-acceptance.md#实机验收记录)
 
+fnOS 原生 token 获取、恢复协议及 FN Connect 验证边界已收敛到
+[PoC 凭证章节](docs/02-fncpn-poc-architecture-and-validation.md#39-链路-ifn-connect-凭证与-fnos-原生会话)。
+
 本仓库仅包含正式实现。PoC 源码在本地 `tmp/demo/` 留存，不纳入版本控制；
 相关结论见上方 PoC 架构与验证文档。
 
@@ -34,13 +37,14 @@ MTU 大包和文件下载的实机验证。完整 P0 发布验收尚未完成；
 - fnOS 内核 WireGuard、IPv4 forwarding、专属 nftables 规则和服务端密钥。
 - server daemon 统一串行提交并发布配置/网络快照，root 按完整 Plan 声明式收敛。
 - 幂等设备注册、配置长轮询同步和受限二进制 WebSocket relay。
-- macOS root 私有文件保存私钥与 Cookie，按系统 peer UID 隔离，以及非敏感本地配置。
+- macOS root 私有文件保存私钥、fnOS 原生会话与 Cookie jar，按系统 peer UID 隔离；
+  密码不持久化。
 - FN Connect 地址发现、局域网优先、IPv6 直连、WSS fallback 和冲突路由。
 - 网络变化事件、relay 自动重连和遵循用户连接意图的统一后台恢复。
 - macOS App/PKG 与 fnOS 管理页面/FPK。
 
 尚需验证 LOCAL、公网 IPv6 DIRECT、多路径/网络切换、睡眠唤醒、网段冲突、
-多客户端并发、配置变更与故障回滚、Cookie 无感续期、最新版卸载及安全负向场景。
+多客户端并发、配置变更与故障回滚、fnOS 2FA、最新版卸载及安全负向场景。
 单次下载正常不代表吞吐、文件哈希或长期稳定性验收已完成。
 
 macOS 接口和路由写入不依赖 CGO；正式 macOS 包为

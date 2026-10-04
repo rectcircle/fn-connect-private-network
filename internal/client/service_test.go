@@ -11,7 +11,7 @@ import (
 	"github.com/rectcircle/fn-connect-private-network/internal/model"
 )
 
-func TestAuthorizationBrowserFailureIsRetainedAndSanitized(t *testing.T) {
+func TestAuthorizationUIFailureIsRetainedAndSanitized(t *testing.T) {
 	service := NewWithRuntime(&recordingRuntime{})
 	request, _ := ipc.NewRequest("begin", MethodAuthorizationBegin, AuthorizationRequest{FNID: "home-nas"})
 	begin := service.Handle(context.Background(), request)
@@ -19,7 +19,7 @@ func TestAuthorizationBrowserFailureIsRetainedAndSanitized(t *testing.T) {
 	if err := json.Unmarshal(begin.Result, &pending); err != nil {
 		t.Fatal(err)
 	}
-	failure := model.NewError(model.ErrorPermissionDenied, "browser request rejected", false)
+	failure := model.NewError(model.ErrorPermissionDenied, "UI request rejected", false)
 	failure.HTTPStatus = 403
 	failure.Detail = "https://user:secret@home-nas.fnos.net/app/fncpn?token=canary"
 	request, _ = ipc.NewRequest("cancel", MethodAuthorizationCancel, AuthorizationCancelRequest{
@@ -27,7 +27,7 @@ func TestAuthorizationBrowserFailureIsRetainedAndSanitized(t *testing.T) {
 	})
 	response := service.Handle(context.Background(), request)
 	if response.OK || response.Error == nil || response.Error.HTTPStatus != 403 ||
-		response.Error.Operation != "authorization.browser" {
+		response.Error.Operation != "authorization.ui" {
 		t.Fatalf("failure response = %+v", response)
 	}
 	request, _ = ipc.NewRequest("status", MethodAuthorizationStatus, AuthorizationRequest{RequestID: pending.RequestID})
@@ -38,7 +38,7 @@ func TestAuthorizationBrowserFailureIsRetainedAndSanitized(t *testing.T) {
 	}
 	if result.State != "failed" || result.Error == nil || result.Error.Code != model.ErrorPermissionDenied ||
 		strings.Contains(result.Error.Detail, "secret") || strings.Contains(result.Error.Detail, "canary") {
-		t.Fatalf("recorded browser failure = %+v", result)
+		t.Fatalf("recorded UI failure = %+v", result)
 	}
 }
 
@@ -122,6 +122,36 @@ func TestRuntimeServiceAcceptsAuthorizationFromApp(t *testing.T) {
 	}
 	if result.State != "succeeded" {
 		t.Fatalf("authorization state = %q", result.State)
+	}
+}
+
+func TestRuntimeServiceAcceptsNativeAuthorizationFromApp(t *testing.T) {
+	runtime := &recordingRuntime{status: model.ClientStatus{State: model.ClientPaused}}
+	service := NewWithRuntime(runtime)
+	beginRequest, _ := ipc.NewRequest(
+		"begin",
+		MethodAuthorizationBegin,
+		AuthorizationRequest{FNID: "home-nas"},
+	)
+	beginResponse := service.Handle(context.Background(), beginRequest)
+	var pending AuthorizationResult
+	if err := json.Unmarshal(beginResponse.Result, &pending); err != nil {
+		t.Fatal(err)
+	}
+	request, _ := ipc.NewRequest(
+		"authorize",
+		MethodAuthorizeNative,
+		NativeAuthorization{
+			RequestID: pending.RequestID,
+			FNID:      "home-nas",
+			Username:  "admin",
+			Password:  "password-canary",
+		},
+	)
+	response := service.Handle(context.Background(), request)
+	if !response.OK || runtime.fnID != "home-nas" ||
+		runtime.username != "admin" || runtime.password != "password-canary" {
+		t.Fatalf("native authorization was not delegated: response=%+v", response)
 	}
 }
 
@@ -373,11 +403,14 @@ func TestRuntimeServiceWatchesStatus(t *testing.T) {
 }
 
 type recordingRuntime struct {
-	lastCommand string
-	status      model.ClientStatus
-	fnID        string
-	cookies     []Cookie
-	authorize   func(context.Context, string, []Cookie) error
+	lastCommand     string
+	status          model.ClientStatus
+	fnID            string
+	cookies         []Cookie
+	username        string
+	password        string
+	authorize       func(context.Context, string, []Cookie) error
+	authorizeNative func(context.Context, string, string, string) error
 }
 
 func (r *recordingRuntime) Status() model.ClientStatus {
@@ -397,6 +430,21 @@ func (r *recordingRuntime) Authorize(
 	r.cookies = cookies
 	if r.authorize != nil {
 		return r.authorize(ctx, fnID, cookies)
+	}
+	return nil
+}
+
+func (r *recordingRuntime) AuthorizeNative(
+	ctx context.Context,
+	fnID string,
+	username string,
+	password string,
+) error {
+	r.fnID = fnID
+	r.username = username
+	r.password = password
+	if r.authorizeNative != nil {
+		return r.authorizeNative(ctx, fnID, username, password)
 	}
 	return nil
 }

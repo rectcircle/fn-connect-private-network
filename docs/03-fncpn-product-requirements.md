@@ -19,8 +19,8 @@ PoC 已证明内核 WireGuard、macOS 用户态隧道、IPv6 UDP 直连、FN Con
 - macOS 和 fnOS 每个平台只发布一个 `fncpn` Go 二进制，通过子命令启动不同职责的进程。
 - 系统采用“普通权限 daemon + 最小 root privileged-daemon”的双进程结构。
 - GUI 和用户 CLI 只与普通权限 daemon 通讯。
-- Cookie、自动选路和 WSS 中继永远不进入 root 进程。
-- fnOS UI 和 macOS UI 仅负责展示、WebView 授权和用户交互；核心业务逻辑统一由 Go 程序实现。
+- fnOS 会话协议、Cookie 解析、自动选路和 WSS 中继永远不进入 root 进程。
+- fnOS UI 和 macOS UI 仅负责展示和用户交互；登录、会话恢复和网络逻辑统一由 Go 程序实现。
 
 ## 2. 产品契约
 
@@ -49,7 +49,8 @@ PoC 已证明内核 WireGuard、macOS 用户态隧道、IPv6 UDP 直连、FN Con
 | 服务端配置 | FN ID、服务端公钥、overlay 网段、监听端口、可访问 LAN 网段和配置版本 | fnOS 服务端 |
 | 设备记录 | 设备 ID、展示名称、公钥、分配地址和最近握手信息；P0 仅服务自动注册和 WireGuard peer | fnOS 服务端 |
 | 本地配置 | 服务端标识、设备 ID、连接偏好和最后一次有效配置 | macOS 当前用户 |
-| 授权凭证集 | FN Connect 域名对应的有效 Cookie 及属性，不等同于单个字符串 | macOS root 私有文件，按用户 UID 和 FN ID 隔离 |
+| fnOS 原生会话 | 用户名、稳定设备 ID、短 token、长 token、HMAC secret 和 backId；不含密码 | macOS root 私有文件，按用户 UID 和 FN ID 隔离 |
+| 网关 Cookie jar | 由原生短 token 生成并由 HTTP/WSS `Set-Cookie` 更新的兼容凭证集 | macOS root 私有文件，按用户 UID 和 FN ID 隔离 |
 | 连接会话 | 当前路径、接口、路由、握手状态、重连状态和错误原因 | macOS 用户态守护进程 |
 
 ## 3. 范围与优先级
@@ -57,7 +58,7 @@ PoC 已证明内核 WireGuard、macOS 用户态隧道、IPv6 UDP 直连、FN Con
 ### 3.1 P0：最小完整产品
 
 - fnOS 服务端安装后自动启动并生成长期服务端密钥。
-- macOS 客户端首次启动提供 FN ID 输入和内置授权窗口。
+- macOS 客户端首次启动提供 FN Connect ID、fnOS 用户名和密码的原生登录页。
 - 授权完成后自动生成客户端密钥、注册设备、下发配置并连接。
 - 自动按“局域网直达 → IPv6 UDP 直连 → FN Connect WSS 中继”选择路径。
 - 支持访问 NAS overlay 地址和自动识别的主要 LAN 网段。
@@ -111,18 +112,21 @@ PoC 已证明内核 WireGuard、macOS 用户态隧道、IPv6 UDP 直连、FN Con
 
 ### 4.2 首次授权详细流程
 
-1. 客户端要求用户输入 FN ID 或完整 FN Connect 地址，并规范化为服务端标识。
-2. 客户端守护进程生成本机 WireGuard 密钥；通过特权 IPC 将私钥写入 root 私有凭据文件。
-3. App 为每次授权创建独立的 non-persistent WebKit 数据空间；关闭窗口后不保留
-   WebKit 登录态。
-4. 用户完成 fnOS 登录后，App 判断已进入当前服务端的 FnCPN 路径。
-5. App 从自己的 WebKit Cookie Store 读取该域名的完整凭证集，不读取 Safari 或 Chrome 数据。
-6. 客户端调用服务端 bootstrap 接口，确认登录用户具有管理员权限。
-7. 客户端提交设备名称和公钥；服务端分配最低可用 overlay 地址并启用设备。
-8. 服务端返回连接配置；客户端持久化配置并立即开始自动选路。
-9. 界面显示当前路径和“已可访问”，首次流程结束。
+1. 客户端要求用户输入 FN Connect ID、fnOS 用户名和密码，并规范化服务端标识。
+2. App 通过当前用户私有 IPC 把本次登录输入提交给 client daemon；密码不写入日志、
+   配置、Cookie jar 或 root 凭据文件。
+3. client daemon 经 FN Connect 认证 WebSocket 调用 `user.login`，取得
+   `token + longToken + secret + backId + did`。
+4. daemon 通过特权 IPC 保存原生会话，并以短 token 生成统一网关所需的
+   `fnos-token` Cookie；root 进程只保存不透明字节，不参与协议。
+5. daemon 生成本机 WireGuard 密钥，并调用服务端 bootstrap 确认登录用户具有管理员权限。
+6. 客户端提交设备名称和公钥；服务端分配最低可用 overlay 地址并启用设备。
+7. 服务端返回连接配置；客户端持久化配置并立即开始自动选路。
+8. 界面进入连接详情页并显示当前路径，首次流程结束。
 
-“一次授权”指正常使用周期内无需反复登录。用户主动退出 fnOS、修改密码、服务端撤销会话或 FN Connect 判定会话失效时，客户端必须重新显示授权窗口，不能绕过系统登录。
+“一次授权”指正常使用周期内无需反复登录。短 token 失效时客户端先自动使用长 token
+恢复；长 token 也失效、用户主动退出、修改密码或服务端撤销会话时，详情页显示
+“重新登录”。点击后返回原生登录页，预填 FN Connect ID 和用户名，不预填密码。
 
 ## 5. 服务端功能设计
 
@@ -272,7 +276,7 @@ PoC 已证明内核 WireGuard、macOS 用户态隧道、IPv6 UDP 直连、FN Con
 macOS
 ┌──────────────────────────────┐
 │ FnCPN.app / fncpn CLI        │
-│ 展示、WebView 授权、用户命令   │
+│ 展示、原生登录表单、用户命令  │
 └──────────────┬───────────────┘
                │ 用户私有 IPC
 ┌──────────────▼────────────────┐
@@ -309,7 +313,7 @@ fnOS
 | FnCPN.app | 授权窗口、首次引导、状态和设置 | 不直接配置网络，不长期承载连接 |
 | `fncpn` 用户 CLI | 脚本化查询和控制客户端 daemon | 不读取 profile 执行连接，不直接调用 root 能力 |
 | `fncpn client daemon` | 唯一客户端状态机、配置同步、授权凭证、选路和 WSS bridge | 不以 root 运行，不直接修改系统网络 |
-| `fncpn client privileged-daemon` | 进程内运行 WireGuard，并按结构化计划配置接口和路由 | 不联网、不持有 Cookie、不接受命令名和文件路径 |
+| `fncpn client privileged-daemon` | 进程内运行 WireGuard，并按结构化计划配置接口和路由 | 不联网、不解析凭据、不接受命令名和文件路径 |
 | `fncpn server daemon` | 设备、地址池、配置、HTTP API 和中继桥 | 不以 root 运行，不直接操作接口、防火墙和转发 |
 | `fncpn server privileged-daemon` | 管理服务端私钥、内核 WireGuard、转发和防火墙 | 不监听 HTTP/WSS，不处理浏览器或客户端原始输入 |
 
@@ -317,7 +321,7 @@ fnOS
 
 ## 9. Go 业务包设计
 
-`fncpn` Go 程序承载除原生 UI 以外的全部核心业务逻辑，不只是供 UI 调用的工具库。macOS 和 fnOS UI 仅负责展示、WebView 授权、收集用户操作并调用本地 IPC。
+`fncpn` Go 程序承载除原生 UI 以外的全部核心业务逻辑，不只是供 UI 调用的工具库。macOS 和 fnOS UI 仅负责展示、收集登录输入和用户操作，并调用本地 IPC。
 
 同一代码库按目标平台构建一个 `fncpn` 可执行文件，不同职责通过子命令启动。内部 package 按业务领域和平台边界命名，不设置 `core`、`common` 或 `utils` 等宽泛的中间层。
 
@@ -362,7 +366,7 @@ macOS 和 fnOS 分别构建适配自身平台的 `fncpn`，但每个平台的安
 | `fncpn server privileged-daemon` | fnOS | root | 内核 WireGuard、转发和防火墙 |
 | `fncpn status/connect/...` | macOS | 当前用户 | 用户 CLI，通过 IPC 控制 client daemon |
 
-`FnCPN.app` 仍是一个薄原生 UI 壳，不属于 Go 核心二进制；它只链接 AppKit、WebKit 和 Security.framework。
+`FnCPN.app` 仍是一个薄原生 UI 壳，不属于 Go 核心二进制；它只链接 AppKit。
 
 ### 10.2 WireGuard 集成
 
@@ -517,7 +521,7 @@ macOS 和 fnOS 分别构建适配自身平台的 `fncpn`，但每个平台的安
   路由和 endpoint。
 - privileged-daemon 只接受 root 或当前控制台用户进程。
 - 任何错误必须保留请求 ID；鉴权发生在解码前时允许空 ID 错误响应。
-- 凭据请求仅允许 WireGuard 私钥与 Cookie 两种命名空间；用户 UID 取自操作系统
+- 凭据请求仅允许 WireGuard 私钥、fnOS 原生会话与 Cookie jar 三种命名空间；用户 UID 取自操作系统
   Unix Socket peer identity，请求不能指定 UID 或路径。FN ID 和凭据类型哈希后生成文件名。
 - root 保存不透明凭据字节，不参与 FN Connect 会话、Cookie 解析或 HTTP/WSS 请求。
 - 安装健康检查只依赖 IPC 就绪；自动连接在后台执行，不等待网络或用户授权后才监听 IPC。
@@ -587,29 +591,35 @@ FnCPN 会按需
 `/var/log/fncpn/client-privileged.log`，fnOS daemon 写入
 `${TRIM_PKGVAR}/logs/` 下相互隔离的目录。
 
-## 14. Client 获取与维护 Cookie
+## 14. Client 获取与维护 fnOS 会话
 
-正式方案：由 FnCPN.app 内置的 WebKit 授权窗口获取凭证，不读取用户日常浏览器数据库，不要求复制粘贴，也不调用 fnOS 私有账号密码接口。
+正式方案：FnCPN.app 提供原生登录表单，client daemon 经 FN Connect 调用 fnOS
+原生 WebSocket 会话协议。客户端不读取浏览器数据，不要求复制 Cookie，且不持久化密码。
 
-### 14.1 授权窗口规则
+### 14.1 原生登录页规则
 
-- 每次授权使用新的 non-persistent WebKit Website Data Store，与浏览器和上次授权隔离。
-- 在目标域预置仅本次会话有效的 `mode=relay; Path=/; Secure; HttpOnly` Cookie，等待写入完成后打开 `https://<fn-id>.fnos.net/` 登录入口，不让用户手动选择访问方式。
-- 只允许导航到 `fnos.net` 和当前目标 `<fn-id>.fnos.net` 的 HTTPS 标准端口，不进入其他 NAS 或 HTTP 公网 IP。
-- 页面加载完成和 Cookie 变化时通过同源 bootstrap 检查登录状态；仅有路由 Cookie、401/403、认证重定向或 HTTP 200 登录 HTML 都不能触发授权提交。管理员身份确认后自动进入 FnCPN 应用页面。
-- 检测到目标应用页面且 bootstrap 返回有效管理员身份后，才判定授权成功。
-- bootstrap 可能续期凭证，因此校验完成后重新从 `WKHTTPCookieStore` 获取最新的匹配 Cookie，保留 domain、path、secure、httpOnly、hostOnly 和 expires 属性，不硬编码认证 Cookie 名称。
-- App 通过用户私有 IPC 把凭证集交给 `fncpn client daemon`；daemon 独立复核管理员身份后注册设备，通过特权 IPC 保存凭据文件。
-- 授权成功、失败或用户关闭窗口时移除 Cookie 监听并释放临时 WebView 和 Cookie 快照；取消或页面跳转前发出的异步校验结果不得继续提交授权。
+- 首次启动直接显示 FN Connect ID、用户名和密码三个字段。
+- 密码使用安全输入框，仅随单次 `authorize-native` IPC 请求进入 client daemon。
+- `user.login` 必须通过 `wss://<fn-id>.fnos.net/websocket?type=main`，并显式携带
+  `Cookie: mode=relay`；不得回退到明文 WS。
+- 登录成功后只持久化 `token + longToken + secret + backId + did + username`。
+- daemon 必须再通过 FnCPN bootstrap 检查管理员权限，不能以 `user.login` 成功代替应用授权。
+- 鉴权失败时详情页提供“重新登录”；登录页预填 FN Connect ID 和用户名，密码始终为空。
+- 当前版本不支持 2FA 登录；检测到 2FA challenge 时明确报错，不保存不完整会话。
 
 ### 14.2 凭证使用与刷新
 
+- 除刚完成 `user.login` 的首次连接外，连接前使用
+  `util.getSI + user.authToken` 确认短 token。
+- 短 token 被拒绝时，在新 WebSocket 连接上执行
+  `util.getSI + user.tokenLogin(longToken)`；只覆盖响应实际返回的非空字段。
+- 配置长轮询或 relay 重连遇到明确鉴权失败时，先执行一次原生会话恢复，再决定是否进入
+  `AUTH_REQUIRED`。
 - `fncpn client daemon` 使用标准 Cookie jar 为控制请求和 WSS 握手选择匹配 Cookie。
 - 响应中的 `Set-Cookie` 必须更新 Cookie jar 和 root 凭据文件，不把 Cookie 当作固定字符串。
 - 发现接口无需用户凭证时，不附带 Cookie。
-- 收到明确的 invalid token、认证重定向或 401/403 后，只执行一次受控重试。
-- 若现有 Cookie 可通过正常响应完成续期，则用户无感。
-- 若必须重新输入凭证，状态切换为 `AUTH_REQUIRED`，保留设备密钥和配置。
+- 长 token 也被拒绝时状态切换为 `AUTH_REQUIRED`，保留设备密钥、配置、FN Connect ID
+  和用户名，以便用户重新登录。
 
 ### 14.3 信任边界
 
@@ -619,7 +629,7 @@ FN Connect 统一网关当前要求有效 fnOS 登录态，因此客户端保存
 
 - 把凭据保存为 root 私有文件，特权 IPC 按系统确认的调用用户 UID 隔离。
 - 明确提供“退出登录”和“忘记此服务端”操作。
-- 不在日志、诊断数据和普通配置文件中写入 Cookie。
+- 不在日志、诊断数据和普通配置文件中写入 token、secret、Cookie 或密码。
 
 ## 15. 服务端控制接口
 
@@ -680,7 +690,8 @@ fnOS 管理员身份之外的设备 owner、委托授权或安全撤销。
 
 - 每台设备独立密钥；客户端私钥不上传，服务端私钥不导出。
 - 服务端只允许管理员注册设备和清理离线记录；设备级授权和安全撤销进入 P1。
-- 客户端 Cookie、私钥和配置分层存储；client privileged-daemon 不接触 Cookie。
+- 客户端原生会话、Cookie jar、私钥和配置分层存储；client privileged-daemon
+  只保存不透明凭据，不解析会话或 Cookie。
 - 用户态 IPC 校验同 UID；root IPC 校验 peer credential 和当前控制台用户。P0 仅允许
   当前控制台用户持有系统 VPN，快速用户切换时 root 清理旧用户网络状态。
 - client 和 server privileged-daemon 只执行白名单操作，不接受调用者提供的命令、环境变量或文件路径。
@@ -702,7 +713,7 @@ fnOS 管理员身份之外的设备 owner、委托授权或安全撤销。
 | AC-03 | 局域网 | 客户端确认 NAS 可直达后不创建隧道和远端路由 |
 | AC-04 | 公网 IPv6 | 客户端通过原生 UDP 完成握手并访问 NAS overlay 地址 |
 | AC-05 | 无可用 IPv6 | 客户端自动通过 FN Connect WSS 建立数据路径，无需用户切换模式 |
-| AC-06 | 凭证续用 | 正常 Cookie 更新对用户无感；明确失效时只要求重新授权，不重新注册设备 |
+| AC-06 | 凭证续用 | 短 token 失效时自动使用长 token 恢复；长期会话失效时预填 ID/用户名并要求重新登录，不重新注册设备 |
 | AC-07 | 路由冲突 | 网段重叠时不安装 LAN 路由，仅保留 overlay，绝不覆盖本地设备 |
 | AC-08 | 多设备 | 至少两台客户端可同时连接，地址、密钥和流量相互隔离 |
 | AC-09 | 恢复 | 网络切换、睡眠唤醒和临时断网后自动恢复；用户主动暂停时不自动恢复 |
@@ -717,9 +728,10 @@ fnOS 管理员身份之外的设备 owner、委托授权或安全撤销。
 
 P0 暂定只自动启用默认路由所在物理接口的私有网段。存在多个物理 LAN 时，管理员从服务端界面手工追加。
 
-### 18.2 Cookie 续期兼容性 `[TBD]`
+### 18.2 fnOS 2FA 兼容性 `[TBD]`
 
-当前实测凭证包含 `entry-token`、`osrt` 和 `ost`。实现应使用通用 Cookie jar，但仍需验证 fnOS 版本升级后的无感续期行为。
+当前原生登录已覆盖普通用户名和密码。2FA challenge、信任设备以及首次绑定 TOTP
+仍需补充协议验证和原生 UI。
 
 ### 18.3 Mac 架构范围 `[TBD]`
 

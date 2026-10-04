@@ -1,6 +1,5 @@
 import AppKit
 import Foundation
-import WebKit
 
 private let protocolVersion = 4
 private let maximumFrameSize = 256 * 1024
@@ -51,8 +50,7 @@ private final class IPCClient {
         guard descriptor >= 0 else { throw POSIXError(.EIO) }
         defer { Darwin.close(descriptor) }
         try setTimeout(
-            seconds: method == "authorize-complete" ||
-                method == "watch-client-status" ? 310 : 30,
+            seconds: ["authorize-native", "watch-client-status", "connect", "retry"].contains(method) ? 310 : 30,
             on: descriptor
         )
 
@@ -219,467 +217,115 @@ private final class IPCClient {
     }
 }
 
-private final class AuthorizationWindow: NSObject, WKNavigationDelegate, NSWindowDelegate, WKHTTPCookieStoreObserver {
-    private struct CookieIdentity: Hashable {
-        let name: String
-        let value: String
-        let domain: String
-        let path: String
+private struct ConnectionPresentation {
+    let state: String
+    let needsLogin: Bool
+    var connected: Bool { ["LOCAL", "DIRECT", "RELAY"].contains(state) }
+    var title: String {
+        if needsLogin { return "需要重新登录" }
+        return [
+            "UNCONFIGURED": "尚未连接", "AUTHORIZING": "正在登录",
+            "PROBING": "正在检测网络", "LOCAL": "已在同一局域网",
+            "DIRECT": "IPv6 直连", "RELAY": "FN Connect 中继",
+            "RECONNECTING": "正在重新连接", "PAUSED": "已断开",
+            "ERROR": "连接失败", "DAEMON_UNAVAILABLE": "客户端服务不可用"
+        ][state] ?? state
     }
+    var actionTitle: String { needsLogin ? "重新登录" : connected ? "断开连接" : "连接" }
+    var actionSymbol: String { needsLogin ? "person.badge.key" : connected ? "stop.fill" : "bolt.fill" }
 
-    private enum BootstrapDecision: Equatable {
-        case waitingForLogin
-        case authenticated
-        case failed(String, code: String = "PROTOCOL_ERROR", httpStatus: Int = 0, retryable: Bool = false)
+    init(_ status: [String: Any]) {
+        state = status["state"] as? String ?? "UNCONFIGURED"
+        let failure = status["lastError"] as? [String: Any] ?? [:]
+        let code = failure["code"] as? String ?? ""
+        let operation = failure["operation"] as? String ?? ""
+        needsLogin = state == "AUTH_REQUIRED" || ["AUTH_REQUIRED", "DEVICE_REVOKED"].contains(code) ||
+            (code == "PERMISSION_DENIED" && !operation.hasPrefix("credentials.") &&
+                !operation.hasPrefix("privileged.") &&
+                (failure["httpStatus"] as? Int == 403 || operation.hasPrefix("authorization.")))
     }
+}
 
-    private static let bootstrapScript = """
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 10000);
-        try {
-            const response = await fetch(path, {
-                credentials: "same-origin",
-                cache: "no-store",
-                redirect: "manual",
-                signal: controller.signal
-            });
-            let body = null;
-            if ((response.headers.get("content-type") || "").includes("application/json")) {
-                try { body = await response.json(); } catch (_) {}
-            }
-            return { status: response.status, body };
-        } finally {
-            clearTimeout(timeout);
-        }
-        """
-
-    private let fnID: String
-    private let requestID: String
-    private let completion: (Result<Void, Error>) -> Void
-    private var completed = false
-    private var checking = false
-    private var recheck = false
-    private var submitting = false
-    private var navigationGeneration = 0
-    private var lastCheckedCookies: Set<CookieIdentity>?
-    private var webView: WKWebView?
-    private var window: NSWindow?
-
-    private var relayURL: URL? {
-        URL(string: "https://\(fnID).fnos.net/")
+private func directSummary(_ direct: [String: Any]) -> String {
+    switch direct["reason"] as? String ?? "" {
+    case "connected": return "已建立 UDP 直连"
+    case "local_network": return "同一局域网，无需隧道"
+    case "no_local_ipv6": return "本机物理网络未发现公网 IPv6"
+    case "no_server_ipv6": return "NAS 未提供可用的公网 IPv6"
+    case "server_disabled": return "NAS 已禁用公网 IPv6 访问"
+    case "handshake_failed": return "UDP 握手未通过，已回退中继"
+    case "discovery_failed": return "地址发现失败，已使用中继"
+    case "cooldown": return "等待下一次直连检测"
+    case "probing", "checking": return "正在检测"
+    default: return "尚未检测"
     }
+}
 
-    private var applicationURL: URL? {
-        relayURL?.appendingPathComponent("app/fncpn", isDirectory: true)
-    }
-
-    init(
-        fnID: String,
-        requestID: String,
-        completion: @escaping (Result<Void, Error>) -> Void
-    ) {
-        self.fnID = fnID
-        self.requestID = requestID
-        self.completion = completion
-    }
-
-    func show() {
-        guard let relayURL,
-              let relayCookie = Self.relayCookie(for: relayURL) else {
-            finish(.failure(authorizationError("Invalid FN Connect address", code: "INVALID_ARGUMENT")))
-            return
-        }
-        let configuration = WKWebViewConfiguration()
-        configuration.websiteDataStore = .nonPersistent()
-        let webView = WKWebView(
-            frame: NSRect(x: 0, y: 0, width: 900, height: 680),
-            configuration: configuration
-        )
-        self.webView = webView
-        webView.navigationDelegate = self
-        configuration.websiteDataStore.httpCookieStore.add(self)
-        let window = NSWindow(
-            contentRect: webView.frame,
-            styleMask: [.titled, .closable, .resizable],
-            backing: .buffered,
-            defer: false
-        )
-        window.title = "FnCPN Authorization"
-        window.isReleasedWhenClosed = false
-        window.delegate = self
-        window.contentView = webView
-        window.center()
-        window.makeKeyAndOrderFront(nil)
-        self.window = window
-        configuration.websiteDataStore.httpCookieStore.setCookie(relayCookie) {
-            [weak self, weak webView] in
-            DispatchQueue.main.async {
-                guard let self, !self.completed else { return }
-                webView?.load(URLRequest(url: relayURL))
-            }
-        }
-    }
-
-    func webView(
-        _ webView: WKWebView,
-        decidePolicyFor navigationAction: WKNavigationAction,
-        decisionHandler: @escaping (WKNavigationActionPolicy) -> Void
-    ) {
-        guard allowsNavigation(to: navigationAction.request.url) else {
-            decisionHandler(.cancel)
-            return
-        }
-        if navigationAction.targetFrame == nil {
-            webView.load(navigationAction.request)
-            decisionHandler(.cancel)
-            return
-        }
-        decisionHandler(.allow)
-    }
-
-    func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
-        navigationGeneration += 1
-    }
-
-    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-        lastCheckedCookies = nil
-        checkAuthorization()
-    }
-
-    func cookiesDidChange(in cookieStore: WKHTTPCookieStore) {
-        DispatchQueue.main.async { [weak self] in
-            self?.checkAuthorization()
-        }
-    }
-
-    func webView(
-        _ webView: WKWebView,
-        didFailProvisionalNavigation navigation: WKNavigation!,
-        withError error: Error
-    ) {
-        navigationFailed(error)
-    }
-
-    func webView(
-        _ webView: WKWebView,
-        didFail navigation: WKNavigation!,
-        withError error: Error
-    ) {
-        navigationFailed(error)
-    }
-
-    private func navigationFailed(_ error: Error) {
-        let error = error as NSError
-        if error.domain == NSURLErrorDomain && error.code == NSURLErrorCancelled { return }
-        finish(.failure(error))
-    }
-
-    private func checkAuthorization() {
-        guard !completed, !submitting else { return }
-        if checking {
-            recheck = true
-            return
-        }
-        guard let webView, !webView.isLoading, isTargetPage(webView.url),
-              let applicationURL else { return }
-        checking = true
-        let generation = navigationGeneration
-        webView.configuration.websiteDataStore.httpCookieStore.getAllCookies {
-            [weak self, weak webView] cookies in
-            DispatchQueue.main.async {
-                guard let self, let webView, !self.completed else { return }
-                guard generation == self.navigationGeneration,
-                      !webView.isLoading, self.isTargetPage(webView.url) else {
-                    self.finishCheck()
-                    return
-                }
-                let matching = cookies.filter { self.cookie($0, appliesTo: applicationURL) }
-                let identity = Set(matching.filter { $0.name != "mode" }.map {
-                    CookieIdentity(name: $0.name, value: $0.value, domain: $0.domain, path: $0.path)
-                })
-                // The routing cookie is not a credential. Ignore duplicate cookie notifications.
-                if identity.isEmpty { self.lastCheckedCookies = nil }
-                guard !identity.isEmpty, identity != self.lastCheckedCookies else {
-                    self.finishCheck()
-                    return
-                }
-                self.lastCheckedCookies = identity
-                webView.callAsyncJavaScript(
-                    Self.bootstrapScript,
-                    arguments: ["path": "/app/fncpn/api/v1/bootstrap"],
-                    in: nil,
-                    in: .defaultClient
-                ) { [weak self, weak webView] result in
-                    DispatchQueue.main.async {
-                        guard let self, let webView, !self.completed else { return }
-                        guard generation == self.navigationGeneration,
-                              !webView.isLoading, self.isTargetPage(webView.url) else {
-                            self.finishCheck()
-                            return
-                        }
-                        switch result {
-                        case .failure(let error):
-                            self.finish(.failure(error))
-                        case .success(let response):
-                            switch Self.bootstrapDecision(response) {
-                            case .waitingForLogin:
-                                self.finishCheck()
-                            case .failed(let message, let code, let status, let retryable):
-                                self.finish(.failure(self.authorizationError(
-                                    message, code: code, httpStatus: status, retryable: retryable
-                                )))
-                            case .authenticated:
-                                if self.isApplicationPage(webView.url) {
-                                    self.submitAuthorization()
-                                } else {
-                                    self.checking = false
-                                    self.recheck = false
-                                    webView.load(URLRequest(url: applicationURL))
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    private func finishCheck() {
-        checking = false
-        if recheck {
-            recheck = false
-            checkAuthorization()
-        }
-    }
-
-    private func submitAuthorization() {
-        guard !completed, !submitting, let webView, let applicationURL else { return }
-        checking = false
-        submitting = true
-        let generation = navigationGeneration
-        // Bootstrap may refresh credentials; export the store only after its response.
-        webView.configuration.websiteDataStore.httpCookieStore.getAllCookies {
-            [weak self] cookies in
-            DispatchQueue.main.async {
-                guard let self, !self.completed else { return }
-                guard generation == self.navigationGeneration,
-                      let currentView = self.webView, !currentView.isLoading,
-                      self.isApplicationPage(currentView.url) else {
-                    self.submitting = false
-                    self.lastCheckedCookies = nil
-                    self.checkAuthorization()
-                    return
-                }
-                let matching = cookies.filter { self.cookie($0, appliesTo: applicationURL) }
-                guard matching.contains(where: { $0.name != "mode" }) else {
-                    self.submitting = false
-                    self.lastCheckedCookies = nil
-                    self.checkAuthorization()
-                    return
-                }
-                let values = matching.map { cookie -> [String: Any] in
-                    var value: [String: Any] = [
-                        "name": cookie.name,
-                        "value": cookie.value,
-                        "domain": cookie.domain,
-                        "path": cookie.path,
-                        "secure": cookie.isSecure,
-                        "httpOnly": cookie.isHTTPOnly,
-                        "hostOnly": !cookie.domain.hasPrefix("."),
-                    ]
-                    if let expires = cookie.expiresDate {
-                        value["expires"] = ISO8601DateFormatter().string(from: expires)
-                    }
-                    return value
-                }
-                DispatchQueue.global(qos: .userInitiated).async {
-                    let result: Result<Void, Error>
-                    do {
-                        _ = try IPCClient().call(
-                            method: "authorize-complete",
-                            params: [
-                                "requestId": self.requestID,
-                                "fnId": self.fnID,
-                                "cookies": values,
-                            ]
-                        )
-                        result = .success(())
-                    } catch {
-                        result = .failure(error)
-                    }
-                    DispatchQueue.main.async {
-                        self.finish(result)
-                    }
-                }
-            }
-        }
-    }
-
-    func windowWillClose(_ notification: Notification) {
-        guard !completed else { return }
-        completed = true
-        stopObservingCookies()
-        cancelRequest()
-        releaseWebView()
-    }
-
-    private func finish(_ result: Result<Void, Error>) {
-        guard !completed else { return }
-        completed = true
-        stopObservingCookies()
-        if case .failure(let error) = result { cancelRequest(failure: error) }
-        window?.close()
-        releaseWebView()
-        completion(result)
-    }
-
-    private func stopObservingCookies() {
-        webView?.configuration.websiteDataStore.httpCookieStore.remove(self)
-    }
-
-    private func releaseWebView() {
-        webView?.stopLoading()
-        window?.contentView = nil
-        webView = nil
-        window = nil
-        lastCheckedCookies = nil
-    }
-
-    private func cancelRequest(failure: Error? = nil) {
-        let requestID = requestID
-        var params: [String: Any] = ["requestId": requestID]
-        if let failure {
-            let error = failure as NSError
-            let timedOut = error.domain == NSURLErrorDomain && error.code == NSURLErrorTimedOut
-            params["failure"] = error.userInfo["failure"] as? [String: Any] ?? [
-                "code": timedOut ? "TIMEOUT" : "UNAVAILABLE",
-                "message": "Authorization browser failed",
-                "retryable": true,
-                "operation": "authorization.browser",
-                "detail": "\(error.domain) (\(error.code)): \(error.localizedDescription)",
-            ]
-        }
-        let cancellation = params
-        DispatchQueue.global(qos: .utility).async {
-            _ = try? IPCClient().call(
-                method: "authorization-cancel",
-                params: cancellation
-            )
-        }
-    }
-
-    private func authorizationError(
-        _ message: String, code: String = "PROTOCOL_ERROR", httpStatus: Int = 0, retryable: Bool = false
-    ) -> Error {
-        var failure: [String: Any] = [
-            "code": code, "message": message, "retryable": retryable,
-            "operation": "authorization.bootstrap"
-        ]
-        if httpStatus != 0 { failure["httpStatus"] = httpStatus }
-        return NSError(domain: "FnCPN", code: 5, userInfo: [
-            NSLocalizedDescriptionKey: describeFailure(failure), "failure": failure
-        ])
-    }
-
-    private func allowsNavigation(to url: URL?) -> Bool {
-        guard let url, url.scheme?.lowercased() == "https",
-              url.port == nil || url.port == 443,
-              url.user == nil, url.password == nil,
-              let host = url.host?.lowercased() else { return false }
-        return host == "fnos.net" || host == "\(fnID).fnos.net"
-    }
-
-    private func isTargetPage(_ url: URL?) -> Bool {
-        allowsNavigation(to: url) && url?.host?.lowercased() == "\(fnID).fnos.net"
-    }
-
-    private func isApplicationPage(_ url: URL?) -> Bool {
-        guard isTargetPage(url), let path = url?.path else { return false }
-        return path == "/app/fncpn" || path.hasPrefix("/app/fncpn/")
-    }
-
-    private static func relayCookie(for url: URL) -> HTTPCookie? {
-        HTTPCookie.cookies(
-            withResponseHeaderFields: ["Set-Cookie": "mode=relay; Path=/; Secure; HttpOnly"],
-            for: url
-        ).first
-    }
-
-    private static func bootstrapDecision(_ response: Any?) -> BootstrapDecision {
-        guard let response = response as? [String: Any],
-              let status = response["status"] as? Int else {
-            return .failed("Invalid FnCPN bootstrap response")
-        }
-        if status != 401,
-           let body = response["body"] as? [String: Any],
-           let failure = body["error"] as? [String: Any] {
-            return .failed(describeFailure(failure), code: failure["code"] as? String ?? "PROTOCOL_ERROR",
-                           httpStatus: status, retryable: failure["retryable"] as? Bool == true)
-        }
-        if status == 0 || status == 401 || status == 403 {
-            return .waitingForLogin
-        }
-        guard status == 200 else {
-            let code = status == 429 ? "RESOURCE_EXHAUSTED" : status >= 500 ? "UNAVAILABLE" : "PROTOCOL_ERROR"
-            return .failed("FnCPN bootstrap returned HTTP \(status)", code: code,
-                           httpStatus: status, retryable: status == 429 || status >= 500)
-        }
-        // Some fnOS gateways return an HTML login/invalid-token page with HTTP 200.
-        if response["body"] == nil || response["body"] is NSNull {
-            return .waitingForLogin
-        }
-        guard let body = response["body"] as? [String: Any],
-              let version = body["protocolVersion"] as? Int,
-              let administrator = body["administrator"] as? Bool else {
-            return .failed("Invalid FnCPN bootstrap response")
-        }
-        guard version == protocolVersion else {
-            return .failed("FnCPN client and server protocol versions do not match")
-        }
-        return administrator
-            ? .authenticated
-            : .failed("Administrator access is required to register this device", code: "PERMISSION_DENIED", httpStatus: status)
-    }
-
-    private func cookie(_ cookie: HTTPCookie, appliesTo url: URL) -> Bool {
-        guard let host = url.host?.lowercased() else { return false }
-        let domain = cookie.domain
-            .trimmingCharacters(in: CharacterSet(charactersIn: "."))
-            .lowercased()
-        let domainMatches = host == domain ||
-            (cookie.domain.hasPrefix(".") && host.hasSuffix("." + domain))
-        guard domainMatches, !cookie.isSecure || url.scheme == "https",
-              cookie.expiresDate.map({ $0 > Date() }) ?? true else {
-            return false
-        }
-        let cookiePath = cookie.path.isEmpty ? "/" : cookie.path
-        let requestPath = url.path.isEmpty ? "/" : url.path
-        guard requestPath.hasPrefix(cookiePath) else { return false }
-        if requestPath.count == cookiePath.count || cookiePath.hasSuffix("/") {
-            return true
-        }
-        let boundary = requestPath.index(requestPath.startIndex, offsetBy: cookiePath.count)
-        return requestPath[boundary] == "/"
+private func loginFailureMessage(_ failure: [String: Any]?) -> String {
+    guard let failure else { return "" }
+    switch failure["code"] as? String ?? "" {
+    case "AUTH_REQUIRED":
+        let operation = failure["operation"] as? String ?? ""
+        return operation.contains("native_session.authenticate")
+            ? "用户名或密码无效，请重试"
+            : "登录已失效，请重新输入密码"
+    case "PERMISSION_DENIED":
+        return "该账号没有注册设备所需的管理员权限"
+    case "UNAVAILABLE", "TIMEOUT":
+        return "暂时无法连接 fnOS，请检查网络后重试"
+    case "FAILED_PRECONDITION":
+        let message = failure["message"] as? String ?? ""
+        return message.contains("two-factor")
+            ? "该账号需要两步验证，当前版本暂不支持"
+            : describeFailure(failure)
+    default:
+        return describeFailure(failure)
     }
 }
 
 @main
 private final class AppDelegate: NSObject, NSApplicationDelegate {
     private let ipc = IPCClient()
-    private let statusValue = NSTextField(labelWithString: "UNCONFIGURED")
+    private let statusValue = NSTextField(labelWithString: "尚未连接")
+    private let serverValue = NSTextField(labelWithString: "")
     private let pathValue = NSTextField(labelWithString: "-")
+    private let addressValue = NSTextField(labelWithString: "-")
     private let interfaceValue = NSTextField(labelWithString: "-")
     private let handshakeValue = NSTextField(labelWithString: "-")
     private let rootValue = NSTextField(labelWithString: "-")
-    private let errorValue = NSTextField(labelWithString: "-")
+    private let directValue = NSTextField(wrappingLabelWithString: "尚未检测")
+    private let errorValue = NSTextView()
+    private let setupError = NSTextField(wrappingLabelWithString: "")
     private let fnIDField = NSTextField()
-    private var authorizationWindow: AuthorizationWindow?
+    private let usernameField = NSTextField()
+    private let passwordField = NSSecureTextField()
+    private let setupView = NSStackView()
+    private let detailsView = NSStackView()
+    private let progress = NSProgressIndicator()
+    private var primaryButton = NSButton()
+    private var setupButton = NSButton()
+    private var loginButton = NSButton()
+    private var retryButton = NSButton()
+    private var changeButton = NSButton()
+    private var returnButton = NSButton()
+    private var menuAction: NSMenuItem?
     private var statusItem: NSStatusItem?
     private var statusWatch: DispatchWorkItem?
     private var refreshRetry: DispatchWorkItem?
     private var refreshRetryDelay: TimeInterval = 1
     private var window: NSWindow!
     private var refreshInFlight = false
+    private var refreshPending = false
+    private var busy = false
+    private var loginInFlight = false
+    private var editingServer = false
+    private var savedFNID = ""
+    private var savedUsername = ""
+    private var pendingFNID = ""
+    private var externalAuthorizationRequest = ""
+    private var diagnostics: [String: Any] = [:]
+    private var operationError: [String: Any]?
+    private var presentation = ConnectionPresentation([:])
 
     @MainActor
     static func main() {
@@ -694,74 +340,215 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        let content = NSView(frame: NSRect(x: 0, y: 0, width: 520, height: 444))
-        let title = NSTextField(labelWithString: "FnCPN")
-        title.font = .systemFont(ofSize: 20, weight: .semibold)
-        title.frame = NSRect(x: 24, y: 392, width: 472, height: 28)
-        content.addSubview(title)
-
-        addRow("状态", value: statusValue, y: 352, to: content)
-        addRow("路径", value: pathValue, y: 318, to: content)
-        addRow("接口", value: interfaceValue, y: 284, to: content)
-        addRow("最后握手", value: handshakeValue, y: 250, to: content)
-        addRow("特权服务", value: rootValue, y: 216, to: content)
-        addRow("最近错误", value: errorValue, y: 182, to: content)
-
-        fnIDField.placeholderString = "FN ID"
-        fnIDField.usesSingleLineMode = true
-        fnIDField.font = .systemFont(ofSize: NSFont.systemFontSize)
-        fnIDField.translatesAutoresizingMaskIntoConstraints = false
-        let authorizeButton = button("授权", x: 0, y: 0, action: #selector(authorize))
-        authorizeButton.translatesAutoresizingMaskIntoConstraints = false
-        let authorizationRow = NSStackView(views: [fnIDField, authorizeButton])
-        authorizationRow.orientation = .horizontal
-        authorizationRow.alignment = .centerY
-        authorizationRow.spacing = 12
-        authorizationRow.translatesAutoresizingMaskIntoConstraints = false
-        content.addSubview(authorizationRow)
-        NSLayoutConstraint.activate([
-            authorizationRow.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 24),
-            authorizationRow.centerYAnchor.constraint(equalTo: content.bottomAnchor, constant: -108),
-            fnIDField.widthAnchor.constraint(equalToConstant: 270),
-            authorizeButton.widthAnchor.constraint(equalToConstant: 96),
-        ])
-        content.addSubview(button("连接", x: 24, y: 38, action: #selector(connect)))
-        content.addSubview(button("断开", x: 132, y: 38, action: #selector(disconnect)))
-        content.addSubview(button("重试", x: 240, y: 38, action: #selector(retryConnection)))
-
+        let content = makeContent()
         window = NSWindow(
             contentRect: content.frame,
-            styleMask: [.titled, .closable, .miniaturizable],
-            backing: .buffered,
-            defer: false
+            styleMask: [.titled, .closable, .miniaturizable, .resizable],
+            backing: .buffered, defer: false
         )
         window.title = "FnCPN"
+        window.contentMinSize = NSSize(width: 560, height: 620)
         window.isReleasedWhenClosed = false
         window.contentView = content
+        fnIDField.nextKeyView = usernameField
+        usernameField.nextKeyView = passwordField
+        passwordField.nextKeyView = setupButton
         window.center()
         window.makeKeyAndOrderFront(nil)
+        window.makeFirstResponder(fnIDField)
         NSApp.activate(ignoringOtherApps: true)
         configureStatusItem()
-
+        render()
         refresh()
         startStatusWatch()
+    }
+
+    private func makeContent() -> NSView {
+        let content = NSView(frame: NSRect(x: 0, y: 0, width: 560, height: 620))
+        let title = NSTextField(labelWithString: "FnCPN")
+        title.font = .systemFont(ofSize: 24, weight: .semibold)
+        let icon = NSImageView()
+        icon.image = Bundle.main.image(forResource: "AppIcon") ??
+            NSImage(systemSymbolName: "network", accessibilityDescription: "FnCPN")
+        icon.imageScaling = .scaleProportionallyUpOrDown
+        icon.translatesAutoresizingMaskIntoConstraints = false
+        icon.widthAnchor.constraint(equalToConstant: 40).isActive = true
+        icon.heightAnchor.constraint(equalToConstant: 40).isActive = true
+        let header = horizontal([icon, title])
+        header.spacing = 14
+
+        setupView.orientation = .vertical
+        setupView.alignment = .leading
+        setupView.spacing = 18
+        let setupTitle = NSTextField(labelWithString: "登录 fnOS")
+        setupTitle.font = .systemFont(ofSize: 18, weight: .medium)
+        setupView.addArrangedSubview(setupTitle)
+        configureLoginField(fnIDField, placeholder: "例如 home-nas", label: "FN Connect ID")
+        configureLoginField(usernameField, placeholder: "fnOS 用户名", label: "用户名")
+        configureLoginField(passwordField, placeholder: "fnOS 密码", label: "密码")
+        passwordField.target = self
+        passwordField.action = #selector(submitLogin)
+        let loginForm = NSGridView(views: [
+            loginRow("FN Connect ID", fnIDField),
+            loginRow("用户名", usernameField),
+            loginRow("密码", passwordField)
+        ])
+        loginForm.column(at: 0).width = 104
+        loginForm.column(at: 1).width = 320
+        loginForm.columnSpacing = 14
+        loginForm.rowSpacing = 14
+        loginForm.xPlacement = .fill
+        fnIDField.nextKeyView = usernameField
+        usernameField.nextKeyView = passwordField
+        fill(loginForm, in: setupView)
+        setupButton = button("登录并连接", symbol: "arrow.right", action: #selector(submitLogin))
+        setupButton.widthAnchor.constraint(equalToConstant: 132).isActive = true
+        setupView.addArrangedSubview(setupButton)
+        setupError.textColor = .systemRed
+        fill(setupError, in: setupView)
+        returnButton = button("返回连接详情", symbol: "arrow.left", action: #selector(returnToDetails))
+        setupView.addArrangedSubview(returnButton)
+
+        detailsView.orientation = .vertical
+        detailsView.alignment = .leading
+        detailsView.spacing = 16
+        serverValue.font = .systemFont(ofSize: 17, weight: .semibold)
+        serverValue.lineBreakMode = .byTruncatingMiddle
+        serverValue.isSelectable = true
+        fill(serverValue, in: detailsView)
+        statusValue.font = .systemFont(ofSize: 20, weight: .medium)
+        fill(statusValue, in: detailsView)
+        let grid = NSGridView(views: [
+            row("连接路径", pathValue), row("隧道地址", addressValue),
+            row("网络接口", interfaceValue), row("最近握手", handshakeValue),
+            row("特权服务", rootValue), row("IPv6 检测", directValue)
+        ])
+        grid.column(at: 0).width = 84
+        grid.columnSpacing = 16
+        grid.rowSpacing = 12
+        grid.xPlacement = .fill
+        grid.yPlacement = .top
+        fill(grid, in: detailsView)
+
+        primaryButton = button("连接", symbol: "bolt.fill", action: #selector(primaryAction))
+        primaryButton.widthAnchor.constraint(equalToConstant: 126).isActive = true
+        loginButton = button("重新登录", symbol: "person.badge.key", action: #selector(relogin))
+        retryButton = button("重新检测", symbol: "arrow.clockwise", action: #selector(retryConnection))
+        detailsView.addArrangedSubview(horizontal([primaryButton, loginButton, retryButton]))
+        let errorLabel = NSTextField(labelWithString: "诊断详情")
+        errorLabel.textColor = .secondaryLabelColor
+        detailsView.addArrangedSubview(errorLabel)
+        let scroll = NSScrollView()
+        scroll.hasVerticalScroller = true
+        scroll.borderType = .bezelBorder
+        errorValue.isEditable = false
+        errorValue.isSelectable = true
+        errorValue.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
+        errorValue.textContainerInset = NSSize(width: 8, height: 8)
+        errorValue.isVerticallyResizable = true
+        errorValue.isHorizontallyResizable = false
+        errorValue.autoresizingMask = [.width]
+        errorValue.textContainer?.widthTracksTextView = true
+        errorValue.setAccessibilityLabel("诊断详情")
+        scroll.documentView = errorValue
+        scroll.heightAnchor.constraint(equalToConstant: 100).isActive = true
+        fill(scroll, in: detailsView)
+
+        let body = NSStackView(views: [header, setupView, detailsView])
+        body.orientation = .vertical
+        body.alignment = .leading
+        body.spacing = 28
+        body.translatesAutoresizingMaskIntoConstraints = false
+        content.addSubview(body)
+        for pane in [setupView, detailsView] {
+            pane.translatesAutoresizingMaskIntoConstraints = false
+            pane.widthAnchor.constraint(equalTo: body.widthAnchor).isActive = true
+        }
+        changeButton = button("更换 NAS", symbol: "arrow.left.arrow.right", action: #selector(changeServer))
+        progress.style = .spinning
+        progress.controlSize = .small
+        progress.isDisplayedWhenStopped = false
+        let tools = horizontal([
+            changeButton, progress,
+            button("", symbol: "doc.on.doc", action: #selector(copyDiagnostics), help: "复制诊断信息"),
+            button("", symbol: "folder", action: #selector(openLogs), help: "打开日志"),
+            button("", symbol: "arrow.clockwise", action: #selector(refresh), help: "刷新状态")
+        ])
+        tools.translatesAutoresizingMaskIntoConstraints = false
+        content.addSubview(tools)
+        NSLayoutConstraint.activate([
+            body.topAnchor.constraint(equalTo: content.topAnchor, constant: 28),
+            body.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 28),
+            body.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -28),
+            body.bottomAnchor.constraint(lessThanOrEqualTo: tools.topAnchor, constant: -16),
+            tools.leadingAnchor.constraint(equalTo: body.leadingAnchor),
+            tools.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -20)
+        ])
+        return content
+    }
+
+    private func configureLoginField(_ field: NSTextField, placeholder: String, label: String) {
+        field.placeholderString = placeholder
+        field.setAccessibilityLabel(label)
+        field.usesSingleLineMode = true
+        field.controlSize = .large
+        field.font = .systemFont(ofSize: 15)
+        field.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        field.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+    }
+
+    private func loginRow(_ name: String, _ field: NSTextField) -> [NSView] {
+        let label = NSTextField(labelWithString: name)
+        label.alignment = .right
+        label.textColor = .secondaryLabelColor
+        return [label, field]
+    }
+
+    private func horizontal(_ views: [NSView]) -> NSStackView {
+        let stack = NSStackView(views: views)
+        stack.orientation = .horizontal
+        stack.alignment = .centerY
+        stack.spacing = 10
+        return stack
+    }
+
+    private func fill(_ view: NSView, in stack: NSStackView) {
+        view.translatesAutoresizingMaskIntoConstraints = false
+        stack.addArrangedSubview(view)
+        view.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+    }
+
+    private func row(_ name: String, _ value: NSTextField) -> [NSView] {
+        let label = NSTextField(labelWithString: name)
+        label.textColor = .secondaryLabelColor
+        value.isSelectable = true
+        value.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        if value !== directValue { value.lineBreakMode = .byTruncatingMiddle }
+        return [label, value]
+    }
+
+    private func button(_ title: String, symbol: String, action: Selector, help: String? = nil) -> NSButton {
+        let result = NSButton(title: title, target: self, action: action)
+        result.bezelStyle = .rounded
+        result.image = NSImage(systemSymbolName: symbol, accessibilityDescription: help ?? title)
+        result.imagePosition = title.isEmpty ? .imageOnly : .imageLeading
+        result.toolTip = help ?? title
+        result.setAccessibilityLabel(help ?? title)
+        result.translatesAutoresizingMaskIntoConstraints = false
+        result.heightAnchor.constraint(equalToConstant: 32).isActive = true
+        if title.isEmpty { result.widthAnchor.constraint(equalToConstant: 36).isActive = true }
+        return result
     }
 
     func applicationWillTerminate(_ notification: Notification) {
         statusWatch?.cancel()
         refreshRetry?.cancel()
+        cancelExternalAuthorization()
     }
 
-    func applicationShouldTerminateAfterLastWindowClosed(
-        _ sender: NSApplication
-    ) -> Bool {
-        false
-    }
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
 
-    func applicationShouldHandleReopen(
-        _ sender: NSApplication,
-        hasVisibleWindows flag: Bool
-    ) -> Bool {
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         if !flag { showWindow() }
         return true
     }
@@ -769,14 +556,10 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
     func application(_ application: NSApplication, open urls: [URL]) {
         for url in urls where url.scheme == "fncpn" && url.host == "authorize" {
             let fnID = url.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-            let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
-            let requestID = components?.queryItems?.first {
-                $0.name == "request"
-            }?.value
-            if let normalized = normalizeFNID(fnID),
-               let requestID,
-               !requestID.isEmpty {
-                showAuthorization(fnID: normalized, requestID: requestID)
+            let requestID = URLComponents(url: url, resolvingAgainstBaseURL: false)?
+                .queryItems?.first { $0.name == "request" }?.value
+            if let normalized = normalizeFNID(fnID), let requestID, !requestID.isEmpty {
+                presentLogin(fnID: normalized, username: savedUsername, requestID: requestID)
             }
         }
     }
@@ -787,118 +570,279 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         let menu = NSMenu()
         menu.addItem(withTitle: "打开 FnCPN", action: #selector(showWindow), keyEquivalent: "")
         menu.addItem(.separator())
-        menu.addItem(withTitle: "连接", action: #selector(connect), keyEquivalent: "")
-        menu.addItem(withTitle: "断开", action: #selector(disconnect), keyEquivalent: "")
+        menuAction = menu.addItem(withTitle: "连接", action: #selector(primaryAction), keyEquivalent: "")
+        menu.addItem(withTitle: "重新登录", action: #selector(relogin), keyEquivalent: "")
         menu.addItem(.separator())
         menu.addItem(withTitle: "退出", action: #selector(quit), keyEquivalent: "q")
-        for item in menu.items {
-            item.target = self
-        }
+        menu.autoenablesItems = false
+        for entry in menu.items { entry.target = self }
         item.menu = menu
         statusItem = item
     }
 
     @objc private func showWindow() {
-        window.deminiaturize(nil)
-        window.makeKeyAndOrderFront(nil)
+        window?.deminiaturize(nil)
+        window?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
     }
 
-    @objc private func quit() {
-        NSApp.terminate(nil)
+    @objc private func quit() { NSApp.terminate(nil) }
+
+    @objc private func changeServer() {
+        guard !busy else { return }
+        cancelExternalAuthorization()
+        editingServer = true
+        pendingFNID = ""
+        fnIDField.stringValue = ""
+        usernameField.stringValue = ""
+        passwordField.stringValue = ""
+        setupError.stringValue = ""
+        render()
+        window.makeFirstResponder(fnIDField)
     }
 
-    private func addRow(
-        _ label: String,
-        value: NSTextField,
-        y: CGFloat,
-        to view: NSView
-    ) {
-        let name = NSTextField(labelWithString: label)
-        name.textColor = .secondaryLabelColor
-        name.frame = NSRect(x: 24, y: y, width: 80, height: 24)
-        value.frame = NSRect(x: 112, y: y, width: 384, height: 24)
-        value.lineBreakMode = .byTruncatingMiddle
-        view.addSubview(name)
-        view.addSubview(value)
+    @objc private func returnToDetails() {
+        cancelExternalAuthorization()
+        editingServer = false
+        passwordField.stringValue = ""
+        pendingFNID = ""
+        render()
     }
 
-    private func button(
-        _ title: String,
-        x: CGFloat,
-        y: CGFloat,
-        action: Selector
-    ) -> NSButton {
-        let button = NSButton(frame: NSRect(x: x, y: y, width: 96, height: 32))
-        button.title = title
-        button.bezelStyle = .rounded
-        button.target = self
-        button.action = action
-        return button
-    }
-
-    @objc private func authorize() {
+    @objc private func submitLogin() {
+        guard !busy else { return }
         guard let fnID = normalizeFNID(fnIDField.stringValue) else {
-            statusValue.stringValue = "INVALID_FN_ID"
+            setupError.stringValue = "FN Connect ID 格式不正确"
+            window?.makeFirstResponder(fnIDField)
+            return
+        }
+        let username = usernameField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !username.isEmpty else {
+            setupError.stringValue = "请输入 fnOS 用户名"
+            window?.makeFirstResponder(usernameField)
+            return
+        }
+        let password = passwordField.stringValue
+        guard !password.isEmpty else {
+            setupError.stringValue = "请输入 fnOS 密码"
+            window?.makeFirstResponder(passwordField)
             return
         }
         fnIDField.stringValue = fnID
+        pendingFNID = fnID
+        passwordField.stringValue = ""
+        loginInFlight = true
+        busy = true
+        operationError = nil
+        setupError.stringValue = ""
+        let existingRequest = externalAuthorizationRequest
+        externalAuthorizationRequest = ""
+        render()
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             do {
-                let result = try self?.ipc.call(
-                    method: "authorization-begin",
-                    params: ["fnId": fnID]
-                ) ?? [:]
-                guard let requestID = result["requestId"] as? String else {
-                    throw NSError(
-                        domain: "FnCPN",
-                        code: 4,
-                        userInfo: [NSLocalizedDescriptionKey: "Invalid authorization request"]
-                    )
+                var requestID = existingRequest
+                if requestID.isEmpty {
+                    let result = try self?.ipc.call(
+                        method: "authorization-begin",
+                        params: ["fnId": fnID]
+                    ) ?? [:]
+                    guard let value = result["requestId"] as? String, !value.isEmpty else {
+                        throw NSError(
+                            domain: "FnCPN",
+                            code: 4,
+                            userInfo: [NSLocalizedDescriptionKey: "Invalid authorization request"]
+                        )
+                    }
+                    requestID = value
                 }
-                DispatchQueue.main.async {
-                    self?.showAuthorization(fnID: fnID, requestID: requestID)
-                }
+                _ = try self?.ipc.call(method: "authorize-native", params: [
+                    "requestId": requestID,
+                    "fnId": fnID,
+                    "username": username,
+                    "password": password,
+                ])
+                DispatchQueue.main.async { self?.operationFinished(.success(())) }
             } catch {
-                DispatchQueue.main.async {
-                    self?.statusValue.stringValue = error.localizedDescription
-                }
+                DispatchQueue.main.async { self?.operationFinished(.failure(error)) }
             }
         }
     }
 
-    private func showAuthorization(fnID: String, requestID: String) {
+    @objc private func relogin() {
+        showWindow()
+        guard !busy else { return }
+        let fnID = pendingFNID.isEmpty ? savedFNID : pendingFNID
+        presentLogin(fnID: fnID, username: savedUsername)
+    }
+
+    private func presentLogin(fnID: String, username: String, requestID: String = "") {
+        showWindow()
+        if !externalAuthorizationRequest.isEmpty && externalAuthorizationRequest != requestID {
+            cancelExternalAuthorization()
+        }
+        editingServer = true
+        pendingFNID = fnID
+        externalAuthorizationRequest = requestID
         fnIDField.stringValue = fnID
-        let authorization = AuthorizationWindow(
-            fnID: fnID,
-            requestID: requestID
-        ) {
-            [weak self] result in
-            if case .failure(let error) = result {
-                self?.statusValue.stringValue = error.localizedDescription
-            } else {
-                self?.refresh()
-            }
-        }
-        authorizationWindow = authorization
-        authorization.show()
+        usernameField.stringValue = username
+        passwordField.stringValue = ""
+        operationError = nil
+        setupError.stringValue = ""
+        render()
+        window.makeFirstResponder(fnID.isEmpty ? fnIDField : username.isEmpty ? usernameField : passwordField)
     }
 
-    @objc private func connect() { perform("connect") }
-    @objc private func disconnect() { perform("disconnect") }
-    @objc private func retryConnection() { perform("retry") }
+    private func cancelExternalAuthorization() {
+        let requestID = externalAuthorizationRequest
+        externalAuthorizationRequest = ""
+        guard !requestID.isEmpty else { return }
+        DispatchQueue.global(qos: .utility).async {
+            _ = try? IPCClient().call(
+                method: "authorization-cancel",
+                params: ["requestId": requestID]
+            )
+        }
+    }
+
+    @objc private func primaryAction() {
+        guard !busy else { return }
+        if savedFNID.isEmpty && pendingFNID.isEmpty { showWindow(); return }
+        if presentation.needsLogin || savedFNID.isEmpty { relogin() }
+        else { perform(presentation.connected ? "disconnect" : "connect") }
+    }
+
+    @objc private func retryConnection() {
+        if presentation.needsLogin { relogin() } else { perform("retry") }
+    }
 
     private func perform(_ method: String) {
+        guard !busy else { return }
+        busy = true
+        operationError = nil
+        render()
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             do {
                 _ = try self?.ipc.call(method: method)
-                DispatchQueue.main.async { self?.refresh() }
+                DispatchQueue.main.async { self?.operationFinished(.success(())) }
             } catch {
-                DispatchQueue.main.async {
-                    self?.statusValue.stringValue = error.localizedDescription
-                }
+                DispatchQueue.main.async { self?.operationFinished(.failure(error)) }
             }
         }
+    }
+
+    private func operationFinished(_ result: Result<Void, Error>) {
+        let completedLogin = loginInFlight
+        loginInFlight = false
+        busy = false
+        if case .failure(let error) = result {
+            let failure = (error as NSError).userInfo["failure"] as? [String: Any]
+            operationError = failure ?? ["code": "UNAVAILABLE", "message": error.localizedDescription]
+            if completedLogin {
+                editingServer = true
+            }
+            if failure?["code"] as? String == "CANCELED" {
+                operationError = nil
+                pendingFNID = ""
+            }
+        } else {
+            operationError = nil
+            pendingFNID = ""
+            if completedLogin {
+                editingServer = false
+            }
+        }
+        render()
+        refresh()
+        showWindow()
+    }
+
+    private func applyDiagnostics(_ value: [String: Any]) {
+        diagnostics = value
+        savedFNID = value["fnId"] as? String ?? ""
+        savedUsername = value["username"] as? String ?? savedUsername
+        let status = value["status"] as? [String: Any] ?? [:]
+        if pendingFNID.isEmpty && ConnectionPresentation(status).connected && status["lastError"] == nil {
+            operationError = nil
+        }
+        render()
+    }
+
+    private func render() {
+        let pendingTarget = !pendingFNID.isEmpty && pendingFNID != savedFNID
+        let displayed = pendingTarget ? [:] : diagnostics
+        var status = displayed["status"] as? [String: Any] ?? [:]
+        if pendingTarget { status["state"] = busy ? "AUTHORIZING" : "AUTH_REQUIRED" }
+        if let operationError { status["lastError"] = operationError }
+        presentation = ConnectionPresentation(status)
+        let fnID = pendingFNID.isEmpty ? savedFNID : pendingFNID
+        let setup = editingServer || fnID.isEmpty
+        setupView.isHidden = !setup
+        detailsView.isHidden = setup
+        returnButton.isHidden = savedFNID.isEmpty
+        changeButton.isHidden = setup
+        changeButton.isEnabled = !busy
+        setupButton.isEnabled = !busy
+        fnIDField.isEnabled = !busy
+        usernameField.isEnabled = !busy
+        passwordField.isEnabled = !busy
+        primaryButton.isEnabled = !busy
+        primaryButton.title = presentation.actionTitle
+        primaryButton.toolTip = primaryButton.title
+        primaryButton.image = NSImage(systemSymbolName: presentation.actionSymbol, accessibilityDescription: primaryButton.title)
+        primaryButton.setAccessibilityLabel(primaryButton.title)
+        loginButton.isHidden = presentation.needsLogin
+        loginButton.isEnabled = !busy
+        retryButton.isEnabled = !busy
+        retryButton.isHidden = presentation.needsLogin || savedFNID.isEmpty
+        menuAction?.title = presentation.actionTitle
+        menuAction?.isEnabled = !busy
+        serverValue.stringValue = fnID
+        serverValue.toolTip = fnID
+        statusValue.stringValue = busy && loginInFlight ? "正在登录" : presentation.title
+        statusValue.textColor = presentation.needsLogin ? .systemOrange :
+            presentation.connected ? .systemGreen : .labelColor
+        pathValue.stringValue = [
+            "local": "局域网", "ipv6": "IPv6 / UDP", "fn-connect": "FN Connect / WSS"
+        ][status["path"] as? String ?? ""] ?? "-"
+        addressValue.stringValue = displayed["clientAddress"] as? String ?? "-"
+        let interfaceName = displayed["networkInterface"] as? String ?? "-"
+        let mtu = displayed["mtu"] as? Int ?? 0
+        interfaceValue.stringValue = mtu > 0 ? "\(interfaceName) · MTU \(mtu)" : interfaceName
+        handshakeValue.stringValue = displayed["handshakeAge"] as? String ?? "-"
+        rootValue.stringValue = diagnostics["privilegedAvailable"] as? Bool != true ? "不可用" :
+            diagnostics["privilegedDegraded"] as? Bool == true ? "降级" :
+            diagnostics["privilegedActive"] as? Bool == true ? "活动" : "就绪"
+        let direct = displayed["direct"] as? [String: Any] ?? [:]
+        directValue.stringValue = directSummary(direct)
+        var messages = [describeFailure(status["lastError"] as? [String: Any])]
+        let directError = describeFailure(direct["lastError"] as? [String: Any])
+        if !directError.isEmpty { messages.append("IPv6: \(directError)") }
+        if let endpoint = direct["endpoint"] as? String { messages.append("UDP \(endpoint)") }
+        if let count = direct["candidateCount"] as? Int, count > 0 {
+            messages.append("IPv6 候选 \(count)，已尝试 \(direct["attemptCount"] as? Int ?? 0)")
+        }
+        if displayed["lanOverlap"] as? Bool == true { messages.append("本地与 NAS 网段重叠，仅保留隧道内 NAS 路由") }
+        errorValue.string = messages.filter { !$0.isEmpty }.joined(separator: "\n")
+        if errorValue.string.isEmpty { errorValue.string = "无异常" }
+        setupError.stringValue = setup ? loginFailureMessage(status["lastError"] as? [String: Any]) : ""
+        setupError.maximumNumberOfLines = 3
+        setupError.toolTip = setupError.stringValue
+        if busy { progress.startAnimation(nil) } else { progress.stopAnimation(nil) }
+        statusItem?.button?.title = presentation.connected ? "FnCPN ●" : "FnCPN"
+    }
+
+    @objc private func copyDiagnostics() {
+        var value = diagnostics
+        if let operationError { value["operationError"] = operationError }
+        guard let data = try? JSONSerialization.data(withJSONObject: value, options: [.prettyPrinted, .sortedKeys]),
+              let text = String(data: data, encoding: .utf8) else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+    }
+
+    @objc private func openLogs() {
+        let directory = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Logs/FnCPN")
+        NSWorkspace.shared.open(directory)
     }
 
     private func startStatusWatch() {
@@ -906,21 +850,14 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
             var generation = 0
             while let self, self.statusWatch?.isCancelled == false {
                 do {
-                    let result = try self.ipc.call(
-                        method: "watch-client-status",
-                        params: ["after": generation]
-                    )
+                    let result = try self.ipc.call(method: "watch-client-status", params: ["after": generation])
                     generation = result["generation"] as? Int ?? generation
                     if result["changed"] as? Bool == true {
-                        DispatchQueue.main.async {
-                            self.refresh()
-                        }
+                        DispatchQueue.main.async { self.refresh() }
                     }
                 } catch {
                     if self.statusWatch?.isCancelled == true { return }
-                    DispatchQueue.main.async {
-                        self.showDaemonUnavailable(error)
-                    }
+                    DispatchQueue.main.async { self.showDaemonUnavailable(error) }
                     Thread.sleep(forTimeInterval: 1)
                     generation = 0
                 }
@@ -930,8 +867,8 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         DispatchQueue.global(qos: .utility).async(execute: work)
     }
 
-    private func refresh() {
-        guard !refreshInFlight else { return }
+    @objc private func refresh() {
+        guard !refreshInFlight else { refreshPending = true; return }
         refreshRetry?.cancel()
         refreshRetry = nil
         refreshInFlight = true
@@ -939,50 +876,19 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
             do {
                 let diagnostics = try self?.ipc.call(method: "diagnose") ?? [:]
                 DispatchQueue.main.async {
-                    self?.refreshInFlight = false
-                    self?.refreshRetryDelay = 1
-                    let status = diagnostics["status"] as? [String: Any] ?? [:]
-                    let state = status["state"] as? String ?? "-"
-                    self?.statusValue.stringValue = state
-                    self?.pathValue.stringValue = status["path"] as? String ?? "-"
-                    let interfaceName =
-                        diagnostics["networkInterface"] as? String ?? "-"
-                    let mtu = diagnostics["mtu"] as? Int ?? 0
-                    self?.interfaceValue.stringValue = mtu > 0
-                        ? "\(interfaceName) · MTU \(mtu)"
-                        : interfaceName
-                    if let value = diagnostics["handshakeAge"] as? String {
-                        self?.handshakeValue.stringValue = value
-                    } else {
-                        self?.handshakeValue.stringValue = "-"
+                    guard let self else { return }
+                    self.refreshInFlight = false
+                    self.refreshRetryDelay = 1
+                    self.applyDiagnostics(diagnostics)
+                    if self.refreshPending {
+                        self.refreshPending = false
+                        self.refresh()
                     }
-                    let lastError = status["lastError"] as? [String: Any]
-                    let errorText = describeFailure(lastError)
-                    self?.errorValue.toolTip = errorText
-                    let overlap = diagnostics["lanOverlap"] as? Bool == true
-                    let displayedError = overlap && errorText.isEmpty
-                        ? "LAN_OVERLAP"
-                        : errorText
-                    self?.errorValue.stringValue =
-                        displayedError.isEmpty ? "-" : displayedError
-                    let rootAvailable =
-                        diagnostics["privilegedAvailable"] as? Bool == true
-                    let rootActive =
-                        diagnostics["privilegedActive"] as? Bool == true
-                    let rootDegraded =
-                        diagnostics["privilegedDegraded"] as? Bool == true
-                    self?.rootValue.stringValue = !rootAvailable
-                        ? "不可用"
-                        : rootDegraded
-                            ? "降级"
-                            : rootActive ? "活动" : "空闲"
-                    self?.statusItem?.button?.title = state == "LOCAL" ||
-                        state == "DIRECT" ||
-                        state == "RELAY" ? "FnCPN ●" : "FnCPN"
                 }
             } catch {
                 DispatchQueue.main.async {
                     self?.refreshInFlight = false
+                    self?.refreshPending = false
                     self?.showDaemonUnavailable(error)
                     self?.scheduleRefreshRetry()
                 }
@@ -1000,18 +906,15 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
             self.refresh()
         }
         refreshRetry = retry
-        DispatchQueue.main.asyncAfter(
-            deadline: .now() + delay,
-            execute: retry
-        )
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: retry)
     }
 
     private func showDaemonUnavailable(_ error: Error) {
-        statusValue.stringValue = "DAEMON_UNAVAILABLE"
-        pathValue.stringValue = "-"
-        interfaceValue.stringValue = "-"
-        handshakeValue.stringValue = "-"
-        rootValue.stringValue = "不可用"
-        errorValue.stringValue = error.localizedDescription
+        diagnostics["status"] = [
+            "state": "DAEMON_UNAVAILABLE",
+            "lastError": ["code": "UNAVAILABLE", "message": error.localizedDescription]
+        ]
+        diagnostics["privilegedAvailable"] = false
+        render()
     }
 }

@@ -14,7 +14,7 @@ func newRecoveryTestManager(t *testing.T, store *ConfigStore, network *fakePrivi
 	if remote == nil {
 		remote = func(string, []Cookie, func([]Cookie) error) (RemoteService, error) {
 			return &fakeRemoteService{
-				bootstrap: Bootstrap{Administrator: true},
+				bootstrap:     Bootstrap{Administrator: true},
 				configuration: managerClientConfiguration(),
 			}, nil
 		}
@@ -39,7 +39,7 @@ func TestManagerWatchDiscardsOldSessionCookiesAndConfiguration(t *testing.T) {
 			remote := func(_ string, _ []Cookie, save func([]Cookie) error) (RemoteService, error) {
 				return &fakeWatchingRemoteService{
 					fakeRemoteService: &fakeRemoteService{
-						bootstrap: Bootstrap{Administrator: true},
+						bootstrap:     Bootstrap{Administrator: true},
 						configuration: managerClientConfiguration(),
 					},
 					watch: func(ctx context.Context, _, _ string) (ConfigurationWatchResult, error) {
@@ -177,5 +177,158 @@ func TestDegradedRootIsUnhealthyEvenWithRecentHandshake(t *testing.T) {
 	}, nil, false)
 	if err == nil {
 		t.Fatal("degraded root was considered healthy")
+	}
+}
+
+func TestWatchRetriesWhenRelayRenewedCredentialsInFlight(t *testing.T) {
+	store := configuredManagerStore(t)
+	var calls atomic.Int32
+	recovered := make(chan struct{}, 1)
+	remote := func(_ string, cookies []Cookie, _ func([]Cookie) error) (RemoteService, error) {
+		return &fakeWatchingRemoteService{
+			fakeRemoteService: &fakeRemoteService{configuration: managerClientConfiguration()},
+			watch: func(ctx context.Context, _, _ string) (ConfigurationWatchResult, error) {
+				if calls.Add(1) == 1 {
+					updated := append([]Cookie(nil), cookies...)
+					updated[0].Value = "renewed-by-relay"
+					if err := store.MergeCookies("home-nas", cookies, updated); err != nil {
+						return ConfigurationWatchResult{}, err
+					}
+					return ConfigurationWatchResult{}, model.NewError(model.ErrorAuthRequired, "old session rejected", false)
+				}
+				if len(cookies) == 1 && cookies[0].Value == "renewed-by-relay" {
+					recovered <- struct{}{}
+				}
+				<-ctx.Done()
+				return ConfigurationWatchResult{}, ctx.Err()
+			},
+		}, nil
+	}
+	manager := newRecoveryTestManager(t, store, &fakePrivilegedNetwork{}, remote)
+	manager.setStatus(model.ClientLocal, "local", "", nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan struct{})
+	go func() { defer close(done); manager.watchConfiguration(ctx) }()
+	select {
+	case <-recovered:
+	case <-time.After(3 * time.Second):
+		cancel()
+		<-done
+		t.Fatal("watch did not retry with concurrently renewed credentials")
+	}
+	cancel()
+	<-done
+	if manager.Status().State == model.ClientAuthRequired {
+		t.Fatal("stale authentication rejection disconnected the client")
+	}
+}
+
+func TestWatchRecoversNativeSessionBeforeRequiringLogin(t *testing.T) {
+	store := configuredManagerStore(t)
+	secret := "c2VjcmV0"
+	if err := store.SaveNativeSession(NativeSession{
+		Version: nativeSessionVersion, FNID: "home-nas", Username: "admin",
+		DeviceID: "stable-device", Token: "expired", LongToken: "long",
+		Secret: secret, UpdatedAt: time.Now().Add(-time.Hour),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	authenticator := &fakeNativeAuthenticator{recovered: NativeSession{
+		Version: nativeSessionVersion, FNID: "home-nas", Username: "admin",
+		DeviceID: "stable-device", Token: "recovered", LongToken: "long",
+		Secret: secret, UpdatedAt: time.Now(),
+	}}
+	var calls atomic.Int32
+	retried := make(chan struct{}, 1)
+	remote := func(_ string, cookies []Cookie, _ func([]Cookie) error) (RemoteService, error) {
+		return &fakeWatchingRemoteService{
+			fakeRemoteService: &fakeRemoteService{configuration: managerClientConfiguration()},
+			watch: func(ctx context.Context, _, _ string) (ConfigurationWatchResult, error) {
+				if calls.Add(1) == 1 {
+					return ConfigurationWatchResult{}, model.NewError(
+						model.ErrorAuthRequired, "expired gateway session", false,
+					)
+				}
+				for _, cookie := range cookies {
+					if cookie.Name == "fnos-token" && cookie.Value == "recovered" {
+						retried <- struct{}{}
+						break
+					}
+				}
+				<-ctx.Done()
+				return ConfigurationWatchResult{}, ctx.Err()
+			},
+		}, nil
+	}
+	manager, err := NewManager(ManagerOptions{
+		Store: store, Discoverer: fakeDiscoverer{}, Remote: remote,
+		Privileged: &fakePrivilegedNetwork{}, Bridge: &fakeBridge{},
+		Probe: fakeLocalProbe{reachable: true}, Authenticator: authenticator,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager.setStatus(model.ClientLocal, "local", "", nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { defer close(done); manager.watchConfiguration(ctx) }()
+	select {
+	case <-retried:
+	case <-time.After(3 * time.Second):
+		cancel()
+		<-done
+		t.Fatal("configuration watch did not retry with recovered native session")
+	}
+	cancel()
+	<-done
+	if authenticator.recoverCalls.Load() != 1 ||
+		manager.Status().State == model.ClientAuthRequired {
+		t.Fatal("native recovery did not preserve the connected state")
+	}
+}
+
+func TestRelayAuthenticationFailureRecoversNativeSession(t *testing.T) {
+	store := configuredManagerStore(t)
+	secret := "c2VjcmV0"
+	if err := store.SaveNativeSession(NativeSession{
+		Version: nativeSessionVersion, FNID: "home-nas", Username: "admin",
+		DeviceID: "stable-device", Token: "expired", LongToken: "long",
+		Secret: secret, UpdatedAt: time.Now().Add(-time.Hour),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	authenticator := &fakeNativeAuthenticator{recovered: NativeSession{
+		Version: nativeSessionVersion, FNID: "home-nas", Username: "admin",
+		DeviceID: "stable-device", Token: "recovered", LongToken: "long",
+		Secret: secret, UpdatedAt: time.Now(),
+	}}
+	bridge := &fakeBridge{connected: true, events: make(chan error, 1)}
+	manager, err := NewManager(ManagerOptions{
+		Store: store, Discoverer: fakeDiscoverer{},
+		Remote: func(string, []Cookie, func([]Cookie) error) (RemoteService, error) {
+			return &fakeRemoteService{configuration: managerClientConfiguration()}, nil
+		},
+		Privileged: &fakePrivilegedNetwork{}, Bridge: bridge,
+		Probe: fakeLocalProbe{reachable: true}, Authenticator: authenticator,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager.setStatus(model.ClientRelay, "fn-connect", "utun9", nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { defer close(done); manager.Run(ctx) }()
+	bridge.events <- model.NewError(model.ErrorAuthRequired, "relay token expired", false)
+	deadline := time.Now().Add(3 * time.Second)
+	for manager.Status().State != model.ClientLocal && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	cancel()
+	<-done
+	if authenticator.recoverCalls.Load() != 1 ||
+		manager.Status().State != model.ClientLocal {
+		t.Fatalf("relay recovery state=%s calls=%d",
+			manager.Status().State, authenticator.recoverCalls.Load())
 	}
 }

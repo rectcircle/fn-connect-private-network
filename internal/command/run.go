@@ -238,6 +238,9 @@ func runClientCommand(
 		return model.WrapError(model.ErrorInvalidArgument, err.Error(), false, err)
 	}
 	ipcClient := ipc.Client{SocketPath: *socket}
+	if arguments[0] == "connect" || arguments[0] == "retry" {
+		ipcClient.Timeout = 5*time.Minute + 10*time.Second
+	}
 	if arguments[0] == "authorize" {
 		if flags.NArg() != 1 {
 			return model.NewError(

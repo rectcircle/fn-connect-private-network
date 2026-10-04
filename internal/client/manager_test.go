@@ -1366,6 +1366,7 @@ func (b *fakeBridge) Start(
 	context.Context,
 	string,
 	CookieProvider,
+	...func([]Cookie, []Cookie) error,
 ) (string, error) {
 	b.started++
 	b.connected = b.err == nil

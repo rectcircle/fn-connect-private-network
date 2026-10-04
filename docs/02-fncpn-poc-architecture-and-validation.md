@@ -6,6 +6,7 @@
 
 > 文档状态：PoC 总结  
 > 日期：2026-09-28  
+> 原生会话补充验证：2026-10-04
 > fnOS 当前包版本：`0.4.1`  
 > macOS 实测版本：`0.1.0`
 
@@ -452,24 +453,119 @@ fncpn0
 
 > 普通用户 CLI 与 root Helper 之间的固定操作白名单和 peer credential 校验有效。`0.1.0` 的问题仅是错误展示，不影响访问控制结论。
 
-### 3.9 链路 I：FN Connect 凭证
+### 3.9 链路 I：FN Connect 凭证与 fnOS 原生会话
 
 验证目标：
 
-- 普通 WebSocket 客户端是否能携带 fnOS 登录态通过统一网关认证。
+- 完整 fnOS Cookie 快照能否通过 FN Connect 统一网关认证。
+- FN Connect 是否转发 fnOS 自带的认证 WebSocket。
+- 客户端能否从 fnOS 原生会话恢复统一网关接受的短 token。
+- 长 token 能否在短 token 失效后恢复会话。
 
-实际发现：
+#### 3.9.1 Cookie 快照路径
 
-- `mode=relay` 是进入 FN Connect 中继模式的 Cookie。
-- 实际认证 Cookie 包含 `entry-token`、`osrt` 和 `ost`。
-- Cookie 可以从 Safari Network 面板中的已认证请求获取。
-- 将 Cookie 保存为权限 `0600` 的文件后，CLI WSS bridge 可以通过网关认证。
-- `document.cookie` 无法读取 HttpOnly Cookie。
-- PoC 假设的 `fnos-token` 没有被 FN Connect 代理透传给应用，因此服务端导出方案不可用。
+原 PoC 先验证了浏览器 Cookie 路径：
+
+- `mode=relay` 是进入 FN Connect 中继模式的路由 Cookie，不是用户身份凭证。
+- 早期 fnOS/FN Connect 实测的认证 Cookie 包含 `entry-token`、`osrt` 和 `ost`；
+  不同 fnOS 版本返回的具体 Cookie 集合可能变化，客户端不能硬编码名称。
+- Cookie 可以从 Safari Network 面板中的已认证请求获取；HttpOnly Cookie
+  不能通过 `document.cookie` 读取。
+- 将完整 Cookie 集合保存到权限 `0600` 的文件后，普通 CLI WSS bridge
+  能通过 FN Connect 统一网关认证并连接 FnCPN。
+- PoC 假设的单一 `fnos-token` 当时没有被 FN Connect 代理直接透传给应用，
+  因此不能依赖服务端导出一个固定 token 字符串。
+- 正式客户端保留通用 Cookie jar 作为兼容层，并处理 HTTP/WSS 响应中的
+  `Set-Cookie`，但主登录路径不再导出浏览器 Cookie。
+
+这条路径证明了“完整浏览器会话快照可以连接”，但快照自身不提供稳定的长期恢复语义；
+Cookie 真正失效时仍需要重新登录。
+
+#### 3.9.2 fnOS 原生 token 路径
+
+这不是 OAuth2，而是 fnOS 自带的 WebSocket RPC 会话协议。经 FN Connect
+建立认证通道时，客户端先发送：
+
+```http
+GET /websocket?type=main HTTP/1.1
+Host: <fn-id>.fnos.net
+Cookie: mode=relay
+Connection: Upgrade
+Upgrade: websocket
+```
+
+FN Connect 返回 `101 Switching Protocols` 后，客户端在 WebSocket 文本帧中
+调用以下 RPC：
+
+1. 首次原生登录使用未签名的 `user.login`，包含 `user`、`password`、
+   `stay=1`、`deviceName`、`deviceType`、稳定 `did` 和 `reqid`。
+2. 登录成功返回短期 `token`、长期 `longToken`、HMAC 密钥 `secret`、
+   请求上下文 `backId`、`uid` 和管理员标记。密码只用于本次 WSS 登录，
+   不持久化。
+3. 已有会话先调用未签名的 `util.getSI`，再使用 `secret` 对
+   `user.authToken` 请求做 HMAC-SHA256 签名，确认或刷新短 token。
+4. `user.authToken` 失败时，在新连接上重新获取 `si`，再签名调用
+   `user.tokenLogin`，其中 `token` 字段承载 `longToken`。
+5. 签名线格式为 `<base64-hmac-signature><json-body>`，没有分隔符；
+   HMAC 密钥是 `secret` 的 Base64 解码值。
+6. 恢复响应只覆盖实际返回的非空字段。实测 `user.tokenLogin` 返回了新短 token
+   和 `backId`，但没有返回新的 `longToken` 或 `secret`；客户端必须保留旧值，
+   不能把缺失字段清空。
+7. 有效短 token 作为 `fnos-token` Cookie 访问 `/app/fncpn` 的 HTTP 和 WSS
+   入口；`mode=relay` 仍只负责选择 FN Connect 中继路径。
+
+当前 FN Connect 浏览器会话使用 `ost` 作为短 token，并在页面存储中保存
+`fnos-Secret`。浏览器中继会话没有暴露 `fnos-long-token`，因此仅导出浏览器
+Cookie 不能形成完整的长期恢复会话。正式客户端现已保存
+`token + longToken + secret + backId + did + username`，同时保留完整 Cookie jar
+作为统一网关的兼容层；密码只用于单次登录，不持久化。
+
+#### 3.9.3 真机验证
+
+在 `rectcircle-mi-nuc` 上取得以下证据：
+
+- 原 PoC 将浏览器已认证 Cookie 保存为 `0600` 文件后，CLI WSS bridge
+  已通过 FN Connect 统一网关建立连接。
+- Cookie 认证后的 WireGuard over FN Connect WSS 完成握手和数据传输，
+  基础 ping 及 100 次 1200-byte payload 均为 0% 丢包。
+- 未认证访问 FnCPN HTTP/WSS 均返回 `invalid token`，负向基线成立。
+- 携带 `mode=relay` 访问
+  `wss://<fn-id>.fnos.net/websocket?type=main`，FN Connect 返回 `101`。
+- 在同一条 FN Connect 认证 WebSocket 上，`util.getSI` 和签名后的
+  `user.authToken` 均成功。
+- 恢复出的短 token 经 FN Connect 请求 FnCPN bootstrap 返回结构化 HTTP `200`。
+- 同一短 token 经 FN Connect 建立 FnCPN relay WSS，Upgrade 返回 `101`。
+- 使用公网 IPv6 直连 NAS 的 `5667/WSS` 执行 `user.login`，成功取得
+  `token`、`longToken`、`secret` 和 `backId`。
+- 使用该长期会话执行 `user.tokenLogin` 成功；恢复出的短 token 再次经
+  FN Connect 通过 FnCPN HTTP `200` 和 WSS `101`。
+- 使用 Node.js WebSocket 客户端直接连接 FN Connect 域名，并在两条独立连接上
+  显式携带 `Cookie: mode=relay`：第一条执行 `user.login`，成功返回
+  `token`、`longToken`、`secret` 和 `backId`；第二条执行
+  `util.getSI + user.tokenLogin`，成功恢复短 token 和 `backId`。
+- 上述 Node.js 验证全程未使用公网 IPv6、`trim-cli` 或本地代理；恢复出的短 token
+  经同一 FN Connect 域名访问 FnCPN bootstrap 返回 HTTP `200`，建立 relay WSS
+  返回 `101`。
+- `trim-cli` 直接连接 `<fn-id>.fnos.net` 会收到跳转到
+  `fnos.net/<fn-id>/websocket` 的 `302`，原因是它不能注入
+  `mode=relay` Cookie，不代表 FN Connect 不支持该认证 WebSocket。
+
+验证边界：
+
+- Cookie 快照连接已经验证，但不同 fnOS 版本的 Cookie 名称、过期时间和续期行为
+  不能从单次快照推导。
+- `GET /websocket?type=main`、`user.login`、`user.authToken` 和
+  `user.tokenLogin` 均已通过 FN Connect 实机执行。
+- 尚未验证 2FA、信任设备、密码修改或服务端撤销设备后的恢复分支。
+- 影视 OAuth 只签发 Media token，不需要用于 FnCPN 系统网关认证。
 
 结论：
 
-> “非浏览器客户端携带 fnOS 会话建立 WSS”已经验证可行；“正式客户端如何自动、持续地获得和刷新凭证”没有在 PoC 中产品化，需要由客户端内置 WebKit 授权流程解决。
+> 完整 Cookie 快照和 fnOS 原生 token 是两条均已取得真机证据的认证路径。
+> Cookie 路径已证明能够直接建立 FnCPN 中继；原生会话进一步提供短 token
+> 确认和长 token 恢复能力。正式客户端应优先管理原生会话，同时保留通用
+> Cookie jar 作为兼容路径。`user.login`、`user.tokenLogin` 及恢复后的
+> FnCPN HTTP/WSS 鉴权已全部通过 FN Connect 实机验证，无需依赖客户端具备 IPv6。
 
 ## 4. 自动化验证
 
@@ -483,6 +579,8 @@ fncpn0
 | `internal/wireguard` | 私钥、设备地址、持久化和旧配置迁移 |
 | `internal/macoshelper` | profile 校验、配置渲染、peer UID/PID |
 | `cmd/fncpnctl` | Helper response ID 校验 |
+| `internal/client` 原生会话 | `user.login`、HMAC 签名、短 token 失败后新连接长 token 恢复、敏感字段存储和运行时鉴权恢复 |
+| `platform/macos` | 原生登录表单、首次登录、鉴权失败回填 ID/用户名及密码空置 |
 
 已执行并通过：
 
@@ -518,7 +616,13 @@ PoC 实际链路验证使用 macOS `0.1.0`。`0.1.1` 只修正 CLI 对 Helper �
 | WSS bridge 可独立重连并恢复流量 | 真机 | 已证明 |
 | Helper 操作白名单和调用者校验有效 | 真机 + 自动化 | 已证明 |
 | 停止后路由清理和重复停止 | 真机 | 已证明 |
-| 自动获取和续期 FN Connect 凭证 | 未实现 | 尚未证明 |
+| 完整 Cookie 快照经 FN Connect 连接 FnCPN WSS | 真机 | 已证明 |
+| FN Connect 转发 `/websocket?type=main` | 真机 | 已证明 |
+| `user.authToken` 经 FN Connect 恢复短 token | 真机 | 已证明 |
+| `user.tokenLogin` 恢复长期会话 | 真机直连 + FN Connect | 已证明 |
+| 恢复出的短 token 经 FN Connect 访问 FnCPN | 真机 | 已证明 |
+| `user.login` / `user.tokenLogin` 请求本身经 FN Connect | 真机 | 已证明 |
+| 正式客户端自动管理 fnOS 原生会话 | 真机协议 + 自动化 | 已证明 |
 | 自动选择局域网、IPv6 和中继 | 未实现 | 尚未证明 |
 | 自动处理网段冲突 | 未实现 | 尚未证明 |
 | 访问 NAS 所在完整 LAN | 未实测 | 尚未证明 |
@@ -531,7 +635,7 @@ PoC 实际链路验证使用 macOS `0.1.0`。`0.1.1` 只修正 CLI 对 Helper �
 - 自动判断当前客户端是否与 NAS 位于同一局域网。
 - IPv6 失败后自动切换中继，以及 IPv6 恢复后自动切回。
 - 网段重叠时自动选择整段路由或单主机路由。
-- 客户端内置 WebKit 登录、Cookie 写入 Keychain 和自动续期。
+- 2FA、信任设备、密码修改、服务端撤销设备后的原生会话恢复。
 - GUI 自动管理 WSS bridge。
 - 两台以上真实客户端同时在线。
 - 访问 NAS LAN 内其他设备及完整转发/NAT。
@@ -553,6 +657,11 @@ PoC 已经证明以下核心架构闭环：
 6. WSS 中断恢复不要求重建 WireGuard 接口。
 7. root 网络操作可以被限制在小型 Helper 内，普通用户进程负责凭证和中继。
 8. 多设备公钥、overlay 地址池和设备生命周期模型能够支撑正式实现。
+9. 完整浏览器 Cookie 快照可以通过 FN Connect 统一网关建立 FnCPN 中继。
+10. FN Connect 可以转发 fnOS 原生认证 WebSocket，并完成 `user.login`、
+    `user.authToken` 和 `user.tokenLogin`。
+11. fnOS 长 token 可以经 FN Connect 恢复短会话，恢复出的 token 可继续通过
+    FN Connect 访问 FnCPN HTTP 和 WSS，不依赖 IPv6，也不需要借用影视 OAuth。
 
 因此可以得出明确结论：
 

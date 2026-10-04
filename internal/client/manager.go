@@ -76,7 +76,7 @@ type PrivilegedLifecycleWatcher interface {
 }
 
 type Bridge interface {
-	Start(context.Context, string, CookieProvider) (string, error)
+	Start(context.Context, string, CookieProvider, ...func([]Cookie, []Cookie) error) (string, error)
 	BindPeer(uint16) error
 	Stop()
 	Connected() bool
@@ -103,6 +103,7 @@ type NetworkSnapshot struct {
 	Prefixes       []netip.Prefix
 	Addresses      []netip.Addr
 	HasPublicIPv6  bool
+	IPv6Networks   []string
 }
 
 func (s NetworkSnapshot) Fingerprint() string {
@@ -111,6 +112,7 @@ func (s NetworkSnapshot) Fingerprint() string {
 		values = append(values, prefix.String())
 	}
 	values = append(values, strconv.FormatBool(s.HasPublicIPv6))
+	values = append(values, s.IPv6Networks...)
 	slices.Sort(values[2:])
 	return strings.Join(values, "\n")
 }
@@ -123,6 +125,7 @@ type ManagerOptions struct {
 	Bridge           Bridge
 	Probe            LocalProbe
 	Monitor          NetworkMonitor
+	Authenticator    NativeAuthenticator
 	DeviceName       string
 	Logger           *slog.Logger
 	HandshakeTimeout time.Duration
@@ -138,10 +141,12 @@ type Manager struct {
 	bridge           Bridge
 	probe            LocalProbe
 	monitor          NetworkMonitor
+	authenticator    NativeAuthenticator
 	deviceName       string
 	logger           *slog.Logger
 	handshakeTimeout time.Duration
 	directRetryAfter time.Time
+	direct           model.DirectDiagnostics
 	localProbeConfig *model.LocalProbeConfiguration
 	status           model.ClientStatus
 	maintenanceError bool
@@ -174,6 +179,10 @@ func NewManager(options ManagerOptions) (*Manager, error) {
 	if handshakeTimeout <= 0 {
 		handshakeTimeout = 10 * time.Second
 	}
+	authenticator := options.Authenticator
+	if authenticator == nil {
+		authenticator = NativeSessionClient{}
+	}
 	return &Manager{
 		store:            options.Store,
 		discoverer:       options.Discoverer,
@@ -182,6 +191,7 @@ func NewManager(options ManagerOptions) (*Manager, error) {
 		bridge:           options.Bridge,
 		probe:            options.Probe,
 		monitor:          options.Monitor,
+		authenticator:    authenticator,
 		deviceName:       deviceName,
 		logger:           managerLogger,
 		handshakeTimeout: handshakeTimeout,
@@ -217,6 +227,53 @@ func (m *Manager) Authorize(
 ) error {
 	m.operation.Lock()
 	defer m.operation.Unlock()
+	return m.authorize(ctx, fnID, cookies)
+}
+
+func (m *Manager) AuthorizeNative(
+	ctx context.Context,
+	fnID string,
+	username string,
+	password string,
+) error {
+	m.operation.Lock()
+	defer m.operation.Unlock()
+	fnID, err := normalizeFNID(fnID)
+	if err != nil {
+		return model.WrapError(model.ErrorInvalidArgument, "invalid FN ID", false, err)
+	}
+	username = strings.TrimSpace(username)
+	if err := validateLoginInput(username, password); err != nil {
+		return err
+	}
+	var deviceID string
+	if existing, found, loadErr := m.store.LoadNativeSession(fnID); loadErr != nil {
+		return m.fail(loadErr)
+	} else if found && existing.Username == username {
+		deviceID = existing.DeviceID
+	}
+	session, err := m.authenticator.Login(ctx, fnID, username, password, deviceID, m.deviceName)
+	if err != nil {
+		return m.fail(err)
+	}
+	if err := m.store.SaveNativeSession(session); err != nil {
+		return m.fail(err)
+	}
+	if err := m.store.SaveNativeGatewayCookies(fnID, session.Token); err != nil {
+		return m.fail(err)
+	}
+	cookies, err := m.store.LoadCookies(fnID)
+	if err != nil {
+		return m.fail(err)
+	}
+	return m.authorize(ctx, fnID, cookies)
+}
+
+func (m *Manager) authorize(
+	ctx context.Context,
+	fnID string,
+	cookies []Cookie,
+) error {
 	fnID, err := normalizeFNID(fnID)
 	if err != nil {
 		return model.WrapError(model.ErrorInvalidArgument, "invalid FN ID", false, err)
@@ -349,6 +406,7 @@ func (m *Manager) Authorize(
 func (m *Manager) Connect(ctx context.Context) error {
 	m.operation.Lock()
 	defer m.operation.Unlock()
+	m.directRetryAfter = time.Time{}
 	return m.connect(ctx)
 }
 
@@ -382,6 +440,7 @@ func (m *Manager) Disconnect(ctx context.Context) error {
 func (m *Manager) disconnect(ctx context.Context) error {
 	logger := logging.FromContext(ctx, m.logger)
 	logger.Info("client disconnect requested")
+	m.setDirectDiagnostics(model.DirectDiagnostics{})
 	config, err := m.store.Load()
 	if err != nil {
 		return m.fail(err)
@@ -501,7 +560,10 @@ func (m *Manager) Logout(ctx context.Context) error {
 		return err
 	}
 	if config != nil {
-		if err := m.store.ClearCookies(config.FNID); err != nil {
+		if err := errors.Join(
+			m.store.ClearCookies(config.FNID),
+			m.store.ClearNativeSession(config.FNID),
+		); err != nil {
 			return m.fail(err)
 		}
 		logging.FromContext(ctx, m.logger).Info("client logged out",
@@ -520,6 +582,7 @@ func (m *Manager) Forget(ctx context.Context) error {
 	m.operation.Lock()
 	defer m.operation.Unlock()
 	m.cancelConfigurationWatch()
+	m.setDirectDiagnostics(model.DirectDiagnostics{})
 	config, err := m.store.Load()
 	if err != nil {
 		return m.fail(err)
@@ -579,6 +642,30 @@ func (m *Manager) Run(ctx context.Context) {
 					m.clearMaintenanceError()
 				}
 				continue
+			}
+			if model.AsError(err).Code == model.ErrorAuthRequired {
+				m.operation.Lock()
+				config, loadErr := m.store.Load()
+				recovered := false
+				if loadErr == nil && config != nil {
+					recovered, loadErr = m.recoverNativeSession(ctx, config.FNID, true)
+				}
+				if loadErr == nil && recovered {
+					m.logger.Info("relay credentials recovered; reconnecting", "fn_id", config.FNID)
+					m.bridge.Stop()
+					if cleanupErr := m.privileged.Remove(ctx); cleanupErr != nil {
+						loadErr = cleanupErr
+					} else {
+						loadErr = m.reconnect(ctx, *config)
+					}
+				}
+				m.operation.Unlock()
+				if loadErr == nil && recovered {
+					continue
+				}
+				if loadErr != nil {
+					err = loadErr
+				}
 			}
 			if model.AsError(err).Retryable {
 				m.recordMaintenanceError("relay", err)
@@ -651,6 +738,7 @@ func (m *Manager) resume(ctx context.Context) {
 func (m *Manager) watchConfiguration(ctx context.Context) {
 	var cursor string
 	var retryDelay time.Duration
+	nativeRecoveryAttempted := false
 	for ctx.Err() == nil {
 		statusGeneration := m.statusChanges.Current()
 		m.operation.Lock()
@@ -739,9 +827,35 @@ func (m *Manager) watchConfiguration(ctx context.Context) {
 			continue
 		}
 		if updatedCookies != nil {
-			err = errors.Join(err, m.store.SaveCookies(config.FNID, updatedCookies))
+			err = errors.Join(err, m.store.MergeCookies(config.FNID, cookies, updatedCookies))
+		}
+		if err != nil && model.AsError(err).Code == model.ErrorAuthRequired {
+			expected := cookies
+			if updatedCookies != nil {
+				expected = updatedCookies
+			}
+			latestCookies, loadErr := m.store.LoadCookies(config.FNID)
+			if loadErr == nil && len(latestCookies) > 0 && !slices.Equal(expected, latestCookies) {
+				err = model.WithOperation(model.NewError(model.ErrorUnavailable,
+					"gateway credentials changed during configuration watch; retrying", true), "configuration.watch")
+			}
+		}
+		if err != nil && model.AsError(err).Code == model.ErrorAuthRequired && !nativeRecoveryAttempted {
+			recovered, recoverErr := m.recoverNativeSession(ctx, config.FNID, true)
+			if recoverErr == nil && recovered {
+				m.logger.Info("configuration watch credentials recovered", "fn_id", config.FNID)
+				nativeRecoveryAttempted = true
+				m.operation.Unlock()
+				cursor = ""
+				retryDelay = 0
+				continue
+			}
+			if recoverErr != nil {
+				err = recoverErr
+			}
 		}
 		if err == nil {
+			nativeRecoveryAttempted = false
 			if result.Changed {
 				err = m.applyWatchedConfiguration(ctx, result.Configuration)
 			} else {
@@ -1045,6 +1159,21 @@ func (m *Manager) maintainHealth(ctx context.Context) {
 	if status.State == model.ClientRelay &&
 		!m.directRetryAfter.IsZero() &&
 		time.Now().After(m.directRetryAfter) {
+		// Address discovery alone must not tear down a working relay.
+		snapshot, snapshotErr := m.probe.Snapshot()
+		discovery, discoveryErr := m.discoverer.Discover(ctx, config.FNID)
+		if snapshotErr != nil || discoveryErr != nil || !snapshot.HasPublicIPv6 ||
+			discovery.ForbidPublicIPv6 || len(discovery.DirectIPv6Candidates()) == 0 {
+			m.directRetryAfter = time.Now().Add(5 * time.Minute)
+			retryAfter := m.directRetryAfter
+			m.mu.Lock()
+			m.direct.RetryAfter = &retryAfter
+			m.mu.Unlock()
+			if err := errors.Join(snapshotErr, discoveryErr); err != nil {
+				m.logger.Warn("background direct discovery failed", logging.ErrorAttrs(err)...)
+			}
+			return
+		}
 		m.directRetryAfter = time.Time{}
 		m.logger.Info("client reconnect requested", "reason", "direct_retry", "device_id", config.DeviceID)
 		_ = m.reconnect(ctx, *config)
@@ -1130,6 +1259,17 @@ func (m *Manager) Diagnose(ctx context.Context) model.ClientDiagnostics {
 		RoutePolicy:         "overlay-only-on-lan-overlap",
 		CheckedAt:           time.Now().UTC(),
 	}
+	m.mu.RLock()
+	diagnostics.Direct = m.direct
+	m.mu.RUnlock()
+	diagnostics.Direct.LocalPublicIPv6 = snapshot.HasPublicIPv6
+	if configErr == nil && config != nil {
+		diagnostics.FNID = config.FNID
+		diagnostics.ClientAddress = config.Configuration.ClientAddress
+		if session, found, err := m.store.LoadNativeSession(config.FNID); err == nil && found {
+			diagnostics.Username = session.Username
+		}
+	}
 	if networkStatus.LastHandshake != nil {
 		diagnostics.HandshakeAge = time.Since(*networkStatus.LastHandshake).
 			Round(time.Second).
@@ -1176,6 +1316,7 @@ func (m *Manager) connectWithOptionalConfiguration(
 	known *model.ClientConfiguration,
 ) error {
 	connectionStarted := time.Now()
+	m.setDirectDiagnostics(model.DirectDiagnostics{Reason: "checking"})
 	logger := logging.FromContext(ctx, m.logger).With("fn_id", config.FNID, "device_id", config.DeviceID)
 	logger.Info("client connection started")
 	m.setStatus(
@@ -1187,6 +1328,9 @@ func (m *Manager) connectWithOptionalConfiguration(
 	m.bridge.Stop()
 	m.localProbeConfig = nil
 	if err := m.privileged.Remove(ctx); err != nil {
+		return m.fail(err)
+	}
+	if _, err := m.recoverNativeSession(ctx, config.FNID, false); err != nil {
 		return m.fail(err)
 	}
 	cookies, err := m.store.LoadCookies(config.FNID)
@@ -1204,7 +1348,9 @@ func (m *Manager) connectWithOptionalConfiguration(
 		config.FNID,
 		cookies,
 		func(updated []Cookie) error {
-			return m.store.SaveCookies(config.FNID, updated)
+			err := m.store.MergeCookies(config.FNID, cookies, updated)
+			cookies = slices.Clone(updated)
+			return err
 		},
 	)
 	if err != nil {
@@ -1261,6 +1407,7 @@ func (m *Manager) connectWithOptionalConfiguration(
 	}
 	logger.Info("local probe completed", "reachable", local)
 	if local {
+		m.setDirectDiagnostics(model.DirectDiagnostics{Reason: "local_network", LocalPublicIPv6: networkSnapshot.HasPublicIPv6})
 		m.localProbeConfig = cloneLocalProbeConfiguration(&probeConfiguration)
 		m.setStatus(
 			model.ClientLocal,
@@ -1276,9 +1423,35 @@ func (m *Manager) connectWithOptionalConfiguration(
 	logger.Info("FN Connect discovery started")
 	discovery, err := m.discoverer.Discover(ctx, config.FNID)
 	if err != nil {
-		return m.fail(err)
+		if ctx.Err() != nil {
+			return m.fail(ctx.Err())
+		}
+		logger.Warn("FN Connect discovery failed; using known relay address", logging.ErrorAttrs(err)...)
 	}
-	logger.Info("FN Connect discovery completed", "ipv6_candidates", len(discovery.PublicIPv6),
+	candidates := discovery.DirectIPv6Candidates()
+	direct := model.DirectDiagnostics{
+		LocalPublicIPv6: networkSnapshot.HasPublicIPv6,
+		CandidateCount:  len(candidates),
+	}
+	switch {
+	case err != nil:
+		direct.Reason = "discovery_failed"
+		direct.LastError = model.PublicError(err)
+	case discovery.ForbidPublicIPv6:
+		direct.Reason = "server_disabled"
+	case !networkSnapshot.HasPublicIPv6:
+		direct.Reason = "no_local_ipv6"
+	case len(candidates) == 0:
+		direct.Reason = "no_server_ipv6"
+	case time.Now().Before(m.directRetryAfter):
+		direct.Reason = "cooldown"
+		retryAfter := m.directRetryAfter
+		direct.RetryAfter = &retryAfter
+	default:
+		direct.Reason = "probing"
+	}
+	m.setDirectDiagnostics(direct)
+	logger.Info("FN Connect discovery completed", "ipv6_candidates", len(candidates),
 		"local_public_ipv6", networkSnapshot.HasPublicIPv6, "ipv6_forbidden", discovery.ForbidPublicIPv6)
 	allowedIPs := routedPrefixes(
 		config.Configuration,
@@ -1290,16 +1463,14 @@ func (m *Manager) connectWithOptionalConfiguration(
 	if err != nil {
 		return m.fail(err)
 	}
-	if !discovery.ForbidPublicIPv6 &&
-		networkSnapshot.HasPublicIPv6 &&
-		time.Now().After(m.directRetryAfter) {
-		directAttempted := false
-		for _, value := range discovery.PublicIPv6 {
-			address, parseErr := netip.ParseAddr(value)
-			if parseErr != nil || !wgconfig.IsPublicIPv6(address) {
-				continue
+	if direct.Reason == "probing" {
+		// Bound the complete direct phase so many stale addresses cannot starve relay.
+		directContext, cancelDirect := context.WithTimeout(ctx, 20*time.Second)
+		defer cancelDirect()
+		for _, address := range candidates {
+			if directContext.Err() != nil {
+				break
 			}
-			directAttempted = true
 			plan := clientPlan(
 				config.Configuration,
 				privateKey.String(),
@@ -1308,14 +1479,18 @@ func (m *Manager) connectWithOptionalConfiguration(
 				allowedIPs,
 				1280,
 			)
+			direct.AttemptCount++
+			direct.Endpoint = plan.Endpoint
+			m.setDirectDiagnostics(direct)
 			logger.Info("direct connection attempted", "endpoint", plan.Endpoint)
 			started := time.Now()
 			status, applyErr := m.applyPlan(ctx, plan)
 			if applyErr != nil {
 				return m.fail(applyErr)
 			}
-			status, handshakeErr := m.waitForHandshake(ctx, status, started)
+			status, handshakeErr := m.waitForHandshake(directContext, status, started)
 			if handshakeErr != nil {
+				direct.LastError = model.PublicError(model.WithOperation(handshakeErr, "direct.handshake"))
 				logger.Warn("direct connection failed; trying next path", logging.ErrorAttrs(
 					model.WithOperation(handshakeErr, "direct.handshake"))...)
 				if cleanupErr := m.privileged.Remove(ctx); cleanupErr != nil {
@@ -1324,6 +1499,10 @@ func (m *Manager) connectWithOptionalConfiguration(
 				continue
 			}
 			m.bridge.Stop()
+			direct.Reason = "connected"
+			direct.LastError = nil
+			m.directRetryAfter = time.Time{}
+			m.setDirectDiagnostics(direct)
 			m.setNetworkStatus(
 				model.ClientDirect,
 				"ipv6",
@@ -1334,10 +1513,20 @@ func (m *Manager) connectWithOptionalConfiguration(
 				"elapsed_ms", time.Since(connectionStarted).Milliseconds())
 			return nil
 		}
-		if directAttempted {
-			m.directRetryAfter = time.Now().Add(5 * time.Minute)
+		if ctx.Err() != nil {
+			return m.fail(ctx.Err())
 		}
+		direct.Reason = "handshake_failed"
 	}
+	if direct.Reason != "server_disabled" {
+		// Also revisit empty/stale discovery results while the physical network is unchanged.
+		m.directRetryAfter = time.Now().Add(5 * time.Minute)
+		retryAfter := m.directRetryAfter
+		direct.RetryAfter = &retryAfter
+	}
+	m.setDirectDiagnostics(direct)
+	logger.Info("direct path unavailable", "reason", direct.Reason, "attempts", direct.AttemptCount,
+		"endpoint", direct.Endpoint, "retry_after", direct.RetryAfter)
 
 	relayURL, err := relayURLFromDiscovery(config.FNID, discovery)
 	if err != nil {
@@ -1346,6 +1535,8 @@ func (m *Manager) connectWithOptionalConfiguration(
 	logger.Info("relay path selected", "relay_url", model.SafeURL(relayURL))
 	endpoint, err := m.bridge.Start(ctx, relayURL, func() ([]Cookie, error) {
 		return m.store.LoadCookies(config.FNID)
+	}, func(before, after []Cookie) error {
+		return m.store.MergeCookies(config.FNID, before, after)
 	})
 	if err != nil {
 		return m.fail(model.NormalizeError(
@@ -1389,6 +1580,32 @@ func (m *Manager) connectWithOptionalConfiguration(
 		"interface", status.Interface, "mtu", status.MTU,
 		"elapsed_ms", time.Since(connectionStarted).Milliseconds())
 	return nil
+}
+
+func (m *Manager) setDirectDiagnostics(direct model.DirectDiagnostics) {
+	m.mu.Lock()
+	m.direct = direct
+	m.mu.Unlock()
+}
+
+func (m *Manager) recoverNativeSession(ctx context.Context, fnID string, force bool) (bool, error) {
+	session, found, err := m.store.LoadNativeSession(fnID)
+	if err != nil || !found {
+		return found, err
+	}
+	if force || time.Since(session.UpdatedAt) >= 30*time.Second {
+		session, err = m.authenticator.Recover(ctx, session, m.deviceName)
+		if err != nil {
+			return true, err
+		}
+		if err := m.store.SaveNativeSession(session); err != nil {
+			return true, err
+		}
+	}
+	if err := m.store.SaveNativeGatewayCookies(fnID, session.Token); err != nil {
+		return true, err
+	}
+	return true, nil
 }
 
 func selectClientConfiguration(
@@ -1953,11 +2170,18 @@ func (SystemLocalProbe) Snapshot() (NetworkSnapshot, error) {
 	if err != nil {
 		return NetworkSnapshot{}, err
 	}
+	return networkSnapshot(interfaces, defaultInterface, func(iface net.Interface) ([]net.Addr, error) {
+		return iface.Addrs()
+	}), nil
+}
+
+func networkSnapshot(
+	interfaces []net.Interface,
+	defaultInterface string,
+	addresses func(net.Interface) ([]net.Addr, error),
+) NetworkSnapshot {
 	snapshot := NetworkSnapshot{}
 	for _, networkInterface := range interfaces {
-		if defaultInterface != "" && networkInterface.Name != defaultInterface {
-			continue
-		}
 		if networkInterface.Flags&net.FlagUp == 0 ||
 			networkInterface.Flags&net.FlagLoopback != 0 ||
 			!usablePhysicalInterface(
@@ -1966,9 +2190,13 @@ func (SystemLocalProbe) Snapshot() (NetworkSnapshot, error) {
 			) {
 			continue
 		}
-		snapshot.InterfaceName = networkInterface.Name
-		snapshot.InterfaceIndex = networkInterface.Index
-		values, err := networkInterface.Addrs()
+		primary := networkInterface.Name == defaultInterface ||
+			defaultInterface == "" && snapshot.InterfaceName == ""
+		if primary {
+			snapshot.InterfaceName = networkInterface.Name
+			snapshot.InterfaceIndex = networkInterface.Index
+		}
+		values, err := addresses(networkInterface)
 		if err != nil {
 			continue
 		}
@@ -1977,17 +2205,20 @@ func (SystemLocalProbe) Snapshot() (NetworkSnapshot, error) {
 			if err != nil {
 				continue
 			}
-			if prefix.Addr().Is4() {
+			if primary && prefix.Addr().Is4() {
 				snapshot.Prefixes = append(snapshot.Prefixes, prefix.Masked())
 				snapshot.Addresses = append(snapshot.Addresses, prefix.Addr())
 			}
 			if isPublicIPv6Address(prefix.Addr()) {
 				snapshot.HasPublicIPv6 = true
+				// Prefixes detect renumbering without reconnecting on temporary-address rotation.
+				snapshot.IPv6Networks = appendUnique(snapshot.IPv6Networks,
+					networkInterface.Name+":"+prefix.Masked().String())
 			}
 		}
-		break
 	}
-	return snapshot, nil
+	slices.Sort(snapshot.IPv6Networks)
+	return snapshot
 }
 
 func defaultPhysicalInterface() (string, error) {
@@ -2032,8 +2263,5 @@ func isVirtualInterface(name string) bool {
 }
 
 func isPublicIPv6Address(address netip.Addr) bool {
-	return address.Is6() &&
-		address.IsGlobalUnicast() &&
-		!address.IsPrivate() &&
-		!address.IsLinkLocalUnicast()
+	return wgconfig.IsPublicIPv6(address)
 }

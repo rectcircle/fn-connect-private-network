@@ -221,6 +221,8 @@ func NormalizeClientPlan(plan model.ClientPlan) (model.ClientPlan, error) {
 
 func IsPublicIPv6(address netip.Addr) bool {
 	if !address.Is6() ||
+		address.Is4In6() ||
+		address.Zone() != "" ||
 		!address.IsGlobalUnicast() ||
 		address.IsPrivate() ||
 		address.IsLoopback() ||

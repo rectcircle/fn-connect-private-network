@@ -154,7 +154,7 @@ LOCAL 没有 WireGuard 隧道，不属于此活性指标。该规则是超时策
 | 链路 | 原因来源与记录位置 |
 | --- | --- |
 | 安装及启动 | 安装脚本保留最后一次健康检查错误并给出日志路径；进程初始化和退出失败进入进程日志及 stderr |
-| GUI 登录 | WebKit/引导请求失败经 `authorization-cancel.failure` 传给 daemon；授权结果保存失败，不伪装成用户取消 |
+| GUI 登录 | 原生表单校验错误留在页面；daemon 的 `user.login`、会话保存或管理员校验失败通过结构化 IPC 错误返回，不记录密码 |
 | 授权等待 | 授权过期有 `TIMEOUT`、阶段和请求 ID 日志；普通主动取消不是 ERROR |
 | 设备注册及配置 HTTP | HTTP 状态、已知 JSON 错误或短文本原因保留；JSON 解码、超限、无效游标单独分类 |
 | FN Connect 发现 | 记录发现阶段、HTTP 状态或外部业务码/消息，保留网络超时分类 |
@@ -255,7 +255,7 @@ nftables 中一个 base chain 的 ACCEPT 不是最终放行，后续同 hook 的
   无网关身份仍拒绝，容量限制和二进制转发保留。
 - `internal/model/error_details_test.go`、`internal/logging/rotate_test.go`：
   错误链、联合错误、脱敏、字段保留和系统错误分类。
-- 授权 Service、原生 WebKit/AppKit 与管理页测试验证错误展示、失败授权记录，
+- 授权 Service、原生 AppKit 登录页与管理页测试验证错误展示、失败授权记录，
   以及后台错误不会覆盖尚未提交的表单错误。
 - `internal/platform/linux/firewall_docker_linux_test.go`：在独立 Linux 网络命名空间中
   验证真实转发、NAT、Docker 默认 DROP、iptables-nft 兼容性、规则更新和清理，
