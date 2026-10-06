@@ -250,7 +250,7 @@ private func directSummary(_ direct: [String: Any]) -> String {
     switch direct["reason"] as? String ?? "" {
     case "connected": return "已建立 UDP 直连"
     case "local_network": return "同一局域网，无需隧道"
-    case "no_local_ipv6": return "本机物理网络未发现公网 IPv6"
+    case "no_local_ipv6": return "本机网络不支持 IPv6"
     case "no_server_ipv6": return "NAS 未提供可用的公网 IPv6"
     case "server_disabled": return "NAS 已禁用公网 IPv6 访问"
     case "handshake_failed": return "UDP 握手未通过，已回退中继"

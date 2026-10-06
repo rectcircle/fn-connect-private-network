@@ -129,6 +129,9 @@ type ManagerOptions struct {
 	DeviceName       string
 	Logger           *slog.Logger
 	HandshakeTimeout time.Duration
+	// IPv6RouteChecker reports whether the current device can reach an IPv6
+	// target address. When nil, the default UDP route-lookup probe is used.
+	IPv6RouteChecker func(context.Context, netip.Addr, int) bool
 }
 
 type Manager struct {
@@ -148,6 +151,7 @@ type Manager struct {
 	directRetryAfter time.Time
 	direct           model.DirectDiagnostics
 	localProbeConfig *model.LocalProbeConfiguration
+	ipv6RouteChecker func(context.Context, netip.Addr, int) bool
 	status           model.ClientStatus
 	maintenanceError bool
 	maintenancePhase string
@@ -183,6 +187,10 @@ func NewManager(options ManagerOptions) (*Manager, error) {
 	if authenticator == nil {
 		authenticator = NativeSessionClient{}
 	}
+	ipv6RouteChecker := options.IPv6RouteChecker
+	if ipv6RouteChecker == nil {
+		ipv6RouteChecker = hasIPv6RouteTo
+	}
 	return &Manager{
 		store:            options.Store,
 		discoverer:       options.Discoverer,
@@ -195,6 +203,7 @@ func NewManager(options ManagerOptions) (*Manager, error) {
 		deviceName:       deviceName,
 		logger:           managerLogger,
 		handshakeTimeout: handshakeTimeout,
+		ipv6RouteChecker: ipv6RouteChecker,
 		statusChanges:    notify.New(),
 		status: model.ClientStatus{
 			State:     model.ClientUnconfigured,
@@ -1162,13 +1171,16 @@ func (m *Manager) maintainHealth(ctx context.Context) {
 		// Address discovery alone must not tear down a working relay.
 		snapshot, snapshotErr := m.probe.Snapshot()
 		discovery, discoveryErr := m.discoverer.Discover(ctx, config.FNID)
-		if snapshotErr != nil || discoveryErr != nil || !snapshot.HasPublicIPv6 ||
+		if snapshotErr != nil || discoveryErr != nil ||
 			discovery.ForbidPublicIPv6 || len(discovery.DirectIPv6Candidates()) == 0 {
 			m.directRetryAfter = time.Now().Add(5 * time.Minute)
 			retryAfter := m.directRetryAfter
-			m.mu.Lock()
-			m.direct.RetryAfter = &retryAfter
-			m.mu.Unlock()
+			m.mu.RLock()
+			direct := m.direct
+			direct.LocalPublicIPv6 = snapshotErr == nil && snapshot.HasPublicIPv6
+			m.mu.RUnlock()
+			direct.RetryAfter = &retryAfter
+			m.setDirectDiagnostics(direct)
 			if err := errors.Join(snapshotErr, discoveryErr); err != nil {
 				m.logger.Warn("background direct discovery failed", logging.ErrorAttrs(err)...)
 			}
@@ -1330,9 +1342,6 @@ func (m *Manager) connectWithOptionalConfiguration(
 	if err := m.privileged.Remove(ctx); err != nil {
 		return m.fail(err)
 	}
-	if _, err := m.recoverNativeSession(ctx, config.FNID, false); err != nil {
-		return m.fail(err)
-	}
 	cookies, err := m.store.LoadCookies(config.FNID)
 	if err != nil {
 		return m.fail(err)
@@ -1361,7 +1370,21 @@ func (m *Manager) connectWithOptionalConfiguration(
 		logger.Info("device configuration requested")
 		latest, err = remote.Configuration(ctx, config.DeviceID)
 		if err != nil {
-			return m.fail(err)
+			// Deferred session recovery: only spend a WebSocket round trip when the
+			// gateway actually rejected our token, then retry the configuration once.
+			if model.AsError(err).Code == model.ErrorAuthRequired {
+				recoveryStarted := time.Now()
+				if recovered, recoverErr := m.recoverNativeSession(ctx, config.FNID, true); recoverErr != nil {
+					return m.fail(recoverErr)
+				} else if recovered {
+					logger.Warn("gateway token invalid; native session recovered, retrying configuration",
+						"recover_ms", time.Since(recoveryStarted).Milliseconds())
+					latest, err = remote.Configuration(ctx, config.DeviceID)
+				}
+			}
+			if err != nil {
+				return m.fail(err)
+			}
 		}
 	} else {
 		latest = *known
@@ -1439,10 +1462,12 @@ func (m *Manager) connectWithOptionalConfiguration(
 		direct.LastError = model.PublicError(err)
 	case discovery.ForbidPublicIPv6:
 		direct.Reason = "server_disabled"
-	case !networkSnapshot.HasPublicIPv6:
-		direct.Reason = "no_local_ipv6"
 	case len(candidates) == 0:
 		direct.Reason = "no_server_ipv6"
+	case !m.ipv6RouteChecker(ctx, candidates[0], int(config.Configuration.ListenPort)):
+		// Only probe IPv6 when the current device actually has an IPv6 uplink,
+		// otherwise fall straight through to relay instead of failing a handshake.
+		direct.Reason = "no_local_ipv6"
 	case time.Now().Before(m.directRetryAfter):
 		direct.Reason = "cooldown"
 		retryAfter := m.directRetryAfter
@@ -1582,18 +1607,42 @@ func (m *Manager) connectWithOptionalConfiguration(
 	return nil
 }
 
-func (m *Manager) setDirectDiagnostics(direct model.DirectDiagnostics) {
-	m.mu.Lock()
-	m.direct = direct
-	m.mu.Unlock()
+func hasIPv6RouteTo(ctx context.Context, address netip.Addr, port int) bool {
+	if !address.Is6() || address.Is4In6() {
+		return false
+	}
+	target := net.JoinHostPort(address.String(), strconv.Itoa(port))
+	dialContext, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	connection, err := (&net.Dialer{}).DialContext(dialContext, "udp6", target)
+	if err != nil {
+		return false
+	}
+	connection.Close()
+	return true
 }
 
+func (m *Manager) setDirectDiagnostics(direct model.DirectDiagnostics) {
+	m.mu.Lock()
+	changed := !m.direct.EqualTo(direct)
+	m.direct = direct
+	m.mu.Unlock()
+	if changed {
+		m.statusChanges.Notify()
+	}
+}
+
+// recoverNativeSession refreshes the native session only when force is set.
+// Session recovery is deferred on demand: callers refresh only after a request
+// is rejected as InvalidToken, instead of wasting a WebSocket round trip on
+// every reconnect. With force=false it only ensures the gateway cookie is
+// written from the currently stored (potentially still valid) token.
 func (m *Manager) recoverNativeSession(ctx context.Context, fnID string, force bool) (bool, error) {
 	session, found, err := m.store.LoadNativeSession(fnID)
 	if err != nil || !found {
 		return found, err
 	}
-	if force || time.Since(session.UpdatedAt) >= 30*time.Second {
+	if force {
 		session, err = m.authenticator.Recover(ctx, session, m.deviceName)
 		if err != nil {
 			return true, err
@@ -1692,6 +1741,8 @@ func (m *Manager) waitForHandshake(
 	ticker := time.NewTicker(250 * time.Millisecond)
 	defer deadline.Stop()
 	defer ticker.Stop()
+	slowWarning := time.NewTimer(2 * time.Second)
+	defer slowWarning.Stop()
 	for {
 		if status.LastHandshake != nil && !status.LastHandshake.Before(started) {
 			logger.Info("WireGuard handshake confirmed", "interface", status.Interface,
@@ -1707,6 +1758,9 @@ func (m *Manager) waitForHandshake(
 				"WireGuard handshake timed out",
 				true,
 			)
+		case <-slowWarning.C:
+			logger.Warn("WireGuard handshake still pending", "interface", status.Interface,
+				"elapsed_ms", time.Since(started).Milliseconds())
 		case <-ticker.C:
 			next, err := m.privileged.Status(ctx)
 			if err != nil {
@@ -1883,13 +1937,25 @@ func (m *Manager) fail(err error) error {
 		typed.Code == model.ErrorDeviceRevoked:
 		m.cancelConfigurationWatch()
 		state = model.ClientAuthRequired
+		// A terminal auth state must not keep stale "probing" diagnostics.
+		m.directPruneToIdle()
 	case typed.Retryable:
 		state = model.ClientReconnecting
 	case typed.Code == model.ErrorPermissionDenied:
 		state = model.ClientPaused
+		m.directPruneToIdle()
 	}
 	m.setStatus(state, "", "", typed)
 	return err
+}
+
+// directPruneToIdle clears transient probing diagnostics for terminal states so the
+// UI no longer shows "检测中" while the client is paused or requires login.
+func (m *Manager) directPruneToIdle() {
+	m.mu.Lock()
+	m.direct = model.DirectDiagnostics{}
+	m.mu.Unlock()
+	m.statusChanges.Notify()
 }
 
 func (m *Manager) setStatus(
@@ -2019,6 +2085,11 @@ type SystemLocalProbe struct {
 	HTTPClient *http.Client
 }
 
+// localProbeTimeout bounds each candidate end-to-end attempt. Endpoints are
+// probed concurrently and fail fast on connect errors, so a LAN that is not
+// locally reachable is rejected after ~300ms instead of blocking the reconnect.
+const localProbeTimeout = 300 * time.Millisecond
+
 func (p SystemLocalProbe) Reachable(
 	ctx context.Context,
 	configuration model.LocalProbeConfiguration,
@@ -2049,7 +2120,7 @@ func (p SystemLocalProbe) Reachable(
 	_, _ = expected.Write(nonce)
 	expectedProof := expected.Sum(nil)
 
-	var failures []error
+	var endpoints []string
 	for _, endpoint := range configuration.Endpoints {
 		host, port, splitErr := net.SplitHostPort(endpoint)
 		if splitErr != nil {
@@ -2062,78 +2133,117 @@ func (p SystemLocalProbe) Reachable(
 		if value, parseErr := strconv.ParseUint(port, 10, 16); parseErr != nil || value == 0 {
 			continue
 		}
-		client := p.HTTPClient
-		var transport *http.Transport
-		if client == nil {
-			transport = localProbeTransport(snapshot.InterfaceIndex)
-			client = &http.Client{
-				Timeout:   1500 * time.Millisecond,
-				Transport: transport,
-				CheckRedirect: func(
-					*http.Request,
-					[]*http.Request,
-				) error {
-					return http.ErrUseLastResponse
-				},
+		endpoints = append(endpoints, endpoint)
+	}
+	if len(endpoints) == 0 {
+		return false, nil
+	}
+
+	probeContext, cancel := context.WithCancel(ctx)
+	defer cancel()
+	type result struct {
+		ok  bool
+		err error
+	}
+	results := make(chan result, len(endpoints))
+	for _, endpoint := range endpoints {
+		go func(endpoint string) {
+			ok, probeErr := probeLocalEndpoint(probeContext, p.HTTPClient, snapshot.InterfaceIndex,
+				endpoint, body, expectedProof)
+			results <- result{ok: ok, err: probeErr}
+		}(endpoint)
+	}
+	var failures []error
+	for range endpoints {
+		select {
+		case <-ctx.Done():
+			return false, model.WithOperation(model.NormalizeError(ctx.Err(), model.ErrorUnavailable,
+				"local probe canceled", true), "local_probe.request")
+		case res := <-results:
+			if res.ok {
+				cancel()
+				return true, nil
+			}
+			if res.err != nil {
+				failures = append(failures, res.err)
 			}
 		}
-		target := url.URL{
-			Scheme: "http",
-			Host:   endpoint,
-			Path:   "/probe",
-		}
-		request, err := http.NewRequestWithContext(
-			ctx,
-			http.MethodPost,
-			target.String(),
-			bytes.NewReader(body),
-		)
-		if err != nil {
-			failures = append(failures, err)
-			continue
-		}
-		request.Header.Set("Content-Type", "application/json")
-		response, err := client.Do(request)
-		if transport != nil {
-			transport.CloseIdleConnections()
-		}
-		if err != nil {
-			failures = append(failures, err)
-			continue
-		}
-		if response.StatusCode != http.StatusOK {
-			failures = append(failures, HTTPResponseError(response, "local_probe.request", nil))
-			response.Body.Close()
-			continue
-		}
-		data, readErr := io.ReadAll(io.LimitReader(
-			response.Body,
-			maxRemoteResponseSize+1,
-		))
-		response.Body.Close()
-		if readErr != nil || len(data) > maxRemoteResponseSize {
-			if readErr == nil {
-				readErr = errors.New("local probe response exceeds size limit")
-			}
-			failures = append(failures, readErr)
-			continue
-		}
-		var probe model.LocalProbeResponse
-		decodeErr := model.DecodeStrict(data, &probe)
-		proof, proofErr := base64.RawURLEncoding.DecodeString(probe.Proof)
-		if response.StatusCode == http.StatusOK &&
-			decodeErr == nil &&
-			proofErr == nil &&
-			hmac.Equal(proof, expectedProof) {
-			return true, nil
-		}
-		failures = append(failures, model.NewError(model.ErrorProtocol, "local probe returned an invalid identity proof", false))
 	}
 	if len(failures) > 0 {
 		return false, model.WithOperation(model.NormalizeError(errors.Join(failures...), model.ErrorUnavailable,
 			"no local probe endpoint succeeded", true), "local_probe.request")
 	}
 	return false, nil
+}
+
+func probeLocalEndpoint(
+	ctx context.Context,
+	httpClient *http.Client,
+	interfaceIndex int,
+	endpoint string,
+	body []byte,
+	expectedProof []byte,
+) (bool, error) {
+	client := httpClient
+	var transport *http.Transport
+	if client == nil {
+		transport = localProbeTransport(interfaceIndex)
+		client = &http.Client{
+			Timeout:   localProbeTimeout,
+			Transport: transport,
+			CheckRedirect: func(
+				*http.Request,
+				[]*http.Request,
+			) error {
+				return http.ErrUseLastResponse
+			},
+		}
+	}
+	target := url.URL{
+		Scheme: "http",
+		Host:   endpoint,
+		Path:   "/probe",
+	}
+	request, err := http.NewRequestWithContext(
+		ctx,
+		http.MethodPost,
+		target.String(),
+		bytes.NewReader(body),
+	)
+	if err != nil {
+		return false, err
+	}
+	request.Header.Set("Content-Type", "application/json")
+	response, err := client.Do(request)
+	if transport != nil {
+		transport.CloseIdleConnections()
+	}
+	if err != nil {
+		return false, err
+	}
+	if response.StatusCode != http.StatusOK {
+		failure := HTTPResponseError(response, "local_probe.request", nil)
+		response.Body.Close()
+		return false, failure
+	}
+	data, readErr := io.ReadAll(io.LimitReader(
+		response.Body,
+		maxRemoteResponseSize+1,
+	))
+	response.Body.Close()
+	if readErr != nil || len(data) > maxRemoteResponseSize {
+		if readErr == nil {
+			readErr = errors.New("local probe response exceeds size limit")
+		}
+		return false, readErr
+	}
+	var probe model.LocalProbeResponse
+	decodeErr := model.DecodeStrict(data, &probe)
+	proof, proofErr := base64.RawURLEncoding.DecodeString(probe.Proof)
+	if decodeErr == nil && proofErr == nil && hmac.Equal(proof, expectedProof) {
+		return true, nil
+	}
+	return false, model.NewError(model.ErrorProtocol, "local probe returned an invalid identity proof", false)
 }
 
 func localProbeTransport(interfaceIndex int) *http.Transport {
@@ -2145,7 +2255,7 @@ func localProbeTransport(interfaceIndex int) *http.Transport {
 		address string,
 	) (net.Conn, error) {
 		dialer := net.Dialer{
-			Timeout: 1500 * time.Millisecond,
+			Timeout: localProbeTimeout,
 			Control: func(_, _ string, raw syscall.RawConn) error {
 				var bindErr error
 				if err := raw.Control(func(fd uintptr) {

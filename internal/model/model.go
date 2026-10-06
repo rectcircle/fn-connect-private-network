@@ -185,6 +185,29 @@ type DirectDiagnostics struct {
 	LastError       *Error     `json:"lastError,omitempty"`
 }
 
+// EqualTo reports whether the observable diagnostic fields match another value.
+// Transient fields (RetryAfter) are ignored so the UI only refreshes on a real change.
+func (d DirectDiagnostics) EqualTo(other DirectDiagnostics) bool {
+	if d.LocalPublicIPv6 != other.LocalPublicIPv6 ||
+		d.CandidateCount != other.CandidateCount ||
+		d.AttemptCount != other.AttemptCount ||
+		d.Endpoint != other.Endpoint ||
+		d.Reason != other.Reason {
+		return false
+	}
+	return errorsEqual(d.LastError, other.LastError)
+}
+
+func errorsEqual(first, second *Error) bool {
+	if first == nil || second == nil {
+		return first == second
+	}
+	return first.Code == second.Code &&
+		first.Message == second.Message &&
+		first.Operation == second.Operation &&
+		first.Detail == second.Detail
+}
+
 type NetworkChange struct {
 	PrimaryNetworkChanged bool
 }

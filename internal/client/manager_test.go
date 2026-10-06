@@ -111,10 +111,10 @@ func TestManagerPrefersLocalThenDirect(t *testing.T) {
 			wantRemoved: 1,
 		},
 		{
-			name:        "relay without local IPv6",
+			name:        "direct without local global address",
 			ipv6:        []string{"2606:4700:4700::1111"},
-			wantState:   model.ClientRelay,
-			wantMode:    "relay",
+			wantState:   model.ClientDirect,
+			wantMode:    "direct",
 			wantRemoved: 1,
 		},
 	}
@@ -146,6 +146,7 @@ func TestManagerPrefersLocalThenDirect(t *testing.T) {
 						return nil
 					}(),
 				},
+				IPv6RouteChecker: func(context.Context, netip.Addr, int) bool { return true },
 			})
 			if err != nil {
 				t.Fatalf("new manager: %v", err)
@@ -192,6 +193,7 @@ func TestManagerTriesNextDirectAddressAfterHandshakeTimeout(t *testing.T) {
 		Bridge:           &fakeBridge{endpoint: "127.0.0.1:51821"},
 		Probe:            fakeLocalProbe{addresses: []netip.Addr{netip.MustParseAddr("2606:4700::1")}},
 		HandshakeTimeout: time.Millisecond,
+		IPv6RouteChecker: func(context.Context, netip.Addr, int) bool { return true },
 	})
 	if err != nil {
 		t.Fatalf("new manager: %v", err)
@@ -1261,6 +1263,9 @@ type fakeRemoteService struct {
 	registrations         int
 	configurationRequests int
 	probeRequests         int
+	// failConfigOnce makes the first Configuration request return AUTH_REQUIRED
+	// so the deferred on-demand native session recovery can be exercised.
+	failConfigOnce bool
 }
 
 type fakeWatchingRemoteService struct {
@@ -1300,6 +1305,12 @@ func (s *fakeRemoteService) Configuration(
 	string,
 ) (model.ClientConfiguration, error) {
 	s.configurationRequests++
+	if s.failConfigOnce {
+		s.failConfigOnce = false
+		return model.ClientConfiguration{}, model.NewError(
+			model.ErrorAuthRequired, "fnOS gateway returned invalid token", false,
+		)
+	}
 	return s.configuration, s.err
 }
 

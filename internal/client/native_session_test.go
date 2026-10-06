@@ -144,6 +144,9 @@ func TestManagerNativeAuthorizationPersistsSessionAndRecoversBeforeConnect(t *te
 			},
 			Configuration: configuration,
 		},
+		// First configuration request is rejected as invalid token so that the
+		// deferred on-demand session recovery is exercised during Connect.
+		failConfigOnce: true,
 	}
 	manager, err := NewManager(ManagerOptions{
 		Store: store,

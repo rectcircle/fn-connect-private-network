@@ -68,16 +68,18 @@ func TestDirectSelectionAndFallbackReasons(t *testing.T) {
 		name             string
 		discovery        Discovery
 		noLocal, blocked bool
+		ipv6Route        bool
 		discoveryErr     error
 		reason           string
 		state            model.ClientState
 	}{
-		{name: "interface_global", discovery: Discovery{IPv6: []string{"240e::1"}}, reason: "connected", state: model.ClientDirect},
-		{name: "no_candidates", reason: "no_server_ipv6", state: model.ClientRelay},
-		{name: "no_local", noLocal: true, discovery: Discovery{PublicIPv6: []string{"240e::1"}}, reason: "no_local_ipv6", state: model.ClientRelay},
-		{name: "disabled", discovery: Discovery{ForbidPublicIPv6: true, IPv6: []string{"240e::1"}}, reason: "server_disabled", state: model.ClientRelay},
-		{name: "udp_blocked", blocked: true, discovery: Discovery{IPv6: []string{"240e::1"}}, reason: "handshake_failed", state: model.ClientRelay},
-		{name: "discovery_failed", discoveryErr: model.NewError(model.ErrorUnavailable, "discovery unavailable", true), reason: "discovery_failed", state: model.ClientRelay},
+		{name: "interface_global", ipv6Route: true, discovery: Discovery{IPv6: []string{"240e::1"}}, reason: "connected", state: model.ClientDirect},
+		{name: "no_candidates", ipv6Route: true, reason: "no_server_ipv6", state: model.ClientRelay},
+		{name: "no_local_ipv6", noLocal: true, ipv6Route: false, discovery: Discovery{PublicIPv6: []string{"240e::1"}}, reason: "no_local_ipv6", state: model.ClientRelay},
+		{name: "no_local_global_address_still_probes", noLocal: true, ipv6Route: true, discovery: Discovery{IPv6: []string{"240e::1"}}, reason: "connected", state: model.ClientDirect},
+		{name: "disabled", ipv6Route: true, discovery: Discovery{ForbidPublicIPv6: true, IPv6: []string{"240e::1"}}, reason: "server_disabled", state: model.ClientRelay},
+		{name: "udp_blocked", ipv6Route: true, blocked: true, discovery: Discovery{IPv6: []string{"240e::1"}}, reason: "handshake_failed", state: model.ClientRelay},
+		{name: "discovery_failed", ipv6Route: true, discoveryErr: model.NewError(model.ErrorUnavailable, "discovery unavailable", true), reason: "discovery_failed", state: model.ClientRelay},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			network := &fakePrivilegedNetwork{}
@@ -95,7 +97,8 @@ func TestDirectSelectionAndFallbackReasons(t *testing.T) {
 					return &fakeRemoteService{configuration: managerClientConfiguration()}, nil
 				},
 				Privileged: network, Bridge: &fakeBridge{endpoint: "127.0.0.1:51821"},
-				Probe: probe, HandshakeTimeout: time.Millisecond,
+				Probe:      probe, HandshakeTimeout: time.Millisecond,
+				IPv6RouteChecker: func(context.Context, netip.Addr, int) bool { return test.ipv6Route },
 			})
 			if err != nil {
 				t.Fatal(err)
