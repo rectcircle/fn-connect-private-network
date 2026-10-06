@@ -157,6 +157,13 @@ type Manager struct {
 	maintenancePhase string
 	statusChanges    *notify.Change
 	watchCancel      context.CancelFunc
+	// ignoreNetworkChangesUntil absorbs the network-change events that our own
+	// tunnel bring-up triggers (creating a utun interface / adding routes changes
+	// State:/Network/Global/IPv4|IPv6, which the monitor surfaces as a primary
+	// network change). Without this guard, every successful reconnect immediately
+	// fires another reconnect ~2ms later. Only physical-network changes where the
+	// fingerprint actually differs still reconnect during this window.
+	ignoreNetworkChangesUntil time.Time
 }
 
 func NewManager(options ManagerOptions) (*Manager, error) {
@@ -640,6 +647,19 @@ func (m *Manager) Run(ctx context.Context) {
 	var pendingNetworkChange model.NetworkChange
 	var readinessEvents <-chan networkReadinessResult
 	var stopReadiness func()
+	// startReadiness starts a network-readiness wait unless one is already in
+	// progress. Reusing an in-flight wait prevents a physical network change that
+	// is reported multiple times (macOS emits several SCDynamicStore callbacks for
+	// one switch) from repeatedly tearing down and restarting the wait, which
+	// would otherwise cause several reconnect cycles within seconds. The in-flight
+	// probe re-evaluates `networkReady` on every tick, so it automatically reflects
+	// the latest network state and restores the link once ready.
+	startReadiness := func() {
+		if readinessEvents != nil {
+			return
+		}
+		readinessEvents, stopReadiness = m.beginNetworkReadiness(ctx)
+	}
 	for {
 		select {
 		case <-ctx.Done():
@@ -721,18 +741,12 @@ func (m *Manager) Run(ctx context.Context) {
 			change := pendingNetworkChange
 			pendingNetworkChange = model.NetworkChange{}
 			if m.handleNetworkChange(ctx, &previous, change.PrimaryNetworkChanged) {
-				if stopReadiness != nil {
-					stopReadiness()
-				}
-				readinessEvents, stopReadiness = m.beginNetworkReadiness(ctx)
+				startReadiness()
 			}
 		case <-maintenanceTicker.C:
 			m.maintainHealth(ctx)
 			if m.handleNetworkChange(ctx, &previous, false) {
-				if stopReadiness != nil {
-					stopReadiness()
-				}
-				readinessEvents, stopReadiness = m.beginNetworkReadiness(ctx)
+				startReadiness()
 			}
 		case _, ok := <-privilegedEvents:
 			if !ok {
@@ -1226,6 +1240,12 @@ const networkReadinessInterval = time.Second
 // automatically when the next network change reports the network as ready.
 const networkReadinessTimeout = 20 * time.Second
 
+// networkChangeQuietWindow absorbs the network-change events produced by our own
+// tunnel bring-up (utun creation / route changes) right after a successful
+// reconnect. Without this window a successful reconnect is immediately followed
+// by another reconnect triggered by the very events it caused.
+const networkChangeQuietWindow = 3 * time.Second
+
 type networkReadinessResult struct {
 	ready bool
 }
@@ -1242,8 +1262,18 @@ func (m *Manager) handleNetworkChange(
 	primaryNetworkChanged bool,
 ) bool {
 	current := m.networkFingerprint()
-	if !primaryNetworkChanged && current == *previous {
-		return false
+	if current == *previous {
+		// The physical network fingerprint is unchanged. A primary-network-change
+		// event with no change in the fingerprint is most likely self-induced by our
+		// own tunnel bring-up (utun creation / route changes), not a real network
+		// switch. Absorb it inside the post-bring-up quiet window so a successful
+		// reconnect does not immediately schedule another one.
+		m.mu.RLock()
+		fingerprintUnchanged := time.Now().Before(m.ignoreNetworkChangesUntil)
+		m.mu.RUnlock()
+		if !primaryNetworkChanged || fingerprintUnchanged {
+			return false
+		}
 	}
 	*previous = current
 	m.operation.Lock()
@@ -1966,6 +1996,9 @@ func (m *Manager) setNetworkStatus(
 		LastHandshake: network.LastHandshake,
 		UpdatedAt:     time.Now().UTC(),
 	}
+	// The tunnel interface was just brought up. Absorb the network-change events
+	// this triggers for a short window so it does not spawn a second reconnect.
+	m.ignoreNetworkChangesUntil = time.Now().Add(networkChangeQuietWindow)
 	m.maintenanceError = false
 	m.mu.Unlock()
 	m.statusChanges.Notify()
