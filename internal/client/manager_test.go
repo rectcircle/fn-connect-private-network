@@ -488,12 +488,22 @@ func TestManagerPrimaryNetworkChangeReconnectsWithSameFingerprint(t *testing.T) 
 		t.Fatalf("new manager: %v", err)
 	}
 	previous := manager.networkFingerprint()
-	manager.handleNetworkChange(context.Background(), &previous, false)
+	if manager.handleNetworkChange(context.Background(), &previous, false) {
+		t.Fatalf("unchanged periodic fingerprint requested reconnect")
+	}
 	if len(privileged.plans) != 0 {
 		t.Fatalf("unchanged periodic fingerprint triggered reconnect: %+v", privileged.plans)
 	}
 
-	manager.handleNetworkChange(context.Background(), &previous, true)
+	if !manager.handleNetworkChange(context.Background(), &previous, true) {
+		t.Fatalf("primary network change did not request reconnect")
+	}
+	// The reconnect is gated behind a network-readiness check; once the network
+	// is ready the tunnel is restored.
+	if !manager.networkReady(context.Background()) {
+		t.Fatalf("test network snapshot should be considered ready")
+	}
+	manager.restoreAfterNetworkReady(context.Background())
 	if len(privileged.plans) != 1 ||
 		manager.Status().State != model.ClientRelay {
 		t.Fatalf(

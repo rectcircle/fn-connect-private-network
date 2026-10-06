@@ -638,10 +638,23 @@ func (m *Manager) Run(ctx context.Context) {
 	}
 	var debounce <-chan time.Time
 	var pendingNetworkChange model.NetworkChange
+	var readinessEvents <-chan networkReadinessResult
+	var stopReadiness func()
 	for {
 		select {
 		case <-ctx.Done():
 			return
+		case result := <-readinessEvents:
+			readinessEvents = nil
+			if stopReadiness != nil {
+				stopReadiness()
+				stopReadiness = nil
+			}
+			if result.ready {
+				m.restoreAfterNetworkReady(ctx)
+			} else {
+				m.markNetworkUnavailable()
+			}
 		case err := <-bridgeEvents:
 			if err == nil {
 				m.mu.RLock()
@@ -707,10 +720,20 @@ func (m *Manager) Run(ctx context.Context) {
 			debounce = nil
 			change := pendingNetworkChange
 			pendingNetworkChange = model.NetworkChange{}
-			m.handleNetworkChange(ctx, &previous, change.PrimaryNetworkChanged)
+			if m.handleNetworkChange(ctx, &previous, change.PrimaryNetworkChanged) {
+				if stopReadiness != nil {
+					stopReadiness()
+				}
+				readinessEvents, stopReadiness = m.beginNetworkReadiness(ctx)
+			}
 		case <-maintenanceTicker.C:
 			m.maintainHealth(ctx)
-			m.handleNetworkChange(ctx, &previous, false)
+			if m.handleNetworkChange(ctx, &previous, false) {
+				if stopReadiness != nil {
+					stopReadiness()
+				}
+				readinessEvents, stopReadiness = m.beginNetworkReadiness(ctx)
+			}
 		case _, ok := <-privilegedEvents:
 			if !ok {
 				privilegedEvents = nil
@@ -1192,14 +1215,35 @@ func (m *Manager) maintainHealth(ctx context.Context) {
 	}
 }
 
+// networkReadinessInterval controls how often connectivity is re-probed while
+// waiting for the physical network to become ready after a change.
+const networkReadinessInterval = time.Second
+
+// networkReadinessTimeout bounds how long the client waits for the network to
+// become ready after a change. If it never becomes ready in this window, the
+// client reports an explicit "network unavailable" error instead of repeatedly
+// trying to build links against a network that is not up yet, and recovers
+// automatically when the next network change reports the network as ready.
+const networkReadinessTimeout = 20 * time.Second
+
+type networkReadinessResult struct {
+	ready bool
+}
+
+// handleNetworkChange decides whether a reconnection is needed after the
+// physical network changed. It does not immediately rebuild the tunnel:
+// rebuilding before the network is actually ready only wastes the whole connect
+// path on requests/probes that cannot reach the peer yet (e.g. a local-probe
+// configuration request that hangs until its 30s HTTP timeout). Instead it
+// returns true to let Run() gate the reconnect behind a network-readiness check.
 func (m *Manager) handleNetworkChange(
 	ctx context.Context,
 	previous *string,
 	primaryNetworkChanged bool,
-) {
+) bool {
 	current := m.networkFingerprint()
 	if !primaryNetworkChanged && current == *previous {
-		return
+		return false
 	}
 	*previous = current
 	m.operation.Lock()
@@ -1208,13 +1252,142 @@ func (m *Manager) handleNetworkChange(
 	config, err := m.store.Load()
 	if err != nil {
 		m.recordMaintenanceError("load_configuration", err)
-		return
+		return false
 	}
 	if !canAutoConnect(config, m.Status()) {
+		return false
+	}
+	m.logger.Info("client reconnect pending; waiting for network readiness",
+		"reason", "physical_network_changed", "device_id", config.DeviceID)
+	return true
+}
+
+// beginNetworkReadiness starts a background readiness probe and returns its
+// result channel, plus a cancel function to abandon the wait (e.g. when an even
+// newer network change arrives). The caller must eventually cancel the returned
+// function once the result is consumed or superseded.
+func (m *Manager) beginNetworkReadiness(
+	ctx context.Context,
+) (<-chan networkReadinessResult, func()) {
+	readinessContext, cancel := context.WithCancel(ctx)
+	result := make(chan networkReadinessResult, 1)
+	go m.waitNetworkReadiness(readinessContext, result)
+	return result, cancel
+}
+
+func (m *Manager) waitNetworkReadiness(
+	readinessContext context.Context,
+	result chan<- networkReadinessResult,
+) {
+	ticker := time.NewTicker(networkReadinessInterval)
+	defer ticker.Stop()
+	deadline := time.NewTimer(networkReadinessTimeout)
+	defer deadline.Stop()
+	emit := func(ready bool) {
+		if readinessContext.Err() != nil {
+			return
+		}
+		select {
+		case result <- networkReadinessResult{ready: ready}:
+		default:
+		}
+	}
+	for {
+		if m.networkReady(readinessContext) {
+			emit(true)
+			return
+		}
+		select {
+		case <-readinessContext.Done():
+			return
+		case <-deadline.C:
+			emit(false)
+			return
+		case <-ticker.C:
+		}
+	}
+}
+
+// networkReady reports whether the physical network is ready enough to build a
+// connection. LAN-first: if cached local-probe config exists and the local
+// gateway is reachable on the current interface, the network is considered
+// ready (a fast LOCAL path exists). Otherwise fall back to probing the public
+// network via an existing FN Connect API call.
+func (m *Manager) networkReady(ctx context.Context) bool {
+	config, err := m.store.Load()
+	if err == nil && config != nil {
+		probeConfiguration := cloneLocalProbeConfiguration(m.localProbeConfig)
+		snapshot, snapshotErr := m.probe.Snapshot()
+		if probeConfiguration != nil && snapshotErr == nil {
+			reachable, probeErr := m.probe.Reachable(
+				ctx,
+				*probeConfiguration,
+				config.DeviceID,
+				snapshot,
+			)
+			if probeErr == nil && reachable {
+				return true
+			}
+		}
+	}
+	return m.publicNetworkReachable(ctx)
+}
+
+// publicNetworkReachable reports whether the public network (and the FN Connect
+// discovery endpoint) is reachable, by reusing the existing public discovery API
+// as a real connectivity probe. Unlike the authenticated gateway APIs, discovery
+// needs no cookies, so it never fails for credential reasons and only reflects
+// whether the public link can reach fnos. A response with a real HTTP status
+// (even non-2xx) means the request was delivered over the public link, so the
+// network is up. A network-layer failure (HTTPStatus == 0) is the only case
+// treated as "not ready". The call is bounded by a short timeout so a half-up
+// network does not stall the readiness wait.
+func (m *Manager) publicNetworkReachable(ctx context.Context) bool {
+	config, err := m.store.Load()
+	if err != nil || config == nil {
+		return false
+	}
+	probeContext, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	_, err = m.discoverer.Discover(probeContext, config.FNID)
+	if err == nil {
+		return true
+	}
+	// A response with a real HTTP status (even 401/5xx/login page) proves the
+	// public link delivered the request. Only HTTPStatus == 0 means the request
+	// never reached fnos (network-layer failure), i.e. public network not ready.
+	return model.AsError(err).HTTPStatus > 0
+}
+
+// restoreAfterNetworkReady rebuilds the tunnel now that the network is ready.
+// It is called from Run() only after a network-readiness wait reported success.
+func (m *Manager) restoreAfterNetworkReady(ctx context.Context) {
+	m.operation.Lock()
+	defer m.operation.Unlock()
+	config, err := m.store.Load()
+	if err != nil || !canAutoConnect(config, m.Status()) {
 		return
 	}
-	m.logger.Info("client reconnect requested", "reason", "physical_network_changed", "device_id", config.DeviceID)
+	m.logger.Info("network ready; client reconnect requested", "reason", "network_ready", "device_id", config.DeviceID)
 	_ = m.reconnect(ctx, *config)
+}
+
+// markNetworkUnavailable reports an explicit "network unavailable" error state
+// after the readiness wait timed out, instead of rebuilding links blindly over
+// an unavailable network. The next network change that becomes ready will
+// trigger restoreAfterNetworkReady automatically.
+func (m *Manager) markNetworkUnavailable() {
+	m.logger.Warn("network did not become ready; pausing reconnect until the network recovers")
+	m.setStatus(
+		model.ClientReconnecting,
+		"",
+		"",
+		model.NewError(
+			model.ErrorUnavailable,
+			"网络不可达，等待网络恢复后自动重连",
+			true,
+		),
+	)
 }
 
 func (m *Manager) Status() model.ClientStatus {
@@ -1410,10 +1583,18 @@ func (m *Manager) connectWithOptionalConfiguration(
 		return m.fail(err)
 	}
 	logger.Info("local probe started")
+	// The local-probe configuration is only an optimization to detect an on-LAN
+	// path to the gateway. Fetching it must not block the reconnect critical path
+	// when the physical network just changed and the WAN/uplink is not ready yet;
+	// otherwise the default 30s HTTP client timeout stalls reconnection by ~30s.
+	// Bound this request with a short timeout so the connect flow falls through to
+	// discovery promptly instead of waiting for the full HTTP client timeout.
+	probeContext, cancelProbe := context.WithTimeout(ctx, 3*time.Second)
 	probeConfiguration, probeErr := remote.LocalProbeConfiguration(
-		ctx,
+		probeContext,
 		config.DeviceID,
 	)
+	cancelProbe()
 	local := false
 	if probeErr == nil {
 		local, err = m.probe.Reachable(
