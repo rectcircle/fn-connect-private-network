@@ -33,7 +33,7 @@ static int fncpnRunNetworkMonitor(void) {
 	SCDynamicStoreContext context = {0, NULL, NULL, NULL, NULL};
 	SCDynamicStoreRef store = SCDynamicStoreCreate(
 		NULL,
-		CFSTR("com.rectcircle.fncpn.network-monitor"),
+		CFSTR("cn.rectcircle.fncpn.network-monitor"),
 		fncpnNetworkCallback,
 		&context
 	);

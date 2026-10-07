@@ -43,6 +43,8 @@
 | V-15 | Mac 重启后自动连接 | `0.1.17` 保持连接意图，重启目标 Mac；登录桌面后不手动启动连接或授权，用户按诊断和网关探测步骤确认成功。不是只重开 App 窗口。 |
 | V-16 | MTU 大包 | `0.1.17` 下对 `10.253.203.1` 和 `192.168.71.1` 分别执行 10 次 `ping -D -s 1252`，载荷加 IPv4/ICMP 头为 1280 字节；用户确认无丢包、符合预期。 |
 | V-17 | 实际文件下载 | 用户按 NAS 内网地址进入文件管理下载文件，确认“下载正常”。实际文件大小、耗时和校验和未回传，只确认下载功能，不据此声称吞吐达标、哈希一致或长时间稳定性通过。 |
+| V-18 | CLI/Web 会话隔离与管理后台 | `0.1.27` 实机 probe 证明 CLI 新短 token、`user.authToken`、`user.tokenLogin` 恢复及 Web 登录后 CLI token 继续有效；独立 Web token 可访问 FnCPN 网关。现场包中用户确认管理后台免登录进入 `/app/fncpn`，且上游仅携带 `mode + Web fnos-token` 时 `/app/fncpn/api/v1/admin/snapshot` 返回 200。提交前收敛后的安装包仍需一次 smoke test。 |
+| V-19 | 恢复后 Cookie 切换 | 现场日志证明 `user.tokenLogin` 已成功但原 RemoteClient 继续使用旧内存 Cookie，配置重试仍返回 `invalid token`。修复后自动化测试要求第二个 RemoteClient 明确携带恢复后的短 token；实机重启回归仍待执行。 |
 
 ### 已关闭的现场问题
 
@@ -78,7 +80,7 @@ Origin 校验导致。旧同名设备对应的密钥变化历史也未逐条核�
 | --- | --- |
 | AC-01、AC-02 安装与依赖 | 历史全新安装及后续升级已覆盖部分路径；最新两端组合的完整首次安装、无控制台用户安装、安装目录及依赖核验仍需补充。 |
 | AC-03、AC-04、AC-07、AC-08 | LOCAL 同局域网、公网 IPv6 DIRECT、多路径切换、LAN 网段重叠、多客户端并发尚未实机验证。 |
-| AC-06 凭据 | 失效识别和原凭据重用已验证；Cookie 正常自动续期、不同 fnOS 版本下的续期行为及长时间到期场景尚未完整验证。 |
+| AC-06 凭据 | CLI 短/长 token 恢复及 CLI/Web 隔离已验证；独立 Web token 长时间到期、密码修改及服务端撤销后的重新登录场景尚未完整验证。 |
 | AC-09 恢复 | 暂停意图、服务端应用停启、Mac 重启已通过；物理网络切换、短时断网、睡眠唤醒和快速用户切换仍待验证，服务端应用重启不能替代这些场景。 |
 | AC-10 清理 | 主动断开的接口/路由清理通过；最新版卸载/purge、跨 UID 保留、SIGKILL/journal 恢复及宿主机残留资源逐项检查仍待验证。 |
 | AC-11 配置同步 | 在线修改 overlay/LAN、地址重分配、修改后的下发及失败回滚尚未实机验证。 |
@@ -98,7 +100,8 @@ go vet ./...
 node --test internal/server/web/index.test.cjs
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build ./...
 CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build ./...
-swiftc -typecheck -parse-as-library -framework AppKit \
+swiftc -typecheck -parse-as-library -framework AppKit -framework ServiceManagement \
+  -framework UserNotifications -framework WebKit \
   platform/macos/FnCPNApp.swift
 # macOS + WindowServer: offscreen AppKit fixture, no real NAS or installed daemon.
 FNCPN_LAYOUT_CHECK=1 go test ./packaging -count=1

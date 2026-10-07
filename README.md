@@ -131,6 +131,6 @@ macOS 凭据保存在 `/var/db/fncpn/credentials/<uid>/`：root 所有，目录 
 macOS 卸载默认保留用户配置、日志和 root 凭据文件。需要同时清除指定用户数据时：
 
 ```bash
-sudo /Library/PrivilegedHelperTools/com.rectcircle.fncpn/uninstall.sh \
+sudo /Library/PrivilegedHelperTools/cn.rectcircle.fncpn/uninstall.sh \
   --purge-user-data "$(id -u)"
 ```

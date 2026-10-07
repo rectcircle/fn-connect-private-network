@@ -2,10 +2,9 @@
 
 set -eu
 
-TOOL_DIR="/Library/PrivilegedHelperTools/com.rectcircle.fncpn"
+TOOL_DIR="/Library/PrivilegedHelperTools/cn.rectcircle.fncpn"
 TOOL="${TOOL_DIR}/fncpn"
-DAEMON_PLIST="/Library/LaunchDaemons/com.rectcircle.fncpn.privileged.plist"
-AGENT_PLIST="/Library/LaunchAgents/com.rectcircle.fncpn.client.plist"
+DAEMON_PLIST="/Library/LaunchDaemons/cn.rectcircle.fncpn.privileged.plist"
 STATE_DIR="/var/db/fncpn"
 PRIVILEGED_SOCKET="/var/run/fncpn-client-privileged.sock"
 
@@ -15,18 +14,17 @@ PRIVILEGED_SOCKET="/var/run/fncpn-client-privileged.sock"
   /var/log/fncpn \
   "$TOOL_DIR" \
   /Applications/FnCPN.app \
-  "$DAEMON_PLIST" \
-  "$AGENT_PLIST"
+  "$DAEMON_PLIST"
 /bin/chmod 0700 "$STATE_DIR" /var/log/fncpn
-/bin/chmod -R go-w "$TOOL_DIR" /Applications/FnCPN.app "$DAEMON_PLIST" "$AGENT_PLIST"
+/bin/chmod -R go-w "$TOOL_DIR" /Applications/FnCPN.app "$DAEMON_PLIST"
 /bin/chmod 0755 "$TOOL_DIR" "$TOOL" "$TOOL_DIR/uninstall.sh"
-/bin/chmod 0644 "$DAEMON_PLIST" "$AGENT_PLIST"
+/bin/chmod 0644 "$DAEMON_PLIST"
 /usr/sbin/chown -h root:wheel /usr/local/bin/fncpn
 
-/bin/launchctl bootout system/com.rectcircle.fncpn.privileged 2>/dev/null || true
+/bin/launchctl bootout system/cn.rectcircle.fncpn.privileged 2>/dev/null || true
 /bin/launchctl bootstrap system "$DAEMON_PLIST"
-/bin/launchctl enable system/com.rectcircle.fncpn.privileged
-/bin/launchctl kickstart -k system/com.rectcircle.fncpn.privileged
+/bin/launchctl enable system/cn.rectcircle.fncpn.privileged
+/bin/launchctl kickstart -k system/cn.rectcircle.fncpn.privileged
 
 count=0
 health_error=""
@@ -46,29 +44,14 @@ fi
 
 CONSOLE_UID="$(/usr/bin/stat -f '%u' /dev/console 2>/dev/null || true)"
 if [ -n "$CONSOLE_UID" ] && [ "$CONSOLE_UID" -ge 500 ]; then
+  # The client LaunchAgent is user-managed and installed into the user's
+  # ~/Library/LaunchAgents by the app on first launch. Remove any stale
+  # system-level agent left by an older installation.
+  /bin/launchctl bootout \
+    "gui/${CONSOLE_UID}/cn.rectcircle.fncpn.client" 2>/dev/null || true
   /bin/launchctl bootout \
     "gui/${CONSOLE_UID}/com.rectcircle.fncpn.client" 2>/dev/null || true
-  /bin/launchctl bootstrap "gui/${CONSOLE_UID}" "$AGENT_PLIST"
-  /bin/launchctl enable "gui/${CONSOLE_UID}/com.rectcircle.fncpn.client"
-  /bin/launchctl kickstart -k "gui/${CONSOLE_UID}/com.rectcircle.fncpn.client"
-
-  HOME_DIR="$(/usr/bin/dscl . -read "/Users/$(/usr/bin/stat -f '%Su' /dev/console)" \
-    NFSHomeDirectory | /usr/bin/awk '{print $2}')"
-  CLIENT_SOCKET="${HOME_DIR}/Library/Application Support/FnCPN/run/client.sock"
-  count=0
-  health_error=""
-  while [ "$count" -lt 50 ]; do
-    if health_error="$(/bin/launchctl asuser "$CONSOLE_UID" "$TOOL" internal-healthcheck \
-      --role client --socket "$CLIENT_SOCKET" 2>&1)"; then
-      break
-    fi
-    /bin/sleep 0.1
-    count=$((count + 1))
-  done
-  if [ "$count" -ge 50 ]; then
-    printf 'FnCPN client healthcheck failed: %s\nLog: %s/Library/Logs/FnCPN/client.log\n' "$health_error" "$HOME_DIR" >&2
-    exit 1
-  fi
+  /bin/rm -f "/Library/LaunchAgents/com.rectcircle.fncpn.client.plist"
 fi
 
 exit 0

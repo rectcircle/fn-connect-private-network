@@ -3,10 +3,10 @@
 <plist version="1.0">
 <dict>
   <key>Label</key>
-  <string>com.rectcircle.fncpn.privileged</string>
+  <string>cn.rectcircle.fncpn.privileged</string>
   <key>ProgramArguments</key>
   <array>
-    <string>/Library/PrivilegedHelperTools/com.rectcircle.fncpn/fncpn</string>
+    <string>/Library/PrivilegedHelperTools/cn.rectcircle.fncpn/fncpn</string>
     <string>client</string>
     <string>privileged-daemon</string>
     <string>--log-file</string>

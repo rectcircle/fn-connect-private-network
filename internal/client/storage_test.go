@@ -94,6 +94,19 @@ func TestConfigStoreKeepsSecretsOutsideConfigFile(t *testing.T) {
 	if err != nil || !found || !reflect.DeepEqual(reloadedSession, session) {
 		t.Fatalf("native session = %#v, found=%v, err=%v", reloadedSession, found, err)
 	}
+	adminSession := AdminWebSession{
+		Version: adminWebSessionVersion, FNID: "home-nas", Username: "admin",
+		DeviceID: "admin-web-device", Token: "web-short",
+		UpdatedAt: time.Now().UTC().Truncate(time.Second),
+	}
+	if err := store.SaveAdminWebSession(adminSession); err != nil {
+		t.Fatalf("save admin Web session: %v", err)
+	}
+	reloadedAdminSession, found, err := store.LoadAdminWebSession("home-nas")
+	if err != nil || !found || !reflect.DeepEqual(reloadedAdminSession, adminSession) {
+		t.Fatalf("admin Web session = %#v, found=%v, err=%v",
+			reloadedAdminSession, found, err)
+	}
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
 		t.Fatalf("secret operation unexpectedly created config file: %v", err)
 	}

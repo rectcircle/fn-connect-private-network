@@ -96,6 +96,7 @@ HTTP/IPC 请求上下文分别携带 `http_request_id`、`ipc_request_id`，客�
 | --- | --- |
 | 启动/退出 | daemon starting/stopped、`IPC listener ready/stopped`、`server HTTP listener ready`、特权恢复完成 |
 | 授权 | `authorization requested`、`authorization credentials received`、`gateway session validated`、`authorization saved/completed`；主动取消单独记录 |
+| 管理页 | 独立 Web token 登录成功；AdminProxy 启动。正常页面、静态资源和 snapshot 请求不逐项打印 INFO |
 | 注册 | 客户端 `existing device reused` 或 `device registration completed`；服务端同名事件用 `created` 明确区分创建和复用 |
 | 选路 | `device configuration ready`、LOCAL 探测开始/结束、FN Connect 发现开始/结束、路由选择、DIRECT 尝试或 RELAY 选择 |
 | 建联 | `relay WebSocket connecting/established`、`relay bridge ready`、`client network applied`、`WireGuard handshake waiting/confirmed`、`client connected` |
@@ -108,6 +109,15 @@ WSS 接通不等于 WireGuard 握手成功；两者必须是独立节点。服�
 
 正常状态/诊断轮询、未变化的配置监听/网络 reconcile、凭据读取、Cookie 自动刷新和
 每个数据包不打印 INFO。异常仍按 ERROR/WARN 记录，并保留既有错误原因。
+
+原生会话恢复成功日志只表示取得了新短 token。后续重试必须使用重新加载 Cookie 后
+创建的新 RemoteClient；若恢复后仍立即出现 `invalid token`，应同时核对重试请求
+实际使用的凭据版本，不能仅根据 recovery 成功日志判断链路已更新。
+
+管理页打开前的 Web token 探测与核心连接状态隔离：仅明确的 `invalid token/401`
+归类为管理页 `AUTH_REQUIRED` 并清除 Web session；DNS、TLS、超时和 5xx 保持
+`UNAVAILABLE`。两类错误都通过 `admin-proxy` IPC 返回，不写入 client
+`status.lastError`，不触发隧道拆除或 CLI token 恢复。
 
 ## 同名设备与身份
 
@@ -159,6 +169,7 @@ LOCAL 没有 WireGuard 隧道，不属于此活性指标。该规则是超时策
 | 设备注册及配置 HTTP | HTTP 状态、已知 JSON 错误或短文本原因保留；JSON 解码、超限、无效游标单独分类 |
 | FN Connect 发现 | 记录发现阶段、HTTP 状态或外部业务码/消息，保留网络超时分类 |
 | 凭据与配置 | 读取、保存、清除、忘记均附阶段；文件系统错误与特权拒绝进入 IPC/客户端错误链 |
+| 管理页鉴权 | 加密 Web 登录、Web 会话存储、本地代理启动及上游错误分阶段记录；失败不得覆盖 CLI 会话或改变隧道状态 |
 | LOCAL 探测 | 请求拒绝、无效证明、响应读取错误不再静默丢失；未命中 LOCAL 可继续其他选路 |
 | IPv6 DIRECT | 握手失败及回退原因记录 WARN；应用/清理失败保留主因和回滚原因 |
 | WSS 握手 | 失败正文、HTTP 状态及请求 ID 进入错误；不会将所有 403 当成需要重新登录 |
@@ -188,6 +199,8 @@ fnOS 生命周期失败也写 stderr 和应用中心的临时错误文件，不�
 ## 脱敏与正常退出
 
 - 不记录请求/响应完整 Header、Cookie、凭据文件、私钥、WireGuard UAPI 或报文内容。
+- 不记录 fnOS RPC 原始帧、加密载荷、ticket、token 或 secret；管理代理只记录启动和错误，
+  不记录每个静态资源请求。
 - URL 去除 userinfo、query 和 fragment；凭据赋值、密钥和 JWT 样式内容脱敏。
 - `authorization is required`、`read privateKey failed` 是描述，不因出现敏感词而整句丢失。
 - HTTP 失败最多读取 8 KiB；WSS 库最多提供失败正文前 1 KiB。HTML、未知 JSON
@@ -251,6 +264,9 @@ nftables 中一个 base chain 的 ACCEPT 不是最终放行，后续同 hook 的
   验证确认/取消/Esc、确认期间重新上线、后台拒绝、删除失败保留行和窄屏布局。
 - `internal/client/relay_test.go`、`internal/server/relay_test.go`：中继建立、正常结束、
   断线重拨失败与恢复的日志，不包含 URL 查询、Cookie 或报文内容。
+- `internal/client/native_session_test.go`、`internal/client/adminproxy_test.go`：
+  CLI/Web token 隔离、Web 登录失败不影响建链、本地 bootstrap nonce、路径限制和
+  浏览器 Cookie 不得覆盖代理注入凭据。
 - `internal/server/relay_test.go`：网关改写 Host、Origin 缺失/不同均可升级，
   无网关身份仍拒绝，容量限制和二进制转发保留。
 - `internal/model/error_details_test.go`、`internal/logging/rotate_test.go`：

@@ -3,8 +3,8 @@
 set -eu
 
 HELPER_ROOT="/Library/PrivilegedHelperTools"
-TOOL="${HELPER_ROOT}/com.rectcircle.fncpn/fncpn"
-AGENT_LABEL="com.rectcircle.fncpn.client"
+TOOL="${HELPER_ROOT}/cn.rectcircle.fncpn/fncpn"
+AGENT_LABEL="cn.rectcircle.fncpn.client"
 
 # Protect the shared parent before the package writes any privileged executable.
 if [ -L "$HELPER_ROOT" ]; then
@@ -27,7 +27,7 @@ if [ -x "$TOOL" ]; then
   done
 fi
 
-/bin/launchctl bootout system/com.rectcircle.fncpn.privileged 2>/dev/null || true
+/bin/launchctl bootout system/cn.rectcircle.fncpn.privileged 2>/dev/null || true
 count=0
 while [ -f /var/db/fncpn/state.json ] && [ "$count" -lt 50 ]; do
   /bin/sleep 0.1

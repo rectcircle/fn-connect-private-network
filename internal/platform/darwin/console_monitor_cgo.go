@@ -25,7 +25,7 @@ static int fncpnRunConsoleMonitor(void) {
 	SCDynamicStoreContext context = {0, NULL, NULL, NULL, NULL};
 	SCDynamicStoreRef store = SCDynamicStoreCreate(
 		NULL,
-		CFSTR("com.rectcircle.fncpn.console-monitor"),
+		CFSTR("cn.rectcircle.fncpn.console-monitor"),
 		fncpnConsoleCallback,
 		&context
 	);

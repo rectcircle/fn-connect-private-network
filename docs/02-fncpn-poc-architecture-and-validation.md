@@ -520,7 +520,25 @@ Cookie 不能形成完整的长期恢复会话。正式客户端现已保存
 `token + longToken + secret + backId + did + username`，同时保留完整 Cookie jar
 作为统一网关的兼容层；密码只用于单次登录，不持久化。
 
-#### 3.9.3 真机验证
+#### 3.9.3 管理后台独立 Web token
+
+管理后台与隧道会话严格隔离。用户提交密码时，client daemon 在 CLI
+`user.login` 之外，以独立 DID 执行一次加密 Web 登录：
+
+1. `util.crypto.getRSAPub` 返回 RSA 公钥和 `si`。
+2. 客户端生成 32 字节 base62 AES key 和 16 字节 IV，以 AES-256-CBC
+   加密完整 `user.login`，再以 RSA PKCS#1 v1.5 加密 AES key。
+3. 不携带 `ver` 的 Web 登录返回管理页专用短 token；它不覆盖
+   `NativeSession`，也不进入隧道 Cookie jar。
+4. loopback AdminProxy 只允许 `/app/fncpn` 子树，清除浏览器传入 Cookie，
+   再注入 `mode=relay + Web fnos-token`。
+
+实机最终链路中，`GET /app/fncpn` 与
+`GET /app/fncpn/api/v1/admin/snapshot` 均返回 200，且 Web 登录后 CLI token
+仍可访问 bootstrap。此前侦察过的 ticket/ost/entry-token 属于 fnOS 首页浏览器会话，
+不是 FnCPN 管理页必需条件，正式实现不再使用。
+
+#### 3.9.4 真机验证
 
 在 `rectcircle-mi-nuc` 上取得以下证据：
 
@@ -580,6 +598,7 @@ Cookie 不能形成完整的长期恢复会话。正式客户端现已保存
 | `internal/macoshelper` | profile 校验、配置渲染、peer UID/PID |
 | `cmd/fncpnctl` | Helper response ID 校验 |
 | `internal/client` 原生会话 | `user.login`、HMAC 签名、短 token 失败后新连接长 token 恢复、敏感字段存储和运行时鉴权恢复 |
+| `internal/client` 管理会话 | 加密 Web 登录、CLI/Web token 隔离、loopback AdminProxy 路径和 Cookie 边界 |
 | `platform/macos` | 原生登录表单、首次登录、鉴权失败回填 ID/用户名及密码空置 |
 
 已执行并通过：

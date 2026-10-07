@@ -1,5 +1,8 @@
 import AppKit
 import Foundation
+import ServiceManagement
+import UserNotifications
+import WebKit
 
 private let protocolVersion = 4
 private let maximumFrameSize = 256 * 1024
@@ -217,6 +220,81 @@ private final class IPCClient {
     }
 }
 
+private final class LaunchAgentManager {
+    static let label = "cn.rectcircle.fncpn.client"
+    static let plistFileName = "cn.rectcircle.fncpn.client.plist"
+
+    var plistPath: String {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/LaunchAgents")
+            .appendingPathComponent(Self.plistFileName)
+            .path
+    }
+
+    func installPlist() -> Bool {
+        let contents = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/LaunchAgents")
+        try? FileManager.default.createDirectory(
+            at: contents, withIntermediateDirectories: true
+        )
+        guard let template = Bundle.main.url(
+            forResource: "client-agent", withExtension: "plist"
+        ),
+        let data = try? Data(contentsOf: template) else {
+            return false
+        }
+        if (try? Data(contentsOf: URL(fileURLWithPath: plistPath))) == data {
+            return true
+        }
+        do {
+            try data.write(to: URL(fileURLWithPath: plistPath), options: .atomic)
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    func run(_ arguments: [String]) -> Bool {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/launchctl")
+        process.arguments = arguments
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        do {
+            try process.run()
+            process.waitUntilExit()
+            return process.terminationStatus == 0
+        } catch {
+            return false
+        }
+    }
+
+    func isLoaded() -> Bool {
+        run(["print", "gui/\(getuid())/\(Self.label)"])
+    }
+
+    func bootstrap() -> Bool {
+        _ = run(["bootout", "gui/\(getuid())/\(Self.label)"])
+        guard run(["bootstrap", "gui/\(getuid())", plistPath]) else {
+            return false
+        }
+        // The plist sets RunAtLoad=false (auto-start is a separate toggle), so
+        // bootstrap only registers the service. Kickstart actually launches the
+        // client daemon; without it the daemon would be loaded but never run.
+        return run(["kickstart", "gui/\(getuid())/\(Self.label)"])
+    }
+
+    func bootout() -> Bool {
+        run(["bootout", "gui/\(getuid())/\(Self.label)"])
+    }
+
+    /// Ensures the registered client daemon is actually running. A no-op when
+    /// it is already up; launches it when it was registered but not running.
+    func kickstart() -> Bool {
+        run(["kickstart", "gui/\(getuid())/\(Self.label)"])
+    }
+}
+
 private struct ConnectionPresentation {
     let state: String
     let needsLogin: Bool
@@ -283,13 +361,22 @@ private func loginFailureMessage(_ failure: [String: Any]?) -> String {
     }
 }
 
+/// Button that shows a pointing-hand cursor on hover, for any interactive control.
+private final class HandCursorButton: NSButton {
+    override func resetCursorRects() {
+        addCursorRect(bounds, cursor: .pointingHand)
+    }
+}
+
 @main
 private final class AppDelegate: NSObject, NSApplicationDelegate {
     private let ipc = IPCClient()
+    private let launchAgent = LaunchAgentManager()
     private let statusValue = NSTextField(labelWithString: "尚未连接")
     private let serverValue = NSTextField(labelWithString: "")
     private let pathValue = NSTextField(labelWithString: "-")
     private let addressValue = NSTextField(labelWithString: "-")
+    private let nasValue = NSTextField(labelWithString: "-")
     private let interfaceValue = NSTextField(labelWithString: "-")
     private let handshakeValue = NSTextField(labelWithString: "-")
     private let rootValue = NSTextField(labelWithString: "-")
@@ -308,12 +395,17 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
     private var retryButton = NSButton()
     private var changeButton = NSButton()
     private var returnButton = NSButton()
+    private var adminButton = NSButton()
+    private var quitButton = NSButton()
     private var menuAction: NSMenuItem?
+    private var autoStartItem: NSMenuItem?
     private var statusItem: NSStatusItem?
     private var statusWatch: DispatchWorkItem?
     private var refreshRetry: DispatchWorkItem?
     private var refreshRetryDelay: TimeInterval = 1
     private var window: NSWindow!
+    private var adminWindow: NSWindow?
+    private var adminWindowOpen = false
     private var refreshInFlight = false
     private var refreshPending = false
     private var busy = false
@@ -326,13 +418,19 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
     private var diagnostics: [String: Any] = [:]
     private var operationError: [String: Any]?
     private var presentation = ConnectionPresentation([:])
+    private var privilegedStartPrompted = false
+    // When false, the window is hidden until the first diagnostics round trip
+    // returns, so an already-logged-in user does not see a flash of the login
+    // page before the details page renders.
+    private var initialWindowShown = false
 
     @MainActor
     static func main() {
         let application = NSApplication.shared
         let delegate = AppDelegate()
         application.delegate = delegate
-        application.setActivationPolicy(.regular)
+        // Menu-bar/accessory app: no Dock icon, lives only in the status bar.
+        application.setActivationPolicy(.accessory)
         // There is no nib/storyboard to create or retain the delegate.
         withExtendedLifetime(delegate) {
             _ = NSApplicationMain(CommandLine.argc, CommandLine.unsafeArgv)
@@ -347,24 +445,49 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
             backing: .buffered, defer: false
         )
         window.title = "FnCPN"
-        window.contentMinSize = NSSize(width: 560, height: 620)
+        window.contentMinSize = NSSize(width: 560, height: 440)
         window.isReleasedWhenClosed = false
         window.contentView = content
         fnIDField.nextKeyView = usernameField
         usernameField.nextKeyView = passwordField
         passwordField.nextKeyView = setupButton
         window.center()
-        window.makeKeyAndOrderFront(nil)
+        // Do not show the window yet: we show it once the first diagnostics
+        // round trip returns so an already-logged-in user goes straight to the
+        // details page (no flash of the login page first). A fallback timer
+        // guarantees the window appears even if the daemon never responds.
         window.makeFirstResponder(fnIDField)
-        NSApp.activate(ignoringOtherApps: true)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
+            self?.showInitialWindowIfNeeded()
+        }
+        setupLaunchAgent()
         configureStatusItem()
         render()
         refresh()
         startStatusWatch()
     }
 
+    /// Installs (if needed) and boots the user-level client LaunchAgent so the
+    /// client daemon is running for this app session. The daemon's resume()
+    /// automatically reconnects when AutoConnect was left true on a prior quit.
+    private func setupLaunchAgent() {
+        guard launchAgent.installPlist() else { return }
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self else { return }
+            if self.launchAgent.isLoaded() {
+                // Registered but possibly not running (RunAtLoad=false): make
+                // sure the daemon process is actually up before we talk to it.
+                _ = self.launchAgent.kickstart()
+            } else {
+                _ = self.launchAgent.bootstrap()
+            }
+            // Interrupt any stale watcher/socket once the daemon is up.
+            DispatchQueue.main.async { self.refresh() }
+        }
+    }
+
     private func makeContent() -> NSView {
-        let content = NSView(frame: NSRect(x: 0, y: 0, width: 560, height: 620))
+        let content = NSView(frame: NSRect(x: 0, y: 0, width: 560, height: 520))
         let title = NSTextField(labelWithString: "FnCPN")
         title.font = .systemFont(ofSize: 24, weight: .semibold)
         let icon = NSImageView()
@@ -421,7 +544,8 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         let grid = NSGridView(views: [
             row("连接路径", pathValue), row("隧道地址", addressValue),
             row("网络接口", interfaceValue), row("最近握手", handshakeValue),
-            row("特权服务", rootValue), row("IPv6 检测", directValue)
+            row("特权服务", rootValue), row("IPv6 检测", directValue),
+            [nasLabel("NAS IP"), nasValue]
         ])
         grid.column(at: 0).width = 84
         grid.columnSpacing = 16
@@ -430,6 +554,9 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         grid.yPlacement = .top
         fill(grid, in: detailsView)
 
+        nasValue.isSelectable = true
+        nasValue.lineBreakMode = .byTruncatingMiddle
+        nasValue.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         primaryButton = button("连接", symbol: "bolt.fill", action: #selector(primaryAction))
         primaryButton.widthAnchor.constraint(equalToConstant: 126).isActive = true
         loginButton = button("重新登录", symbol: "person.badge.key", action: #selector(relogin))
@@ -451,7 +578,9 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         errorValue.textContainer?.widthTracksTextView = true
         errorValue.setAccessibilityLabel("诊断详情")
         scroll.documentView = errorValue
-        scroll.heightAnchor.constraint(equalToConstant: 100).isActive = true
+        scroll.translatesAutoresizingMaskIntoConstraints = false
+        scroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 80).isActive = true
+        scroll.heightAnchor.constraint(lessThanOrEqualToConstant: 220).isActive = true
         fill(scroll, in: detailsView)
 
         let body = NSStackView(views: [header, setupView, detailsView])
@@ -459,31 +588,60 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         body.alignment = .leading
         body.spacing = 28
         body.translatesAutoresizingMaskIntoConstraints = false
-        content.addSubview(body)
         for pane in [setupView, detailsView] {
             pane.translatesAutoresizingMaskIntoConstraints = false
             pane.widthAnchor.constraint(equalTo: body.widthAnchor).isActive = true
+            // Pane contents must decide their own height; never stretch panes
+            // to fill spare window space (which would blow up spacing between
+            // the login fields).
+            pane.setContentHuggingPriority(.required, for: .vertical)
+            pane.setContentCompressionResistancePriority(.required, for: .vertical)
         }
         changeButton = button("更换 NAS", symbol: "arrow.left.arrow.right", action: #selector(changeServer))
+        adminButton = button("管理后台", symbol: "globe", action: #selector(openAdmin), help: "在浏览器中打开管理后台")
         progress.style = .spinning
         progress.controlSize = .small
         progress.isDisplayedWhenStopped = false
         let tools = horizontal([
-            changeButton, progress,
+            changeButton, adminButton, progress,
             button("", symbol: "doc.on.doc", action: #selector(copyDiagnostics), help: "复制诊断信息"),
             button("", symbol: "folder", action: #selector(openLogs), help: "打开日志"),
             button("", symbol: "arrow.clockwise", action: #selector(refresh), help: "刷新状态")
         ])
         tools.translatesAutoresizingMaskIntoConstraints = false
-        content.addSubview(tools)
+        quitButton = button("退出", symbol: "power", action: #selector(quit), help: "停止连接并退出")
+        quitButton.translatesAutoresizingMaskIntoConstraints = false
+
+        // Stack the body and the tools row together and center the whole block
+        // vertically. This keeps the login button and the quit button tightly
+        // grouped regardless of window height (spare height is split evenly top
+        // and bottom, instead of leaving a huge gap between tools and content).
+        let footer = NSView()
+        footer.translatesAutoresizingMaskIntoConstraints = false
+        footer.addSubview(tools)
+        footer.addSubview(quitButton)
+        let container = NSStackView(views: [body, footer])
+        container.orientation = .vertical
+        container.alignment = .leading
+        container.spacing = 16
+        container.translatesAutoresizingMaskIntoConstraints = false
+        content.addSubview(container)
         NSLayoutConstraint.activate([
-            body.topAnchor.constraint(equalTo: content.topAnchor, constant: 28),
-            body.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 28),
-            body.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -28),
-            body.bottomAnchor.constraint(lessThanOrEqualTo: tools.topAnchor, constant: -16),
-            tools.leadingAnchor.constraint(equalTo: body.leadingAnchor),
-            tools.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -20)
+            container.centerYAnchor.constraint(equalTo: content.centerYAnchor),
+            container.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 28),
+            container.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -28),
+            footer.trailingAnchor.constraint(equalTo: tools.trailingAnchor),
+            footer.heightAnchor.constraint(equalTo: tools.heightAnchor),
+            footer.widthAnchor.constraint(equalTo: container.widthAnchor),
+            tools.leadingAnchor.constraint(equalTo: footer.leadingAnchor),
+            tools.centerYAnchor.constraint(equalTo: footer.centerYAnchor),
+            quitButton.trailingAnchor.constraint(equalTo: footer.trailingAnchor),
+            quitButton.centerYAnchor.constraint(equalTo: footer.centerYAnchor)
         ])
+        for pane in [body, footer] {
+            pane.setContentHuggingPriority(.defaultLow, for: .horizontal)
+            pane.widthAnchor.constraint(equalTo: container.widthAnchor).isActive = true
+        }
         return content
     }
 
@@ -527,8 +685,14 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         return [label, value]
     }
 
+    private func nasLabel(_ name: String) -> NSTextField {
+        let label = NSTextField(labelWithString: name)
+        label.textColor = .secondaryLabelColor
+        return label
+    }
+
     private func button(_ title: String, symbol: String, action: Selector, help: String? = nil) -> NSButton {
-        let result = NSButton(title: title, target: self, action: action)
+        let result = HandCursorButton(title: title, target: self, action: action)
         result.bezelStyle = .rounded
         result.image = NSImage(systemSymbolName: symbol, accessibilityDescription: help ?? title)
         result.imagePosition = title.isEmpty ? .imageOnly : .imageLeading
@@ -544,13 +708,35 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         statusWatch?.cancel()
         refreshRetry?.cancel()
         cancelExternalAuthorization()
+        // Stop tunneling on quit by halting the client daemon. The daemon's
+        // AutoConnect flag is preserved on disk, so the next app launch
+        // reconnects automatically.
+        _ = launchAgent.bootout()
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        // Reopening from Finder re-activates the app, which can transiently place
+        // a regular Dock icon. Re-assert the menu-bar/accessory policy so no Dock
+        // icon ever appears (the status bar remains the only entry point), unless
+        // the management WebView (which needs a Dock icon) is showing.
+        if !adminWindowOpen {
+            NSApp.setActivationPolicy(.accessory)
+            DispatchQueue.main.async {
+                guard !self.adminWindowOpen else { return }
+                NSApp.setActivationPolicy(.accessory)
+            }
+        }
         if !flag { showWindow() }
         return true
+    }
+
+    func applicationDidBecomeActive(_ notification: Notification) {
+        // Finder "Open" of a running app, or any external activation, can raise a
+        // regular Dock icon briefly. Force accessory so the Dock icon stays hidden.
+        guard !adminWindowOpen else { return }
+        NSApp.setActivationPolicy(.accessory)
     }
 
     func application(_ application: NSApplication, open urls: [URL]) {
@@ -570,8 +756,13 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         let menu = NSMenu()
         menu.addItem(withTitle: "打开 FnCPN", action: #selector(showWindow), keyEquivalent: "")
         menu.addItem(.separator())
-        menuAction = menu.addItem(withTitle: "连接", action: #selector(primaryAction), keyEquivalent: "")
+        menuAction = menu.addItem(withTitle: "连接", action: #selector(statusBarAction), keyEquivalent: "")
         menu.addItem(withTitle: "重新登录", action: #selector(relogin), keyEquivalent: "")
+        menu.addItem(.separator())
+        autoStartItem = menu.addItem(
+            withTitle: "", action: #selector(toggleAutoStart), keyEquivalent: ""
+        )
+        refreshAutoStartItem()
         menu.addItem(.separator())
         menu.addItem(withTitle: "退出", action: #selector(quit), keyEquivalent: "q")
         menu.autoenablesItems = false
@@ -580,13 +771,149 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem = item
     }
 
+    private func refreshAutoStartItem() {
+        // SMAppService registers the whole app as a macOS login item, which is
+        // what shows up in System Settings > General > Login Items and lets the
+        // app launch at login (running in the background with its status bar).
+        let enabled = SMAppService.mainApp.status == .enabled
+        autoStartItem?.title = "开机自启"
+        autoStartItem?.state = enabled ? .on : .off
+    }
+
+    @objc private func toggleAutoStart() {
+        let currentlyEnabled = SMAppService.mainApp.status == .enabled
+        do {
+            if currentlyEnabled {
+                try SMAppService.mainApp.unregister()
+            } else {
+                try SMAppService.mainApp.register()
+            }
+        } catch {
+            let alert = NSAlert()
+            alert.messageText = "无法设置开机自启"
+            alert.informativeText = error.localizedDescription
+            alert.alertStyle = .warning
+            alert.runModal()
+        }
+        refreshAutoStartItem()
+    }
+
     @objc private func showWindow() {
         window?.deminiaturize(nil)
         window?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
     }
 
-    @objc private func quit() { NSApp.terminate(nil) }
+    @objc private func quit() {
+        // applicationWillTerminate() halts the client daemon; AutoConnect is
+        // preserved so the next launch reconnects automatically.
+        NSApp.terminate(nil)
+    }
+
+    @objc private func openAdmin() {
+        let fnID = pendingFNID.isEmpty ? savedFNID : pendingFNID
+        guard !fnID.isEmpty else { return }
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let base: String
+            let requiresLogin: Bool
+            let failureMessage: String
+            do {
+                let response = try self?.ipc.call(method: "admin-proxy") ?? [:]
+                base = response["url"] as? String ?? ""
+                requiresLogin = false
+                failureMessage = ""
+            } catch {
+                base = ""
+                let failure = (error as NSError).userInfo["failure"] as? [String: Any]
+                requiresLogin = failure?["code"] as? String == "AUTH_REQUIRED"
+                failureMessage = error.localizedDescription
+            }
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                if !base.isEmpty, let proxyURL = URL(string: base) {
+                    self.showAdminWebView(proxyURL)
+                } else {
+                    let alert = NSAlert()
+                    alert.messageText = requiresLogin ?
+                        "管理后台登录已过期" : "管理后台暂不可用"
+                    alert.informativeText = requiresLogin ?
+                        "请重新登录 FnCPN。当前隧道连接不受影响。" : failureMessage
+                    alert.alertStyle = .warning
+                    if requiresLogin {
+                        alert.addButton(withTitle: "重新登录")
+                        alert.addButton(withTitle: "取消")
+                        if alert.runModal() == .alertFirstButtonReturn {
+                            self.relogin()
+                        }
+                    } else {
+                        alert.runModal()
+                    }
+                }
+            }
+        }
+    }
+
+    private func showAdminWebView(_ proxyURL: URL) {
+        let window: NSWindow
+        if let existing = adminWindow {
+            window = existing
+        } else {
+            window = NSWindow(
+                contentRect: NSRect(x: 0, y: 0, width: 1000, height: 720),
+                styleMask: [.titled, .closable, .miniaturizable, .resizable],
+                backing: .buffered, defer: false
+            )
+            window.title = "FnCPN 管理后台"
+            window.contentMinSize = NSSize(width: 640, height: 480)
+            window.isReleasedWhenClosed = false
+            window.center()
+            adminWindow = window
+            // Restore the menu-bar/accessory policy once the admin window closes
+            // so the regular Dock icon disappears again.
+            NotificationCenter.default.addObserver(
+                forName: NSWindow.willCloseNotification,
+                object: window,
+                queue: .main
+            ) { [weak self] _ in
+                self?.adminWindowOpen = false
+                NSApp.setActivationPolicy(.accessory)
+            }
+        }
+        let webView = WKWebView()
+        webView.frame = window.contentView?.bounds ?? NSRect(x: 0, y: 0, width: 1000, height: 720)
+        webView.autoresizingMask = [.width, .height]
+        webView.load(URLRequest(url: proxyURL))
+        window.contentView = webView
+        // The management UI appears as a regular window (with a Dock icon); the
+        // menu-bar/accessory policy is restored when it closes.
+        adminWindowOpen = true
+        NSApp.setActivationPolicy(.regular)
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    /// Detects when the root privileged daemon is unavailable (e.g. the user
+    /// manually stopped it) and prompts the user. Restarting a system
+    /// LaunchDaemon needs privileges, so we surface the situation and trigger a
+    /// best-effort bootstrap; the configured KeepAlive will re-run a merely
+    /// killed process automatically.
+    private func notifyRootUnavailable() {
+        privilegedStartPrompted = true
+        let center = UNUserNotificationCenter.current()
+        center.requestAuthorization(options: [.alert, .sound]) { granted, _ in
+            guard granted else { return }
+            let content = UNMutableNotificationContent()
+            content.title = "FnCPN 特权服务不可用"
+            content.body = "连接可能需要特权服务，请确认已安装或重新授权。"
+            content.sound = .default
+            let request = UNNotificationRequest(
+                identifier: "fncpn.privileged.unavailable",
+                content: content,
+                trigger: nil
+            )
+            center.add(request)
+        }
+    }
 
     @objc private func changeServer() {
         guard !busy else { return }
@@ -708,14 +1035,23 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         guard !busy else { return }
         if savedFNID.isEmpty && pendingFNID.isEmpty { showWindow(); return }
         if presentation.needsLogin || savedFNID.isEmpty { relogin() }
-        else { perform(presentation.connected ? "disconnect" : "connect") }
+        else { perform(presentation.connected ? "disconnect" : "connect", showsWindow: true) }
+    }
+
+    /// Status-bar menu variant: performs connect/disconnect without reopening
+    /// the window.
+    @objc private func statusBarAction() {
+        guard !busy else { return }
+        if savedFNID.isEmpty && pendingFNID.isEmpty { showWindow(); return }
+        if presentation.needsLogin || savedFNID.isEmpty { relogin() }
+        else { perform(presentation.connected ? "disconnect" : "connect", showsWindow: false) }
     }
 
     @objc private func retryConnection() {
-        if presentation.needsLogin { relogin() } else { perform("retry") }
+        if presentation.needsLogin { relogin() } else { perform("retry", showsWindow: true) }
     }
 
-    private func perform(_ method: String) {
+    private func perform(_ method: String, showsWindow: Bool = true) {
         guard !busy else { return }
         busy = true
         operationError = nil
@@ -723,14 +1059,14 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             do {
                 _ = try self?.ipc.call(method: method)
-                DispatchQueue.main.async { self?.operationFinished(.success(())) }
+                DispatchQueue.main.async { self?.operationFinished(.success(()), showsWindow: showsWindow) }
             } catch {
-                DispatchQueue.main.async { self?.operationFinished(.failure(error)) }
+                DispatchQueue.main.async { self?.operationFinished(.failure(error), showsWindow: showsWindow) }
             }
         }
     }
 
-    private func operationFinished(_ result: Result<Void, Error>) {
+    private func operationFinished(_ result: Result<Void, Error>, showsWindow: Bool = true) {
         let completedLogin = loginInFlight
         loginInFlight = false
         busy = false
@@ -753,7 +1089,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         render()
         refresh()
-        showWindow()
+        if showsWindow { showWindow() }
     }
 
     private func applyDiagnostics(_ value: [String: Any]) {
@@ -765,6 +1101,22 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
             operationError = nil
         }
         render()
+        showInitialWindowIfNeeded()
+    }
+
+    /// Shows the window on the first diagnostics round trip. It stays hidden only
+    /// when the app was launched as a login item at boot (the system is still at
+    /// the login window, so no user app is frontmost yet) — in that case the
+    /// status bar is the entry point. Any user-initiated launch (manual
+    /// double-click from Finder/Launchpad, status bar "打开") opens the window.
+    private func showInitialWindowIfNeeded() {
+        guard !initialWindowShown, let window else { return }
+        initialWindowShown = true
+        if let frontmost = NSWorkspace.shared.frontmostApplication,
+           frontmost.bundleIdentifier != "com.apple.loginwindow" {
+            window.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
+        }
     }
 
     private func render() {
@@ -809,9 +1161,18 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         let mtu = displayed["mtu"] as? Int ?? 0
         interfaceValue.stringValue = mtu > 0 ? "\(interfaceName) · MTU \(mtu)" : interfaceName
         handshakeValue.stringValue = displayed["handshakeAge"] as? String ?? "-"
-        rootValue.stringValue = diagnostics["privilegedAvailable"] as? Bool != true ? "不可用" :
+        let privilegedAvailable = diagnostics["privilegedAvailable"] as? Bool == true
+        rootValue.stringValue = !privilegedAvailable ? "不可用" :
             diagnostics["privilegedDegraded"] as? Bool == true ? "降级" :
             diagnostics["privilegedActive"] as? Bool == true ? "活动" : "就绪"
+        let nasAddress = displayed["nasAddress"] as? String ?? ""
+        nasValue.stringValue = nasAddress.isEmpty ? "-" : nasAddress
+        nasValue.isHidden = setup || nasAddress.isEmpty
+        adminButton.isHidden = setup || fnID.isEmpty
+        adminButton.isEnabled = !busy
+        if !privilegedAvailable && !privilegedStartPrompted {
+            notifyRootUnavailable()
+        }
         let direct = displayed["direct"] as? [String: Any] ?? [:]
         directValue.stringValue = directSummary(direct)
         var messages = [describeFailure(status["lastError"] as? [String: Any])]
@@ -829,6 +1190,21 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         setupError.toolTip = setupError.stringValue
         if busy { progress.startAnimation(nil) } else { progress.stopAnimation(nil) }
         statusItem?.button?.title = presentation.connected ? "FnCPN ●" : "FnCPN"
+        adjustWindowHeightForPage(setup)
+    }
+
+    /// Sizes the window to the current page (login vs details) and locks its
+    /// height (min == max) so the window is implicitly sized — the user cannot
+    /// resize it vertically, while the app still adapts it per page. Only the
+    /// width remains user-resizable.
+    private func adjustWindowHeightForPage(_ loginPage: Bool) {
+        guard let window else { return }
+        let targetHeight: CGFloat = loginPage ? 520 : 640
+        // Resize to the target content height first, then lock min == max so
+        // the user cannot drag the height.
+        window.setContentSize(NSSize(width: window.contentLayoutRect.width, height: targetHeight))
+        window.contentMinSize = NSSize(width: 560, height: targetHeight)
+        window.contentMaxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: targetHeight)
     }
 
     @objc private func copyDiagnostics() {
@@ -910,6 +1286,12 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func showDaemonUnavailable(_ error: Error) {
+        // On a pristine first launch there is no saved NAS yet, so a not-yet-ready
+        // client daemon is normal initialization, not an error the user must see
+        // on the login page. Only surface it once a NAS has been configured.
+        if savedFNID.isEmpty && pendingFNID.isEmpty {
+            return
+        }
         diagnostics["status"] = [
             "state": "DAEMON_UNAVAILABLE",
             "lastError": ["code": "UNAVAILABLE", "message": error.localizedDescription]

@@ -92,12 +92,13 @@ esac
 		t.Fatal(err)
 	}
 	replacements := []string{
-		"/Library/PrivilegedHelperTools/com.rectcircle.fncpn", helpers,
+		"/Library/PrivilegedHelperTools/cn.rectcircle.fncpn", helpers,
 		"/var/db/fncpn", filepath.Join(directory, "state"),
 		"/var/run/fncpn-client-privileged.sock", filepath.Join(directory, "priv.sock"),
 		"/usr/local/bin/fncpn", filepath.Join(directory, "cli"),
-		"/Library/LaunchAgents/com.rectcircle.fncpn.client.plist", filepath.Join(directory, "agent.plist"),
-		"/Library/LaunchDaemons/com.rectcircle.fncpn.privileged.plist", filepath.Join(directory, "daemon.plist"),
+		"/Users/*/Library/LaunchAgents/cn.rectcircle.fncpn.client.plist", filepath.Join(directory, "agent.plist"),
+		"/Library/LaunchAgents/cn.rectcircle.fncpn.client.plist", filepath.Join(directory, "agent.plist"),
+		"/Library/LaunchDaemons/cn.rectcircle.fncpn.privileged.plist", filepath.Join(directory, "daemon.plist"),
 		"/Applications/FnCPN.app", filepath.Join(directory, "app"),
 		"/var/log/fncpn", filepath.Join(directory, "logs"),
 	}

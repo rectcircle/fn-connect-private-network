@@ -2,14 +2,20 @@ package client
 
 import (
 	"context"
+	"crypto/aes"
+	"crypto/cipher"
 	"crypto/hmac"
 	"crypto/rand"
+	"crypto/rsa"
 	"crypto/sha256"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"fmt"
+	"math/big"
 	"net/http"
 	"net/url"
 	"strings"
@@ -21,9 +27,10 @@ import (
 )
 
 const (
-	nativeSessionVersion = 1
-	nativeRPCReadLimit   = 256 * 1024
-	nativeRPCTimeout     = 20 * time.Second
+	nativeSessionVersion   = 1
+	adminWebSessionVersion = 1
+	nativeRPCReadLimit     = 256 * 1024
+	nativeRPCTimeout       = 20 * time.Second
 )
 
 type NativeSession struct {
@@ -38,9 +45,22 @@ type NativeSession struct {
 	UpdatedAt time.Time `json:"updatedAt"`
 }
 
+type AdminWebSession struct {
+	Version   int       `json:"version"`
+	FNID      string    `json:"fnId"`
+	Username  string    `json:"username"`
+	DeviceID  string    `json:"deviceId"`
+	Token     string    `json:"token"`
+	UpdatedAt time.Time `json:"updatedAt"`
+}
+
 type NativeAuthenticator interface {
 	Login(context.Context, string, string, string, string, string) (NativeSession, error)
 	Recover(context.Context, NativeSession, string) (NativeSession, error)
+}
+
+type AdminWebAuthenticator interface {
+	WebLogin(context.Context, string, string, string, string, string) (AdminWebSession, error)
 }
 
 type NativeSessionClient struct {
@@ -127,10 +147,14 @@ func (c NativeSessionClient) Recover(
 			model.ErrorFailedPrecondition, "stored fnOS session is invalid", false, err,
 		), "native_session.recover")
 	}
-	if recovered, err := c.recoverToken(ctx, session, "user.authToken", session.Token, deviceName); err == nil {
+	if recovered, err := c.recoverToken(
+		ctx, session, "user.authToken", session.Token, deviceName,
+	); err == nil {
 		return recovered, nil
 	}
-	recovered, err := c.recoverToken(ctx, session, "user.tokenLogin", session.LongToken, deviceName)
+	recovered, err := c.recoverToken(
+		ctx, session, "user.tokenLogin", session.LongToken, deviceName,
+	)
 	if err != nil {
 		if model.AsError(err).Code == model.ErrorAuthRequired {
 			return NativeSession{}, model.WithOperation(model.NewError(
@@ -142,6 +166,219 @@ func (c NativeSessionClient) Recover(
 		return NativeSession{}, err
 	}
 	return recovered, nil
+}
+
+// WebLogin performs an encrypted fnOS Web login for the management UI. Its
+// token tuple is kept separate from NativeSession and is never used by the
+// tunnel path. This mirrors the browser protocol:
+//
+//  1. util.crypto.getRSAPub returns an RSA public key.
+//  2. A fresh 32-byte AES key and 16-byte IV are generated.
+//  3. user+password+did are AES-256-CBC encrypted (PKCS#7 padding).
+//  4. The AES key is RSA PKCS#1 v1.5 encrypted with the NAS public key.
+//  5. A single `{"req":"encrypted","iv","rsa","aes"}` frame carries both.
+func (c NativeSessionClient) WebLogin(
+	ctx context.Context,
+	fnID string,
+	username string,
+	password string,
+	deviceID string,
+	deviceName string,
+) (AdminWebSession, error) {
+	return c.webLogin(ctx, fnID, username, password, deviceID, deviceName)
+}
+
+func (c NativeSessionClient) webLogin(
+	ctx context.Context, fnID, username, password, deviceID, deviceName string,
+) (AdminWebSession, error) {
+	fnID, err := normalizeFNID(fnID)
+	if err != nil {
+		return AdminWebSession{}, model.WrapError(model.ErrorInvalidArgument, "invalid FN ID", false, err)
+	}
+	username = strings.TrimSpace(username)
+	if err := validateLoginInput(username, password); err != nil {
+		return AdminWebSession{}, err
+	}
+	if deviceID == "" {
+		deviceID, err = nativeDeviceID()
+		if err != nil {
+			return AdminWebSession{}, model.WithOperation(err, "native_session.web_login.device_id")
+		}
+	}
+	connection, err := c.dial(ctx, fnID)
+	if err != nil {
+		return AdminWebSession{}, err
+	}
+	defer connection.CloseNow()
+
+	// 1. Fetch the NAS RSA public key.
+	pubResponse, err := nativeRPC(ctx, connection, map[string]any{
+		"req":   "util.crypto.getRSAPub",
+		"reqid": nativeRequestID(),
+	}, "")
+	if err != nil {
+		return AdminWebSession{}, err
+	}
+	pemKey := nativeString(pubResponse, "pub")
+	if pemKey == "" {
+		pemKey = nativeString(pubResponse, "pubkey")
+	}
+	if pemKey == "" {
+		pemKey = nativeString(pubResponse, "pubKey")
+	}
+	pemKey = strings.TrimSpace(pemKey)
+	if pemKey == "" || !strings.Contains(pemKey, "BEGIN") {
+		return AdminWebSession{}, model.WithOperation(model.NewError(
+			model.ErrorProtocol, "fnOS did not return an RSA public key", false,
+		), "native_session.web_login.rsa_pub")
+	}
+	pub, err := parseRSAPublicKey(pemKey)
+	if err != nil {
+		return AdminWebSession{}, model.WithOperation(err, "native_session.web_login.rsa_pub")
+	}
+	// The NAS returns a session-integrity value `si` with the public key; it must
+	// be echoed inside the encrypted login payload. If getRSAPub did not include
+	// it, fetch it explicitly via util.getSI.
+	si := nativeString(pubResponse, "si")
+	if si == "" {
+		siResponse, siErr := nativeRPC(ctx, connection, map[string]any{
+			"req":   "util.getSI",
+			"reqid": nativeRequestID(),
+		}, "")
+		if siErr == nil {
+			si = nativeString(siResponse, "si")
+		}
+	}
+	if si == "" {
+		return AdminWebSession{}, model.WithOperation(model.NewError(
+			model.ErrorProtocol, "fnOS did not return a session integrity value", false,
+		), "native_session.web_login.si")
+	}
+
+	// 2. Generate a fresh 32-byte AES key (base62 UTF-8) and 16-byte IV.
+	aesKeyBytes := make([]byte, 32)
+	for i := range aesKeyBytes {
+		index, randomErr := cryptoRandInt(len(base62Chars))
+		if randomErr != nil {
+			return AdminWebSession{}, model.WithOperation(
+				randomErr, "native_session.web_login.aes_key",
+			)
+		}
+		aesKeyBytes[i] = base62Chars[index]
+	}
+	ivBytes := make([]byte, aes.BlockSize)
+	if _, err := rand.Read(ivBytes); err != nil {
+		return AdminWebSession{}, model.WithOperation(err, "native_session.web_login.iv")
+	}
+
+	// 4. Encrypt the AES key with RSA. The browser frontend calls jsencrypt's
+	// encrypt() which uses RSA PKCS#1 v1.5 padding (it falls back to the legacy
+	// JSEncrypt path; the OAEP branch is only used when the newer WebCrypto
+	// path is active, which defaults off).
+	rsaBytes, err := rsa.EncryptPKCS1v15(rand.Reader, pub, aesKeyBytes)
+	if err != nil {
+		return AdminWebSession{}, model.WithOperation(err, "native_session.web_login.rsa")
+	}
+
+	// 3. AES-256-CBC encrypt the FULL user.login request plus `si`. The browser
+	// interceptor encrypts `{...request, si}` where request is the whole login
+	// RPC (req, reqid, user, password, ...). If we encrypted only the credentials
+	// the NAS cannot recognise it as a login and never answers.
+	reqid := nativeRequestID()
+	loginData := map[string]any{
+		"req":        "user.login",
+		"reqid":      reqid,
+		"user":       username,
+		"password":   password,
+		"stay":       1,
+		"deviceName": valueOrDefault(deviceName, "FnCPN for macOS"),
+		"deviceType": "Browser",
+		"did":        deviceID,
+		"si":         si,
+	}
+	plain, err := json.Marshal(loginData)
+	if err != nil {
+		return AdminWebSession{}, model.WithOperation(err, "native_session.web_login.encode")
+	}
+	aesEnc, err := aesCBCEncrypt(aesKeyBytes, ivBytes, plain)
+	if err != nil {
+		return AdminWebSession{}, model.WithOperation(err, "native_session.web_login.aes")
+	}
+
+	// 5. Fire the encrypted login frame. Unlike the authenticated RPCs this is
+	// a bare handshake frame with no reqid; the NAS answers with a session
+	// handshake response whose reqid does not echo ours, so it cannot go through
+	// nativeRPC (which waits for a matching reqid).
+	response, err := nativeHandshake(ctx, connection, map[string]any{
+		"req": "encrypted",
+		"iv":  base64.StdEncoding.EncodeToString(ivBytes),
+		"rsa": base64.StdEncoding.EncodeToString(rsaBytes),
+		"aes": aesEnc,
+	})
+	if err != nil {
+		return AdminWebSession{}, err
+	}
+	if !nativeSuccess(response) {
+		return AdminWebSession{}, nativeAuthenticationError("fnOS web login failed", response)
+	}
+	session := AdminWebSession{
+		Version:   adminWebSessionVersion,
+		FNID:      fnID,
+		Username:  username,
+		DeviceID:  deviceID,
+		UpdatedAt: time.Now().UTC(),
+	}
+	if value := nativeString(response, "token"); value != "" {
+		session.Token = value
+	}
+	return session, nil
+}
+
+const base62Chars = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+
+func cryptoRandInt(max int) (int, error) {
+	value, err := rand.Int(rand.Reader, big.NewInt(int64(max)))
+	if err != nil {
+		return 0, err
+	}
+	return int(value.Int64()), nil
+}
+
+func parseRSAPublicKey(pemData string) (*rsa.PublicKey, error) {
+	block, _ := pem.Decode([]byte(pemData))
+	if block == nil {
+		return nil, errors.New("invalid RSA public key PEM")
+	}
+	if key, err := x509.ParsePKIXPublicKey(block.Bytes); err == nil {
+		if rsaKey, ok := key.(*rsa.PublicKey); ok {
+			return rsaKey, nil
+		}
+		return nil, errors.New("public key is not RSA")
+	}
+	if key, err := x509.ParsePKCS1PublicKey(block.Bytes); err == nil {
+		return key, nil
+	}
+	return nil, errors.New("failed to parse RSA public key")
+}
+
+func aesCBCEncrypt(key, iv, plain []byte) (string, error) {
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return "", err
+	}
+	padded := pkcs7Pad(plain, block.BlockSize())
+	out := make([]byte, len(padded))
+	cipher.NewCBCEncrypter(block, iv).CryptBlocks(out, padded)
+	return base64.StdEncoding.EncodeToString(out), nil
+}
+
+func pkcs7Pad(data []byte, blockSize int) []byte {
+	padLen := blockSize - len(data)%blockSize
+	pad := make([]byte, padLen)
+	for i := range pad {
+		pad[i] = byte(padLen)
+	}
+	return append(data, pad...)
 }
 
 func (c NativeSessionClient) recoverToken(
@@ -297,6 +534,46 @@ func nativeRPC(
 	}
 }
 
+// nativeHandshake writes an un-signed, reqid-less frame (used by the encrypted
+// web-login handshake) and returns the first response inside the timeout that
+// carries a `result` field. Unlike nativeRPC it does not require the NAS to echo
+// our reqid, because the login handshake response uses its own session reqid.
+func nativeHandshake(
+	ctx context.Context,
+	connection *websocket.Conn,
+	request map[string]any,
+) (map[string]any, error) {
+	data, err := json.Marshal(request)
+	if err != nil {
+		return nil, model.WithOperation(err, "native_session.encode")
+	}
+	requestContext, cancel := context.WithTimeout(ctx, nativeRPCTimeout)
+	defer cancel()
+	if err := connection.Write(requestContext, websocket.MessageText, data); err != nil {
+		return nil, nativeTransportError("write", err)
+	}
+	merged := make(map[string]any)
+	for {
+		messageType, data, err := connection.Read(requestContext)
+		if err != nil {
+			return nil, nativeTransportError("read", err)
+		}
+		if messageType != websocket.MessageText {
+			continue
+		}
+		var response map[string]any
+		if err := json.Unmarshal(data, &response); err != nil {
+			continue
+		}
+		for key, value := range response {
+			merged[key] = value
+		}
+		if _, complete := response["result"]; complete {
+			return merged, nil
+		}
+	}
+}
+
 func nativeSuccess(response map[string]any) bool {
 	result := strings.ToLower(nativeString(response, "result"))
 	return result == "succ" || result == "success"
@@ -373,6 +650,23 @@ func validateNativeSession(session NativeSession) error {
 	key, err := decodeNativeSecret(session.Secret)
 	if err != nil || len(key) == 0 {
 		return errors.New("invalid native session secret")
+	}
+	return nil
+}
+
+func validateAdminWebSession(session AdminWebSession) error {
+	if session.Version != adminWebSessionVersion {
+		return errors.New("unsupported admin Web session version")
+	}
+	fnID, err := normalizeFNID(session.FNID)
+	if err != nil || fnID != session.FNID {
+		return errors.New("invalid session FN ID")
+	}
+	if err := validateLoginInput(session.Username, "stored"); err != nil {
+		return err
+	}
+	if session.DeviceID == "" || len(session.DeviceID) > 128 || session.Token == "" {
+		return errors.New("missing admin Web session field")
 	}
 	return nil
 }

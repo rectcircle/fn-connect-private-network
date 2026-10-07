@@ -33,7 +33,7 @@ func TestMacOSAuthorizationLayout(t *testing.T) {
 			t.Fatal(err)
 		}
 		plist := `<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict>
-<key>CFBundleIdentifier</key><string>com.rectcircle.fncpn.uicheck</string>
+<key>CFBundleIdentifier</key><string>cn.rectcircle.fncpn.uicheck</string>
 <key>CFBundleExecutable</key><string>LayoutCheck</string>
 <key>CFBundleName</key><string>FnCPN UI Check</string>
 </dict></plist>`

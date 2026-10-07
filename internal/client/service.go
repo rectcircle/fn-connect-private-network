@@ -28,12 +28,14 @@ const (
 	MethodLogout              = "logout"
 	MethodForget              = "forget"
 	MethodDiagnose            = "diagnose"
+	MethodAdminProxy          = "admin-proxy"
 	defaultAuthorizationTTL   = 5 * time.Minute
 )
 
 type Runtime interface {
 	Status() model.ClientStatus
 	Diagnose(context.Context) model.ClientDiagnostics
+	AdminProxyURL(context.Context) (string, error)
 	Authorize(context.Context, string, []Cookie) error
 	AuthorizeNative(context.Context, string, string, string) error
 	Connect(context.Context) error
@@ -138,6 +140,12 @@ func (s *Service) Handle(
 		)
 	case MethodDiagnose:
 		return ipc.Success(request.ID, s.runtime.Diagnose(ctx))
+	case MethodAdminProxy:
+		base, proxyErr := s.runtime.AdminProxyURL(ctx)
+		if proxyErr != nil {
+			return ipc.Failure(request.ID, model.PublicError(proxyErr))
+		}
+		return ipc.Success(request.ID, map[string]string{"url": base})
 	case MethodConnect:
 		err = s.runtime.Connect(ctx)
 	case MethodDisconnect:

@@ -22,9 +22,10 @@ const (
 	MethodGetSecret     = "get-client-secret"
 	MethodPutSecret     = "put-client-secret"
 	MethodDeleteSecret  = "delete-client-secret"
-	WireGuardSecret     = "com.rectcircle.fncpn.wireguard"
-	CookieSecret        = "com.rectcircle.fncpn.cookies"
-	NativeSessionSecret = "com.rectcircle.fncpn.native-session"
+	WireGuardSecret     = "cn.rectcircle.fncpn.wireguard"
+	CookieSecret        = "cn.rectcircle.fncpn.cookies"
+	NativeSessionSecret = "cn.rectcircle.fncpn.native-session"
+	AdminWebSecret      = "cn.rectcircle.fncpn.admin-web-session"
 	maxSecretSize       = 64 * 1024
 )
 
@@ -70,7 +71,8 @@ func (s *SecretStore) Handle(ctx context.Context, request ipc.Request) ipc.Respo
 	}
 	if (input.Service != WireGuardSecret &&
 		input.Service != CookieSecret &&
-		input.Service != NativeSessionSecret) ||
+		input.Service != NativeSessionSecret &&
+		input.Service != AdminWebSecret) ||
 		len(input.Account) == 0 || len(input.Account) > 63 ||
 		len(input.Value) > maxSecretSize ||
 		(request.Method == MethodPutSecret && len(input.Value) == 0) ||

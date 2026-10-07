@@ -50,6 +50,7 @@ PoC 已证明内核 WireGuard、macOS 用户态隧道、IPv6 UDP 直连、FN Con
 | 设备记录 | 设备 ID、展示名称、公钥、分配地址和最近握手信息；P0 仅服务自动注册和 WireGuard peer | fnOS 服务端 |
 | 本地配置 | 服务端标识、设备 ID、连接偏好和最后一次有效配置 | macOS 当前用户 |
 | fnOS 原生会话 | 用户名、稳定设备 ID、短 token、长 token、HMAC secret 和 backId；不含密码 | macOS root 私有文件，按用户 UID 和 FN ID 隔离 |
+| 管理页 Web 会话 | 独立 DID、短 Web token；不含密码，不用于隧道 | macOS root 私有文件，按用户 UID 和 FN ID 隔离 |
 | 网关 Cookie jar | 由原生短 token 生成并由 HTTP/WSS `Set-Cookie` 更新的兼容凭证集 | macOS root 私有文件，按用户 UID 和 FN ID 隔离 |
 | 连接会话 | 当前路径、接口、路由、握手状态、重连状态和错误原因 | macOS 用户态守护进程 |
 
@@ -117,12 +118,14 @@ PoC 已证明内核 WireGuard、macOS 用户态隧道、IPv6 UDP 直连、FN Con
    配置、Cookie jar 或 root 凭据文件。
 3. client daemon 经 FN Connect 认证 WebSocket 调用 `user.login`，取得
    `token + longToken + secret + backId + did`。
-4. daemon 通过特权 IPC 保存原生会话，并以短 token 生成统一网关所需的
+4. daemon 以独立 DID 执行加密 Web 登录，取得仅供管理页使用的短 Web token；
+   Web 登录失败不改变 CLI 会话和建链结果。
+5. daemon 通过特权 IPC 分开保存两类会话，并以 CLI 短 token 生成统一网关所需的
    `fnos-token` Cookie；root 进程只保存不透明字节，不参与协议。
-5. daemon 生成本机 WireGuard 密钥，并调用服务端 bootstrap 确认登录用户具有管理员权限。
-6. 客户端提交设备名称和公钥；服务端分配最低可用 overlay 地址并启用设备。
-7. 服务端返回连接配置；客户端持久化配置并立即开始自动选路。
-8. 界面进入连接详情页并显示当前路径，首次流程结束。
+6. daemon 生成本机 WireGuard 密钥，并调用服务端 bootstrap 确认登录用户具有管理员权限。
+7. 客户端提交设备名称和公钥；服务端分配最低可用 overlay 地址并启用设备。
+8. 服务端返回连接配置；客户端持久化配置并立即开始自动选路。
+9. 界面进入连接详情页并显示当前路径，首次流程结束。
 
 “一次授权”指正常使用周期内无需反复登录。短 token 失效时客户端先自动使用长 token
 恢复；长 token 也失效、用户主动退出、修改密码或服务端撤销会话时，详情页显示
@@ -521,7 +524,8 @@ macOS 和 fnOS 分别构建适配自身平台的 `fncpn`，但每个平台的安
   路由和 endpoint。
 - privileged-daemon 只接受 root 或当前控制台用户进程。
 - 任何错误必须保留请求 ID；鉴权发生在解码前时允许空 ID 错误响应。
-- 凭据请求仅允许 WireGuard 私钥、fnOS 原生会话与 Cookie jar 三种命名空间；用户 UID 取自操作系统
+- 凭据请求仅允许 WireGuard 私钥、fnOS 原生会话、管理页 Web 会话与 Cookie jar
+  四种命名空间；用户 UID 取自操作系统
   Unix Socket peer identity，请求不能指定 UID 或路径。FN ID 和凭据类型哈希后生成文件名。
 - root 保存不透明凭据字节，不参与 FN Connect 会话、Cookie 解析或 HTTP/WSS 请求。
 - 安装健康检查只依赖 IPC 就绪；自动连接在后台执行，不等待网络或用户授权后才监听 IPC。
@@ -607,12 +611,27 @@ FnCPN 会按需
 - 鉴权失败时详情页提供“重新登录”；登录页预填 FN Connect ID 和用户名，密码始终为空。
 - 当前版本不支持 2FA 登录；检测到 2FA challenge 时明确报错，不保存不完整会话。
 
-### 14.2 凭证使用与刷新
+### 14.2 管理后台会话
+
+- 管理页 Web 登录使用独立 DID，不覆盖 CLI token、longToken 或 secret。
+- 本地 AdminProxy 只监听 loopback，只代理 `/app/fncpn` 子树，并以一次性高熵
+  bootstrap nonce 建立本地 HttpOnly 会话。
+- 代理始终删除浏览器传入 Cookie，只注入独立 Web token 生成的
+  `mode=relay; fnos-token=...`。
+- 每次打开管理页前先以 Web token 探测 admin snapshot。明确的 `invalid token/401`
+  只清除 Web session 并提示重新登录；网络失败只提示管理后台暂不可用。
+- 管理代理探测不调用 `m.fail`，不修改客户端连接状态，不调用 CLI session recovery，
+  不清理或回退使用 CLI token。
+- Logout、Forget 和 daemon 退出必须关闭管理代理并清除 Web 会话。
+
+### 14.3 凭证使用与刷新
 
 - 除刚完成 `user.login` 的首次连接外，连接前使用
   `util.getSI + user.authToken` 确认短 token。
 - 短 token 被拒绝时，在新 WebSocket 连接上执行
   `util.getSI + user.tokenLogin(longToken)`；只覆盖响应实际返回的非空字段。
+- 恢复短 token 后必须重新加载 Cookie 并重建 RemoteClient；不得使用仍持有旧
+  `fnos-token` 的内存客户端重试。
 - 配置长轮询或 relay 重连遇到明确鉴权失败时，先执行一次原生会话恢复，再决定是否进入
   `AUTH_REQUIRED`。
 - `fncpn client daemon` 使用标准 Cookie jar 为控制请求和 WSS 握手选择匹配 Cookie。
@@ -621,7 +640,7 @@ FnCPN 会按需
 - 长 token 也被拒绝时状态切换为 `AUTH_REQUIRED`，保留设备密钥、配置、FN Connect ID
   和用户名，以便用户重新登录。
 
-### 14.3 信任边界
+### 14.4 信任边界
 
 FN Connect 统一网关当前要求有效 fnOS 登录态，因此客户端保存的是具有 fnOS 会话能力的敏感凭证。WireGuard 密钥不能替代该网关凭证。
 

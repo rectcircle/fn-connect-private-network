@@ -5,14 +5,14 @@ export COPYFILE_DISABLE=1
 export COPY_EXTENDED_ATTRIBUTES_DISABLE=1
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-VERSION="${VERSION:-0.1.25}"
-BUILD_NUMBER="${BUILD_NUMBER:-25}"
+VERSION="${VERSION:-0.1.27}"
+BUILD_NUMBER="${BUILD_NUMBER:-27}"
 ARCH="$(go env GOARCH)"
 BUILD_DIR="${TMPDIR:-/tmp}/fncpn-macos-pkg-${UID}"
 PAYLOAD="${BUILD_DIR}/root"
 SCRIPTS="${BUILD_DIR}/scripts"
 DIST_DIR="${ROOT_DIR}/dist"
-TOOL_DIR="${PAYLOAD}/Library/PrivilegedHelperTools/com.rectcircle.fncpn"
+TOOL_DIR="${PAYLOAD}/Library/PrivilegedHelperTools/cn.rectcircle.fncpn"
 APP_DIR="${PAYLOAD}/Applications/FnCPN.app"
 
 if [ "$(uname -s)" != "Darwin" ]; then
@@ -51,6 +51,9 @@ swiftc \
   -O \
   -parse-as-library \
   -framework AppKit \
+  -framework ServiceManagement \
+  -framework UserNotifications \
+  -framework WebKit \
   "${ROOT_DIR}/platform/macos/FnCPNApp.swift" \
   -o "${APP_DIR}/Contents/MacOS/FnCPN"
 
@@ -61,10 +64,13 @@ plutil -replace CFBundleVersion -string "$BUILD_NUMBER" \
   "${APP_DIR}/Contents/Info.plist"
 cp -X "${ROOT_DIR}/packaging/assets/ICON_256.PNG" \
   "${APP_DIR}/Contents/Resources/AppIcon.png"
-cp -X "${ROOT_DIR}/packaging/macos/com.rectcircle.fncpn.privileged.plist" \
+cp -X "${ROOT_DIR}/packaging/macos/cn.rectcircle.fncpn.privileged.plist" \
   "${PAYLOAD}/Library/LaunchDaemons/"
-cp -X "${ROOT_DIR}/packaging/macos/com.rectcircle.fncpn.client.plist" \
-  "${PAYLOAD}/Library/LaunchAgents/"
+# The client LaunchAgent is user-managed: ship its template inside the app bundle
+# and let the app install it into ~/Library/LaunchAgents on first launch.
+mkdir -p "${APP_DIR}/Contents/Resources"
+cp -X "${ROOT_DIR}/packaging/macos/cn.rectcircle.fncpn.client.plist" \
+  "${APP_DIR}/Contents/Resources/client-agent.plist"
 cp -X "${ROOT_DIR}/packaging/macos/scripts/preinstall" "$SCRIPTS/"
 cp -X "${ROOT_DIR}/packaging/macos/scripts/postinstall" "$SCRIPTS/"
 cp -X "${ROOT_DIR}/packaging/macos/uninstall.sh" "${TOOL_DIR}/"
@@ -77,8 +83,8 @@ chmod 0755 \
   "${SCRIPTS}/postinstall"
 chmod 0644 \
   "${APP_DIR}/Contents/Info.plist" \
-  "${PAYLOAD}/Library/LaunchDaemons/com.rectcircle.fncpn.privileged.plist" \
-  "${PAYLOAD}/Library/LaunchAgents/com.rectcircle.fncpn.client.plist"
+  "${APP_DIR}/Contents/Resources/client-agent.plist" \
+  "${PAYLOAD}/Library/LaunchDaemons/cn.rectcircle.fncpn.privileged.plist"
 
 codesign --force --sign - "${TOOL_DIR}/fncpn"
 codesign --force --sign - "${APP_DIR}"
@@ -87,7 +93,7 @@ if find "$PAYLOAD" -name '._*' -print -quit | grep -q .; then
   echo "AppleDouble file remains in package payload" >&2
   exit 1
 fi
-ln -s "/Library/PrivilegedHelperTools/com.rectcircle.fncpn/fncpn" \
+ln -s "/Library/PrivilegedHelperTools/cn.rectcircle.fncpn/fncpn" \
   "${PAYLOAD}/usr/local/bin/fncpn"
 
 OUTPUT="${DIST_DIR}/FnCPN-${VERSION}-${ARCH}-unsigned.pkg"
@@ -100,7 +106,7 @@ rm -f "$OUTPUT" "$RAW_OUTPUT"
 pkgbuild \
   --root "$PAYLOAD" \
   --scripts "$SCRIPTS" \
-  --identifier com.rectcircle.fncpn \
+  --identifier cn.rectcircle.fncpn \
   --version "$VERSION" \
   --install-location / \
   --ownership preserve \

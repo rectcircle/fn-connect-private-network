@@ -126,6 +126,8 @@ type ManagerOptions struct {
 	Probe            LocalProbe
 	Monitor          NetworkMonitor
 	Authenticator    NativeAuthenticator
+	WebAuthenticator AdminWebAuthenticator
+	AdminWebProbe    func(context.Context, string, string) error
 	DeviceName       string
 	Logger           *slog.Logger
 	HandshakeTimeout time.Duration
@@ -145,18 +147,26 @@ type Manager struct {
 	probe            LocalProbe
 	monitor          NetworkMonitor
 	authenticator    NativeAuthenticator
+	webAuthenticator AdminWebAuthenticator
+	adminWebProbe    func(context.Context, string, string) error
 	deviceName       string
 	logger           *slog.Logger
 	handshakeTimeout time.Duration
 	directRetryAfter time.Time
 	direct           model.DirectDiagnostics
 	localProbeConfig *model.LocalProbeConfiguration
+	// nasAddress is the NAS's LAN IPv4 extracted from the local-probe endpoints.
+	// It is retained even when the LAN probe itself fails: once the VPN tunnel
+	// is up this address is reachable, so it is shown on the client's details
+	// page regardless of which path (local/direct/relay) was selected.
+	nasAddress       string
 	ipv6RouteChecker func(context.Context, netip.Addr, int) bool
 	status           model.ClientStatus
 	maintenanceError bool
 	maintenancePhase string
 	statusChanges    *notify.Change
 	watchCancel      context.CancelFunc
+	adminProxy       *AdminProxy
 	// ignoreNetworkChangesUntil absorbs the network-change events that our own
 	// tunnel bring-up triggers (creating a utun interface / adding routes changes
 	// State:/Network/Global/IPv4|IPv6, which the monitor surfaces as a primary
@@ -191,8 +201,16 @@ func NewManager(options ManagerOptions) (*Manager, error) {
 		handshakeTimeout = 10 * time.Second
 	}
 	authenticator := options.Authenticator
+	webAuthenticator := options.WebAuthenticator
 	if authenticator == nil {
 		authenticator = NativeSessionClient{}
+	}
+	if webAuthenticator == nil {
+		webAuthenticator, _ = authenticator.(AdminWebAuthenticator)
+	}
+	adminWebProbe := options.AdminWebProbe
+	if adminWebProbe == nil {
+		adminWebProbe = probeAdminWebSession
 	}
 	ipv6RouteChecker := options.IPv6RouteChecker
 	if ipv6RouteChecker == nil {
@@ -207,6 +225,8 @@ func NewManager(options ManagerOptions) (*Manager, error) {
 		probe:            options.Probe,
 		monitor:          options.Monitor,
 		authenticator:    authenticator,
+		webAuthenticator: webAuthenticator,
+		adminWebProbe:    adminWebProbe,
 		deviceName:       deviceName,
 		logger:           managerLogger,
 		handshakeTimeout: handshakeTimeout,
@@ -282,7 +302,11 @@ func (m *Manager) AuthorizeNative(
 	if err != nil {
 		return m.fail(err)
 	}
-	return m.authorize(ctx, fnID, cookies)
+	if err := m.authorize(ctx, fnID, cookies); err != nil {
+		return err
+	}
+	m.refreshAdminWebSession(ctx, fnID, username, password, session.DeviceID)
+	return nil
 }
 
 func (m *Manager) authorize(
@@ -579,9 +603,11 @@ func (m *Manager) Logout(ctx context.Context) error {
 		if err := errors.Join(
 			m.store.ClearCookies(config.FNID),
 			m.store.ClearNativeSession(config.FNID),
+			m.store.ClearAdminWebSession(config.FNID),
 		); err != nil {
 			return m.fail(err)
 		}
+		m.closeAdminProxy()
 		logging.FromContext(ctx, m.logger).Info("client logged out",
 			"fn_id", config.FNID, "device_id", config.DeviceID, "identity_retained", true)
 		m.setStatus(
@@ -612,6 +638,7 @@ func (m *Manager) Forget(ctx context.Context) error {
 		if err := m.store.Forget(config.FNID); err != nil {
 			return m.fail(err)
 		}
+		m.closeAdminProxy()
 		logging.FromContext(ctx, m.logger).Info("client identity forgotten",
 			"fn_id", config.FNID, "device_id", config.DeviceID)
 	}
@@ -625,7 +652,29 @@ func (m *Manager) Close(ctx context.Context) error {
 	m.cancelConfigurationWatch()
 	m.bridge.Stop()
 	m.localProbeConfig = nil
+	m.mu.Lock()
+	proxy := m.adminProxy
+	m.adminProxy = nil
+	m.mu.Unlock()
+	if proxy != nil {
+		closeErr := proxy.Close()
+		if closeErr != nil {
+			return closeErr
+		}
+	}
 	return m.privileged.Remove(ctx)
+}
+
+func (m *Manager) closeAdminProxy() {
+	m.mu.Lock()
+	proxy := m.adminProxy
+	m.adminProxy = nil
+	m.mu.Unlock()
+	if proxy != nil {
+		if err := proxy.Close(); err != nil {
+			m.logger.Warn("close admin proxy", "error", err)
+		}
+	}
 }
 
 func (m *Manager) Run(ctx context.Context) {
@@ -1476,6 +1525,7 @@ func (m *Manager) Diagnose(ctx context.Context) model.ClientDiagnostics {
 	}
 	m.mu.RLock()
 	diagnostics.Direct = m.direct
+	diagnostics.NASAddress = m.nasAddress
 	m.mu.RUnlock()
 	diagnostics.Direct.LocalPublicIPv6 = snapshot.HasPublicIPv6
 	if configErr == nil && config != nil {
@@ -1504,6 +1554,168 @@ func (m *Manager) Diagnose(ctx context.Context) model.ClientDiagnostics {
 		}
 	}
 	return diagnostics
+}
+
+// AdminProxyURL starts (or reuses) the local reverse proxy that fronts the NAS
+// management UI. It reads only the independent Web session; the CLI session and
+// its gateway cookie remain owned by the tunnel path.
+func (m *Manager) AdminProxyURL(ctx context.Context) (string, error) {
+	// The management UI uses its dedicated Web token, not the CLI tunnel token.
+	config, err := m.store.Load()
+	if err != nil {
+		return "", err
+	}
+	if config == nil || config.FNID == "" {
+		return "", errors.New("no matched NAS configured")
+	}
+	session, found, err := m.store.LoadAdminWebSession(config.FNID)
+	if err != nil {
+		return "", err
+	}
+	if !found {
+		return "", model.WithOperation(model.NewError(
+			model.ErrorAuthRequired, "fnOS management session is unavailable; sign in again", false,
+		), "admin_proxy.probe")
+	}
+	if err := m.adminWebProbe(ctx, config.FNID, session.Token); err != nil {
+		if model.AsError(err).Code == model.ErrorAuthRequired {
+			_ = m.store.ClearAdminWebSession(config.FNID)
+			m.closeAdminProxy()
+		}
+		return "", err
+	}
+	m.mu.Lock()
+	proxy := m.adminProxy
+	m.mu.Unlock()
+	if proxy == nil {
+		proxy = &AdminProxy{
+			ListenAddress: "127.0.0.1:0",
+			FNIDProvider: func() (string, error) {
+				config, err := m.store.Load()
+				if err != nil {
+					return "", err
+				}
+				if config == nil || config.FNID == "" {
+					return "", errors.New("no matched NAS configured")
+				}
+				return config.FNID, nil
+			},
+			CookieProvider: func(fnID string) ([]Cookie, error) {
+				session, found, err := m.store.LoadAdminWebSession(fnID)
+				if err != nil || !found {
+					return nil, err
+				}
+				return nativeGatewayCookies(fnID, session.Token), nil
+			},
+			Logger: m.logger,
+		}
+		m.mu.Lock()
+		if m.adminProxy == nil {
+			m.adminProxy = proxy
+		} else {
+			proxy = m.adminProxy
+		}
+		m.mu.Unlock()
+	}
+	base, err := proxy.Start()
+	if err != nil {
+		return "", err
+	}
+	return base.String(), nil
+}
+
+func probeAdminWebSession(ctx context.Context, fnID string, token string) error {
+	target := "https://" + fnID + ".fnos.net/app/fncpn/api/v1/admin/snapshot"
+	client := &http.Client{
+		Timeout: 15 * time.Second,
+		Transport: &http.Transport{
+			Proxy:               nil,
+			TLSHandshakeTimeout: 10 * time.Second,
+		},
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+	return probeAdminWebSessionWithClient(ctx, client, target, token)
+}
+
+func probeAdminWebSessionWithClient(
+	ctx context.Context,
+	client *http.Client,
+	target string,
+	token string,
+) error {
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
+	if err != nil {
+		return model.WithOperation(err, "admin_proxy.probe")
+	}
+	request.Header.Set("Cookie", (&http.Cookie{Name: "mode", Value: "relay"}).String()+
+		"; "+(&http.Cookie{Name: "fnos-token", Value: token}).String())
+	response, err := client.Do(request)
+	if err != nil {
+		return model.WithOperation(model.NormalizeError(
+			err, model.ErrorUnavailable, "fnOS management session probe failed", true,
+		), "admin_proxy.probe")
+	}
+	defer response.Body.Close()
+	data, readErr := io.ReadAll(io.LimitReader(response.Body, 8193))
+	if readErr != nil {
+		return model.WithOperation(model.NormalizeError(
+			readErr, model.ErrorUnavailable, "read fnOS management session probe", true,
+		), "admin_proxy.probe")
+	}
+	if authErr := gatewayAuthenticationError(response, data); authErr != nil {
+		authErr.Operation = "admin_proxy.probe"
+		authErr.HTTPStatus = response.StatusCode
+		return authErr
+	}
+	if response.StatusCode >= 200 && response.StatusCode < 300 {
+		return nil
+	}
+	response.Body = io.NopCloser(bytes.NewReader(data))
+	return HTTPResponseError(response, "admin_proxy.probe", nil)
+}
+
+func (m *Manager) refreshAdminWebSession(
+	ctx context.Context,
+	fnID string,
+	username string,
+	password string,
+	nativeDeviceID string,
+) {
+	if previous, found, err := m.store.LoadAdminWebSession(fnID); err != nil {
+		m.logger.Warn("admin auth: load previous Web session failed",
+			"fn_id", fnID, "error", err)
+	} else if found && previous.Username != strings.TrimSpace(username) {
+		if err := m.store.ClearAdminWebSession(fnID); err != nil {
+			m.logger.Warn("admin auth: clear previous Web session failed",
+				"fn_id", fnID, "error", err)
+		}
+	}
+	if m.webAuthenticator == nil {
+		return
+	}
+	webSession, err := m.webAuthenticator.WebLogin(
+		ctx, fnID, username, password,
+		adminWebDeviceID(nativeDeviceID), m.deviceName,
+	)
+	if err != nil {
+		m.logger.Warn("admin auth: encrypted Web token login unavailable",
+			"fn_id", fnID, "error", err)
+		return
+	}
+	if err := m.store.SaveAdminWebSession(webSession); err != nil {
+		m.logger.Warn("admin auth: save Web session failed",
+			"fn_id", fnID, "error", err)
+		return
+	}
+	m.logger.Info("admin auth: Web session saved",
+		"fn_id", fnID, "token_present", webSession.Token != "")
+}
+
+func adminWebDeviceID(nativeDeviceID string) string {
+	digest := sha256.Sum256([]byte(nativeDeviceID + "\x00admin-web"))
+	return fmt.Sprintf("fncpn-web-%x", digest[:16])
 }
 
 func (m *Manager) connectWithConfig(
@@ -1582,7 +1794,21 @@ func (m *Manager) connectWithOptionalConfiguration(
 				} else if recovered {
 					logger.Warn("gateway token invalid; native session recovered, retrying configuration",
 						"recover_ms", time.Since(recoveryStarted).Milliseconds())
-					latest, err = remote.Configuration(ctx, config.DeviceID)
+					cookies, err = m.store.LoadCookies(config.FNID)
+					if err == nil {
+						remote, err = m.remote(
+							config.FNID,
+							cookies,
+							func(updated []Cookie) error {
+								mergeErr := m.store.MergeCookies(config.FNID, cookies, updated)
+								cookies = slices.Clone(updated)
+								return mergeErr
+							},
+						)
+					}
+					if err == nil {
+						latest, err = remote.Configuration(ctx, config.DeviceID)
+					}
 				}
 			}
 			if err != nil {
@@ -1640,6 +1866,11 @@ func (m *Manager) connectWithOptionalConfiguration(
 		logger.Warn("get local probe configuration", logging.ErrorAttrs(probeErr)...)
 	}
 	logger.Info("local probe completed", "reachable", local)
+	// Persist the NAS LAN IPv4 from the probe endpoints regardless of whether the
+	// probe succeeded; it stays reachable once the tunnel is up.
+	m.mu.Lock()
+	m.nasAddress = primaryNASAddress(probeConfiguration.Endpoints)
+	m.mu.Unlock()
 	if local {
 		m.setDirectDiagnostics(model.DirectDiagnostics{Reason: "local_network", LocalPublicIPv6: networkSnapshot.HasPublicIPv6})
 		m.localProbeConfig = cloneLocalProbeConfiguration(&probeConfiguration)
@@ -2053,6 +2284,25 @@ func cloneLocalProbeConfiguration(
 	cloned := *configuration
 	cloned.Endpoints = slices.Clone(configuration.Endpoints)
 	return &cloned
+}
+
+// primaryNASAddress returns the first private IPv4 host from the local-probe
+// endpoints. These are the NAS gateway LAN addresses that become reachable once
+// the VPN tunnel is up. Returns an empty string when no private IPv4 endpoint
+// is present.
+func primaryNASAddress(endpoints []string) string {
+	for _, endpoint := range endpoints {
+		host, _, splitErr := net.SplitHostPort(endpoint)
+		if splitErr != nil {
+			continue
+		}
+		address, parseErr := netip.ParseAddr(host)
+		if parseErr != nil || !address.Is4() || !address.IsPrivate() {
+			continue
+		}
+		return host
+	}
+	return ""
 }
 
 func configurationHasLANOverlap(

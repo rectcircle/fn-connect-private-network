@@ -67,6 +67,13 @@ func TestConfigStoreUsesPrivilegedFileCredentialsOverIPC(t *testing.T) {
 	if err := store.SaveCookies("home-nas", cookies); err != nil {
 		t.Fatal(err)
 	}
+	if err := store.SaveAdminWebSession(AdminWebSession{
+		Version: adminWebSessionVersion, FNID: "home-nas", Username: "admin",
+		DeviceID: "admin-web-device", Token: "web-short",
+		UpdatedAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatal(err)
+	}
 	actual, err := store.LoadCookies("home-nas")
 	if err != nil || !reflect.DeepEqual(actual, cookies) {
 		t.Fatalf("cookies did not persist: %v", err)
@@ -76,6 +83,9 @@ func TestConfigStoreUsesPrivilegedFileCredentialsOverIPC(t *testing.T) {
 	}
 	if actual, err := store.LoadCookies("home-nas"); err != nil || len(actual) != 0 {
 		t.Fatalf("cookies were retained after forget: %v", err)
+	}
+	if _, found, err := store.LoadAdminWebSession("home-nas"); err != nil || found {
+		t.Fatalf("admin Web session was retained after forget: found=%v err=%v", found, err)
 	}
 	fresh, err := store.EnsureWireGuardKey("home-nas")
 	if err != nil || fresh == key {

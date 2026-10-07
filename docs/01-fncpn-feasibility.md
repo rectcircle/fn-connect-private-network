@@ -235,7 +235,8 @@ NAS LAN:    192.168.1.0/24
 - 不把 `/api/v1/fn/con` 的公开签名当成用户认证。
 - 不读取用户日常 Chrome/Safari 的 Cookie 数据库。
 - 不要求用户复制 Cookie。
-- 不把 fnOS 系统会话长期持久化为应用凭证。
+- 不导出或长期保存浏览器 Cookie 快照；仅在 root 私有凭据区保存用途隔离的
+  CLI 原生会话与管理页 Web token。
 - 不只依赖 WireGuard 公钥而完全放开 WS 网关，避免中继资源被滥用。
 
 ### 推荐的配对模型
@@ -256,6 +257,11 @@ NAS LAN:    192.168.1.0/24
 `user.login` 获取 `token + longToken + secret`，短 token 失效后通过
 `user.tokenLogin` 恢复；影视 OAuth、WebView Cookie 导出和浏览器 CDP 均不作为主路径。
 该协议属于 fnOS 原生但未公开承诺的接口，版本兼容性仍需回归测试。
+
+管理页不复用上述 CLI token。客户端在同一次密码输入期间额外执行一次加密 Web 登录，
+使用独立 DID 获取短 Web token；本地 loopback AdminProxy 仅将该 token 作为
+`fnos-token` 注入 `/app/fncpn` 请求。实机已确认该路径可直接读取管理页及 admin
+snapshot，不需要 ticket、ost、entry-token 或向 WKWebView 暴露 HMAC secret。
 
 ## fnOS 应用实现约束
 
@@ -320,15 +326,11 @@ CLI 适合作为协议和选路 PoC，不应直接成为最终 GUI 的底层进�
 
 ### 正式客户端
 
-正式 macOS 客户端建议：
-
-- Swift/SwiftUI 宿主。
-- Packet Tunnel Provider。
-- WireGuardKit。
-- Keychain 保存应用 token 和 WireGuard 私钥。
-- Go core 通过 C ABI、静态库或窄 IPC 提供发现与策略，不直接控制系统网络。
-
-Apple 要求启用 Network Extension capability。macOS 直接分发时，Packet Tunnel Provider 应封装为 system extension；App Store 分发可使用 app extension。[cite:11][cite:13]
+当前 P0 实现采用 AppKit 菜单栏应用、当前用户 client daemon 和 root
+privileged-daemon。WireGuard Go 包运行在特权进程内，凭据保存于按 UID 隔离的 root
+私有文件，GUI 只通过窄 IPC 交互。该方案已经在无 Developer ID、无 Network
+Extension 的本地安装模式下通过实机验证。Packet Tunnel Provider / WireGuardKit
+仍是未来正式签名分发时可评估的替代部署方式，不是当前实现依赖。
 
 ## 可靠性与安全要求
 

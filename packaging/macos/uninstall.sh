@@ -2,10 +2,10 @@
 
 set -eu
 
-TOOL_DIR="/Library/PrivilegedHelperTools/com.rectcircle.fncpn"
+TOOL_DIR="/Library/PrivilegedHelperTools/cn.rectcircle.fncpn"
 TOOL="${TOOL_DIR}/fncpn"
-AGENT_LABEL="com.rectcircle.fncpn.client"
-DAEMON_LABEL="com.rectcircle.fncpn.privileged"
+AGENT_LABEL="cn.rectcircle.fncpn.client"
+DAEMON_LABEL="cn.rectcircle.fncpn.privileged"
 STATE_DIR="/var/db/fncpn"
 PURGE_UID=""
 
@@ -60,8 +60,11 @@ fi
 
 /bin/rm -f /var/run/fncpn-client-privileged.sock
 /bin/rm -f /usr/local/bin/fncpn
-/bin/rm -f /Library/LaunchAgents/com.rectcircle.fncpn.client.plist
-/bin/rm -f /Library/LaunchDaemons/com.rectcircle.fncpn.privileged.plist
+/bin/rm -f /Library/LaunchAgents/cn.rectcircle.fncpn.client.plist
+/bin/rm -f /Library/LaunchDaemons/cn.rectcircle.fncpn.privileged.plist
+for plist in /Users/*/Library/LaunchAgents/cn.rectcircle.fncpn.client.plist; do
+  /bin/rm -f "$plist"
+done
 /bin/rm -rf /Applications/FnCPN.app
 /bin/rm -f "${STATE_DIR}/owner.lock"
 # Network cleanup removed its journal; preserve credentials for every other user.

@@ -161,6 +161,7 @@ type ClientDiagnostics struct {
 	FNID                string            `json:"fnId,omitempty"`
 	Username            string            `json:"username,omitempty"`
 	ClientAddress       string            `json:"clientAddress,omitempty"`
+	NASAddress          string            `json:"nasAddress,omitempty"`
 	Direct              DirectDiagnostics `json:"direct"`
 	Errors              []*Error          `json:"errors,omitempty"`
 	PrivilegedAvailable bool              `json:"privilegedAvailable"`

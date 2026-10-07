@@ -60,6 +60,23 @@ func TestServiceDelegatesCommandsToRuntime(t *testing.T) {
 	}
 }
 
+func TestRuntimeServiceReturnsAdminProxyURL(t *testing.T) {
+	runtime := &recordingRuntime{adminProxyURL: "http://127.0.0.1:12345/app/fncpn?fncpn_proxy=nonce"}
+	response := NewWithRuntime(runtime).Handle(
+		context.Background(), ipc.Request{ID: "admin", Method: MethodAdminProxy},
+	)
+	if !response.OK {
+		t.Fatalf("admin proxy response = %+v", response)
+	}
+	var result map[string]string
+	if err := json.Unmarshal(response.Result, &result); err != nil {
+		t.Fatal(err)
+	}
+	if result["url"] != runtime.adminProxyURL {
+		t.Fatalf("admin proxy URL = %q", result["url"])
+	}
+}
+
 func TestRuntimeServiceAcceptsAuthorizationFromApp(t *testing.T) {
 	runtime := &recordingRuntime{
 		status: model.ClientStatus{State: model.ClientPaused},
@@ -405,6 +422,7 @@ func TestRuntimeServiceWatchesStatus(t *testing.T) {
 type recordingRuntime struct {
 	lastCommand     string
 	status          model.ClientStatus
+	adminProxyURL   string
 	fnID            string
 	cookies         []Cookie
 	username        string
@@ -419,6 +437,10 @@ func (r *recordingRuntime) Status() model.ClientStatus {
 
 func (r *recordingRuntime) Diagnose(context.Context) model.ClientDiagnostics {
 	return model.ClientDiagnostics{Status: r.status}
+}
+
+func (r *recordingRuntime) AdminProxyURL(context.Context) (string, error) {
+	return r.adminProxyURL, nil
 }
 
 func (r *recordingRuntime) Authorize(

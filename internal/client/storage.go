@@ -24,6 +24,7 @@ const (
 	wireGuardSecret     = privileged.WireGuardSecret
 	cookieSecret        = privileged.CookieSecret
 	nativeSessionSecret = privileged.NativeSessionSecret
+	adminWebSecret      = privileged.AdminWebSecret
 )
 
 type Cookie struct {
@@ -339,6 +340,82 @@ func (s *ConfigStore) ClearNativeSession(fnID string) (failure error) {
 	return s.secrets.Delete(nativeSessionSecret, account)
 }
 
+func (s *ConfigStore) SaveAdminWebSession(session AdminWebSession) (failure error) {
+	s.credentialMu.Lock()
+	defer s.credentialMu.Unlock()
+	defer func() {
+		if failure != nil {
+			failure = model.WithOperation(failure, "credentials.save_admin_web_session")
+		}
+	}()
+	if s.secrets == nil {
+		return errors.New("client secret store is unavailable")
+	}
+	if err := validateAdminWebSession(session); err != nil {
+		return err
+	}
+	data, err := json.Marshal(session)
+	if err != nil {
+		return fmt.Errorf("encode admin Web session: %w", err)
+	}
+	return s.secrets.Put(adminWebSecret, session.FNID, data)
+}
+
+func (s *ConfigStore) LoadAdminWebSession(
+	fnID string,
+) (_ AdminWebSession, found bool, failure error) {
+	s.credentialMu.Lock()
+	defer s.credentialMu.Unlock()
+	defer func() {
+		if failure != nil {
+			failure = model.WithOperation(failure, "credentials.load_admin_web_session")
+		}
+	}()
+	if s.secrets == nil {
+		return AdminWebSession{}, false, errors.New("client secret store is unavailable")
+	}
+	account, err := normalizeFNID(fnID)
+	if err != nil {
+		return AdminWebSession{}, false, err
+	}
+	data, found, err := s.secrets.Get(adminWebSecret, account)
+	if err != nil {
+		return AdminWebSession{}, false, fmt.Errorf("read admin Web session: %w", err)
+	}
+	if !found {
+		return AdminWebSession{}, false, nil
+	}
+	var session AdminWebSession
+	if err := model.DecodeStrict(data, &session); err != nil {
+		return AdminWebSession{}, false, fmt.Errorf("decode admin Web session: %w", err)
+	}
+	if err := validateAdminWebSession(session); err != nil {
+		return AdminWebSession{}, false, err
+	}
+	if session.FNID != account {
+		return AdminWebSession{}, false, errors.New("admin Web session account mismatch")
+	}
+	return session, true, nil
+}
+
+func (s *ConfigStore) ClearAdminWebSession(fnID string) (failure error) {
+	s.credentialMu.Lock()
+	defer s.credentialMu.Unlock()
+	defer func() {
+		if failure != nil {
+			failure = model.WithOperation(failure, "credentials.clear_admin_web_session")
+		}
+	}()
+	if s.secrets == nil {
+		return errors.New("client secret store is unavailable")
+	}
+	account, err := normalizeFNID(fnID)
+	if err != nil {
+		return err
+	}
+	return s.secrets.Delete(adminWebSecret, account)
+}
+
 func (s *ConfigStore) SaveNativeGatewayCookies(fnID, token string) error {
 	s.credentialMu.Lock()
 	defer s.credentialMu.Unlock()
@@ -372,6 +449,7 @@ func (s *ConfigStore) Forget(fnID string) (failure error) {
 			s.secrets.Delete(wireGuardSecret, account),
 			s.secrets.Delete(cookieSecret, account),
 			s.secrets.Delete(nativeSessionSecret, account),
+			s.secrets.Delete(adminWebSecret, account),
 		)
 	}
 	cleanupErrors = append(cleanupErrors, s.Clear())
