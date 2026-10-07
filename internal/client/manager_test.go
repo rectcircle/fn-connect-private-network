@@ -514,6 +514,123 @@ func TestManagerPrimaryNetworkChangeReconnectsWithSameFingerprint(t *testing.T) 
 	}
 }
 
+// mutableLocalProbe lets a test change the reported fingerprint between calls so
+// it can simulate the network churn produced by our own tunnel bring-up.
+type mutableLocalProbe struct {
+	snapshot NetworkSnapshot
+}
+
+func (p *mutableLocalProbe) Snapshot() (NetworkSnapshot, error) { return p.snapshot, nil }
+func (*mutableLocalProbe) Reachable(
+	context.Context,
+	model.LocalProbeConfiguration,
+	string,
+	NetworkSnapshot,
+) (bool, error) {
+	return false, nil
+}
+
+func TestManagerQuietWindowAbsorbsSelfTriggeredFingerprintChange(t *testing.T) {
+	store := configuredManagerStore(t)
+	privileged := &fakePrivilegedNetwork{}
+	probe := &mutableLocalProbe{snapshot: NetworkSnapshot{InterfaceName: "en0", InterfaceIndex: 1}}
+	manager, err := NewManager(ManagerOptions{
+		Store:      store,
+		Discoverer: fakeDiscoverer{result: Discovery{FN: []string{"home-nas.fnos.net:443"}}},
+		Remote: func(string, []Cookie, func([]Cookie) error) (RemoteService, error) {
+			return &fakeRemoteService{configuration: managerClientConfiguration()}, nil
+		},
+		Privileged: privileged,
+		Bridge:     &fakeBridge{endpoint: "127.0.0.1:51821"},
+		Probe:      probe,
+	})
+	if err != nil {
+		t.Fatalf("new manager: %v", err)
+	}
+
+	// Baseline fingerprint, then a periodic check with no change must not reconnect.
+	previous := manager.networkFingerprint()
+	if manager.handleNetworkChange(context.Background(), &previous, false) {
+		t.Fatalf("unchanged periodic fingerprint requested reconnect")
+	}
+
+	// Arm the post-bring-up quiet window and let the tunnel change the fingerprint
+	// (this is what our own IPv6 DIRECT/utun bring-up does ~1ms after connecting).
+	manager.ignoreNetworkChangesUntil = time.Now().Add(time.Minute)
+	probe.snapshot = NetworkSnapshot{
+		InterfaceName:  "en0",
+		InterfaceIndex: 1,
+		Prefixes:       []netip.Prefix{netip.MustParsePrefix("192.168.9.0/24")},
+		HasPublicIPv6:  true,
+		IPv6Networks:   []string{"en0:240e:1::/64"},
+	}
+	if manager.handleNetworkChange(context.Background(), &previous, true) {
+		t.Fatalf("self-triggered fingerprint change inside the quiet window requested a second reconnect")
+	}
+	if len(privileged.plans) != 0 {
+		t.Fatalf("self-triggered change rebuilt the tunnel: %+v", privileged.plans)
+	}
+
+	// After the window expires, a still-different fingerprint is a real switch and
+	// must reconnect (periodic health check path).
+	manager.ignoreNetworkChangesUntil = time.Time{}
+	if !manager.handleNetworkChange(context.Background(), &previous, false) {
+		t.Fatalf("different fingerprint after the quiet window did not request reconnect")
+	}
+}
+
+func TestLocalProbeOnSameSubnet(t *testing.T) {
+	snapshot := NetworkSnapshot{
+		InterfaceName:  "en0",
+		InterfaceIndex: 1,
+		Prefixes:       []netip.Prefix{netip.MustParsePrefix("192.168.71.119/24")},
+		Addresses:      []netip.Addr{netip.MustParseAddr("192.168.71.119")},
+	}
+	if !localProbeOnSameSubnet(&snapshot, []string{"192.168.71.2:54790"}) {
+		t.Fatal("NAS endpoint on the same /24 as the Mac should be reported as co-LAN")
+	}
+	if localProbeOnSameSubnet(&snapshot, []string{"192.168.99.2:54790"}) {
+		t.Fatal("NAS endpoint on a different /24 must not be reported as co-LAN")
+	}
+	if localProbeOnSameSubnet(&snapshot, nil) ||
+		localProbeOnSameSubnet(&snapshot, []string{"not-an-endpoint"}) {
+		t.Fatal("absent/invalid endpoint must not match the subnet")
+	}
+}
+
+func TestConnectFallsBackToKnownConfigurationWhenGatewayFetchUnavailable(t *testing.T) {
+	store := configuredManagerStore(t)
+	privileged := &fakePrivilegedNetwork{}
+	manager, err := NewManager(ManagerOptions{
+		Store: store,
+		Discoverer: fakeDiscoverer{result: Discovery{
+			FN: []string{"home-nas.fnos.net:443"},
+		}},
+		Remote: func(string, []Cookie, func([]Cookie) error) (RemoteService, error) {
+			return &fakeRemoteService{
+				// The gateway fetch fails (e.g. gateway unreachable/timeout); the
+				// client must fall back to its locally known configuration.
+				err: model.NewError(model.ErrorUnavailable, "gateway unavailable", true),
+			}, nil
+		},
+		Privileged: privileged,
+		Bridge:     &fakeBridge{endpoint: "127.0.0.1:51821"},
+		Probe:      fakeLocalProbe{reachable: true},
+	})
+	if err != nil {
+		t.Fatalf("new manager: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	if connectErr := manager.Connect(ctx); connectErr != nil {
+		t.Fatalf("connect should reuse known config after gateway fetch failure: %v", connectErr)
+	}
+	state := manager.Status().State
+	if state != model.ClientLocal && state != model.ClientRelay && state != model.ClientDirect {
+		t.Fatalf("connect should still establish a link after gateway fallback, got state=%s", state)
+	}
+}
+
 func TestManagerStopsRelayAfterAuthorizationEvent(t *testing.T) {
 	bridgeEvents := make(chan error, 1)
 	bridge := &fakeBridge{events: bridgeEvents}

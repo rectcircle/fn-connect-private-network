@@ -1411,8 +1411,11 @@ const networkReadinessTimeout = 20 * time.Second
 // networkChangeQuietWindow absorbs the network-change events produced by our own
 // tunnel bring-up (utun creation / route changes) right after a successful
 // reconnect. Without this window a successful reconnect is immediately followed
-// by another reconnect triggered by the very events it caused.
-const networkChangeQuietWindow = 3 * time.Second
+// by another reconnect triggered by the very events it caused. It is kept short
+// (1s) so a genuine secondary network switch shortly after a reconnect is not
+// swallowed for a long time — a real switch that lands inside the window is still
+// picked up again by the next network change or the periodic health check.
+const networkChangeQuietWindow = time.Second
 
 // maxReconnectBackoff caps the exponential backoff applied after a failed full
 // reconnect. Every reconnect re-runs address discovery, so without this a
@@ -1421,6 +1424,15 @@ const networkChangeQuietWindow = 3 * time.Second
 // returns HTTP 429. On success the backoff resets immediately; on "network ready"
 // it is bypassed so recovery is never delayed.
 const maxReconnectBackoff = 60 * time.Second
+
+// configurationFetchTimeout bounds the network request that retrieves the latest
+// device configuration from the gateway on first connect / re-registration. It is
+// kept short so a slow/unreachable public gateway cannot hold a manual "重新检测"
+// or reconnect for the full http.Client timeout (30s). Configuration refreshes are
+// primarily delivered by the background WatchConfiguration loop, so this fetch is
+// only a bootstrap fallback and a short timeout is acceptable: on failure the
+// client reuses any locally known configuration.
+const configurationFetchTimeout = 3 * time.Second
 
 type networkReadinessResult struct {
 	ready bool
@@ -1438,16 +1450,25 @@ func (m *Manager) handleNetworkChange(
 	primaryNetworkChanged bool,
 ) bool {
 	current := m.networkFingerprint()
+	// A short quiet window is armed right after a successful tunnel bring-up
+	// (utun creation / route changes). Inside it we absorb network-change events
+	// even when the fingerprint changed, because that churn is almost always our
+	// own tunnel settling, not a second real switch. Without this, one physical
+	// switch followed by an IPv6 DIRECT bring-up produced two full reconnects and
+	// two discoveries (the second triggered ~1ms after the tunnel came up). A
+	// genuine switch that later changes the fingerprint is picked up again when
+	// the quiet window expires and the periodic health check re-evaluates it.
+	m.mu.RLock()
+	withinQuietWindow := time.Now().Before(m.ignoreNetworkChangesUntil)
+	m.mu.RUnlock()
+	if withinQuietWindow && primaryNetworkChanged {
+		return false
+	}
 	if current == *previous {
-		// The physical network fingerprint is unchanged. A primary-network-change
-		// event with no change in the fingerprint is most likely self-induced by our
-		// own tunnel bring-up (utun creation / route changes), not a real network
-		// switch. Absorb it inside the post-bring-up quiet window so a successful
-		// reconnect does not immediately schedule another one.
-		m.mu.RLock()
-		fingerprintUnchanged := time.Now().Before(m.ignoreNetworkChangesUntil)
-		m.mu.RUnlock()
-		if !primaryNetworkChanged || fingerprintUnchanged {
+		// The physical network fingerprint is unchanged. A periodic maintenance
+		// probe with no change (or a spurious change outside the quiet window)
+		// requires a real fingerprint difference to reconnect.
+		if !primaryNetworkChanged {
 			return false
 		}
 	}
@@ -1921,7 +1942,15 @@ func (m *Manager) connectWithOptionalConfiguration(
 	latest := config.Configuration
 	if known == nil {
 		logger.Info("device configuration requested")
-		latest, err = remote.Configuration(ctx, config.DeviceID)
+		// Bound the gateway fetch so a slow/unreachable public gateway cannot hold a
+		// manual "重新检测" or reconnect for the full 30s http.Client timeout. A fetch
+		// that times out (or fails for any non-auth reason) falls back to the
+		// previously known local configuration, if any, so an on-LAN reconnect is not
+		// blocked by an unreachable gateway. Configuration refreshes are additionally
+		// driven by the background WatchConfiguration loop.
+		fetchContext, cancelFetch := context.WithTimeout(ctx, configurationFetchTimeout)
+		latest, err = remote.Configuration(fetchContext, config.DeviceID)
+		cancelFetch()
 		if err != nil {
 			// Deferred session recovery: only spend a WebSocket round trip when the
 			// gateway actually rejected our token, then retry the configuration once.
@@ -1944,13 +1973,26 @@ func (m *Manager) connectWithOptionalConfiguration(
 							},
 						)
 					}
+					var retryCanceler context.CancelFunc
+					fetchContext, retryCanceler = context.WithTimeout(ctx, configurationFetchTimeout)
 					if err == nil {
-						latest, err = remote.Configuration(ctx, config.DeviceID)
+						latest, err = remote.Configuration(fetchContext, config.DeviceID)
 					}
+					retryCanceler()
 				}
 			}
 			if err != nil {
-				return m.fail(err)
+				// The gateway is unreachable (timeout/network). Reuse any usable
+				// local configuration so a manual retry on the NAS LAN still comes
+				// up even when the public gateway is slow or down.
+				if isValidClientConfiguration(config.Configuration) {
+					logger.Warn("using known local configuration after gateway fetch failed",
+						"error", err, "address", config.Configuration.ClientAddress)
+					latest = config.Configuration
+					err = nil
+				} else {
+					return m.fail(err)
+				}
 			}
 		}
 	} else {
@@ -1985,15 +2027,42 @@ func (m *Manager) connectWithOptionalConfiguration(
 	// the public relay was flaky.
 	var probeConfiguration model.LocalProbeConfiguration
 	local := false
+	// observedEndpoints collects every NAS LAN endpoint we obtain (from the cached
+	// local-probe config and from the gateway refresh), whether or not the LAN probe
+	// actually succeeds. The private IPv4 among them is the NAS address reachable
+	// through the tunnel once connected — even when this connection went up over
+	// IPv6 DIRECT or relay instead of LOCAL — so it must be surfaced in the UI
+	// regardless of the transport path that was selected.
+	var observedEndpoints []string
 	if m.localProbeConfig == nil {
 		m.loadLocalProbeCache(config.FNID)
 	}
 	if cached := cloneLocalProbeConfiguration(m.localProbeConfig); cached != nil {
+		observedEndpoints = append(observedEndpoints, cached.Endpoints...)
 		reachable, probeErr := m.probe.Reachable(
 			ctx, *cached, config.DeviceID, networkSnapshot,
 		)
 		if probeErr != nil {
 			logger.Warn("probe local server (cached)", logging.ErrorAttrs(probeErr)...)
+		}
+		// Right after a physical network switch the LAN route/neighbour entry may
+		// not be active for a few hundred milliseconds even though the Mac is on the
+		// NAS's subnet. If the cached endpoint shares this Mac's /24 we are almost
+		// certainly co-LAN, so retry once instead of giving up on LOCAL and falling
+		// through to IPv6 DIRECT/relay. Without this, switching networks into the
+		// NAS LAN transiently picked the IPv6 path even though LOCAL was reachable.
+		if !reachable && localProbeOnSameSubnet(&networkSnapshot, cached.Endpoints) {
+			select {
+			case <-ctx.Done():
+				return m.fail(ctx.Err())
+			case <-time.After(localProbeHealthRetryInterval):
+			}
+			reachable, probeErr = m.probe.Reachable(
+				ctx, *cached, config.DeviceID, networkSnapshot,
+			)
+			if probeErr != nil {
+				logger.Warn("probe local server (cached retry)", logging.ErrorAttrs(probeErr)...)
+			}
 		}
 		if reachable {
 			probeConfiguration = *cached
@@ -2011,6 +2080,9 @@ func (m *Manager) connectWithOptionalConfiguration(
 		if probeErr != nil {
 			logger.Warn("get local probe configuration", logging.ErrorAttrs(probeErr)...)
 		} else {
+			// Keep the refreshed endpoints even if the LAN probe fails, so the NAS
+			// LAN IPv4 is still reported when the link went up via IPv6 DIRECT/relay.
+			observedEndpoints = append(observedEndpoints, fresh.Endpoints...)
 			reachable, reachErr := m.probe.Reachable(
 				ctx, fresh, config.DeviceID, networkSnapshot,
 			)
@@ -2024,10 +2096,12 @@ func (m *Manager) connectWithOptionalConfiguration(
 		}
 	}
 	logger.Info("local probe completed", "reachable", local)
-	// Persist the NAS LAN IPv4 from the probe endpoints regardless of whether the
-	// probe succeeded; it stays reachable once the tunnel is up.
+	// Persist the NAS LAN IPv4 from every endpoint observed (cache + gateway
+	// refresh). It stays reachable once the tunnel is up regardless of which
+	// transport path (LOCAL / IPv6 DIRECT / relay) was actually selected, so the
+	// UI always shows the NAS IPv4 on detail view after a successful connection.
 	m.mu.Lock()
-	m.nasAddress = primaryNASAddress(probeConfiguration.Endpoints)
+	m.nasAddress = primaryNASAddress(observedEndpoints)
 	m.mu.Unlock()
 	if local {
 		m.setDirectDiagnostics(model.DirectDiagnostics{Reason: "local_network", LocalPublicIPv6: networkSnapshot.HasPublicIPv6})
@@ -2443,6 +2517,55 @@ func cloneLocalProbeConfiguration(
 	cloned := *configuration
 	cloned.Endpoints = slices.Clone(configuration.Endpoints)
 	return &cloned
+}
+
+// localProbeOnSameSubnet reports whether any cached NAS LAN endpoint shares the
+// Mac's /24 IPv4 subnet. When true the Mac is almost certainly on the NAS LAN, so
+// a transient LOCAL probe miss (right after a network switch) is worth retrying
+// instead of falling back to IPv6 DIRECT/relay.
+func localProbeOnSameSubnet(snapshot *NetworkSnapshot, endpoints []string) bool {
+	var localIPv4 []netip.Addr
+	for _, prefix := range snapshot.Prefixes {
+		if prefix.Addr().Is4() {
+			localIPv4 = append(localIPv4, prefix.Addr())
+		}
+	}
+	if len(localIPv4) == 0 {
+		return false
+	}
+	for _, endpoint := range endpoints {
+		host, _, err := net.SplitHostPort(endpoint)
+		if err != nil {
+			continue
+		}
+		remote, err := netip.ParseAddr(host)
+		if err != nil || !remote.Is4() {
+			continue
+		}
+		// Compare the third octet (/24). Prefer A.B.C.0/24 equality.
+		for _, local := range localIPv4 {
+			if sameIPv4ThirdOctet(local, remote) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func sameIPv4ThirdOctet(left, right netip.Addr) bool {
+	l := left.As4()
+	r := right.As4()
+	return l[0] == r[0] && l[1] == r[1] && l[2] == r[2]
+}
+
+// isValidClientConfiguration reports whether a previously known client
+// configuration is usable enough to establish the tunnel when the gateway fetch
+// is unreachable. It needs at least the WireGuard keys/addresses to build the
+// link; an empty configuration cannot be reused.
+func isValidClientConfiguration(config model.ClientConfiguration) bool {
+	return config.ServerPublicKey != "" &&
+		config.ServerAddress != "" &&
+		config.ClientAddress != ""
 }
 
 // primaryNASAddress returns the first private IPv4 host from the local-probe
