@@ -22,6 +22,15 @@ const (
 	defaultRelayListenAddress = "127.0.0.1:0"
 	maxRelayDatagramSize      = 65535
 	maxRelayQueue             = 256
+	// maxRelayBackoff caps the exponential reconnect backoff so a NAS that stays
+	// unreachable never tightens its reconnect cadence back below this floor.
+	maxRelayBackoff = 30 * time.Second
+	// healthyRelayDuration is the minimum a relay session must survive before the
+	// reconnect backoff is reset to its initial value. Only a session that lasts
+	// this long indicates a genuinely healthy link; short-lived sessions (NAS
+	// powered off, gateway rate-limiting) keep the backoff climbing instead of
+	// resetting it to 1s and flooding the gateway with 429-inducing requests.
+	healthyRelayDuration = 15 * time.Second
 )
 
 type CookieProvider func() ([]Cookie, error)
@@ -185,11 +194,21 @@ func (b *RelayBridge) run(
 	backoff := time.Second
 	for ctx.Err() == nil {
 		b.connected.Store(true)
+		sessionStart := time.Now()
 		sessionErr := runRelaySession(ctx, connection, udp, packets, &b.expectedPeer)
 		connection.CloseNow()
 		b.connected.Store(false)
 		if ctx.Err() != nil {
 			return
+		}
+		// Only a session that survived long enough counts as healthy and resets
+		// the backoff. A session that dies almost immediately — a NAS that is off
+		// or a gateway that is rate-limiting still completes the WSS handshake
+		// but drops the session right away — would otherwise reset backoff to 1s
+		// on every connect, producing a 1s-per-request reconnect storm that trips
+		// the gateway's 429 rate limit.
+		if time.Since(sessionStart) >= healthyRelayDuration {
+			backoff = time.Second
 		}
 		failure := model.WithOperation(model.NormalizeError(sessionErr, model.ErrorUnavailable, "relay session disconnected", true), "relay.session")
 		b.logFailure(failure)
@@ -210,16 +229,15 @@ func (b *RelayBridge) run(
 				if !model.AsError(dialErr).Retryable {
 					return
 				}
-				if backoff < 30*time.Second {
+				if backoff < maxRelayBackoff {
 					backoff *= 2
-					if backoff > 30*time.Second {
-						backoff = 30 * time.Second
+					if backoff > maxRelayBackoff {
+						backoff = maxRelayBackoff
 					}
 				}
 				continue
 			}
 			connection = next
-			backoff = time.Second
 			logger.Info("relay WebSocket reconnected")
 			publishRelayEvent(events, nil)
 			break

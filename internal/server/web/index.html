@@ -108,6 +108,16 @@
     .empty { padding: 20px 8px; color: var(--muted); text-align: center; }
     .error { min-height: 20px; margin-top: 10px; color: var(--danger); overflow-wrap: anywhere; }
     #statusError:empty { display: none; }
+    .access-denied {
+      width: min(1040px, calc(100% - 32px));
+      margin: 0 auto;
+      padding: 72px 24px;
+      text-align: center;
+      color: var(--muted);
+    }
+    .access-denied svg { margin-bottom: 16px; }
+    .access-denied h1 { margin: 0 0 8px; font-size: 20px; font-weight: 650; color: var(--text); }
+    .access-denied p { margin: 0; color: var(--muted); }
     @media (max-width: 900px) {
       table, thead, tbody, tr, th, td { display: block; }
       thead { display: none; }
@@ -125,7 +135,15 @@
   </style>
 </head>
 <body>
-  <main>
+  <div class="access-denied" id="accessDenied" hidden>
+    <svg xmlns="http://www.w3.org/2000/svg" width="56" height="56" viewBox="0 0 24 24" fill="none"
+      stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+    </svg>
+    <h1>权限不足</h1>
+    <p>该页面仅管理员可以访问。请使用管理员账号登录后重试。</p>
+  </div>
+  <main id="mainPanel">
     <header>
       <h1>FnCPN</h1>
       <div class="status" id="status"><span class="dot"></span><span id="statusText">正在读取</span></div>
@@ -305,6 +323,11 @@
       byId('statusText').textContent = '读取失败';
       renderDevices(currentDevices);
     }
+    function showAccessDenied() {
+      watchController?.abort();
+      byId('mainPanel').hidden = true;
+      byId('accessDenied').hidden = false;
+    }
     function fillNetworkForm(settings) {
       byId('overlayInput').value = settings.overlayCIDR;
       byId('portInput').value = settings.listenPort;
@@ -476,7 +499,21 @@
       await refresh();
       watchChanges();
     });
-    refresh().then(watchChanges);
+    // Identify the caller up front so non-admin users see a friendly notice
+    // instead of a raw API permission error from /api/v1/admin/snapshot.
+    async function boot() {
+      try {
+        const response = await fetch(root + '/api/v1/bootstrap');
+        const body = await response.json().catch(() => null);
+        if (response.ok && body && body.administrator === false) {
+          showAccessDenied();
+        } else {
+          await refresh();
+          watchChanges();
+        }
+      } catch (_) { await refresh(); watchChanges(); }
+    }
+    boot();
   </script>
 </body>
 </html>

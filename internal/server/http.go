@@ -65,7 +65,7 @@ func NewHTTPHandler(service *Service, probe *LocalProbeService) *HTTPServer {
 	)
 	mux.HandleFunc(
 		"POST /api/v1/devices",
-		server.authenticated(true, server.createDevice),
+		server.authenticated(false, server.createDevice),
 	)
 	mux.HandleFunc(
 		"GET /api/v1/devices/{id}/config",

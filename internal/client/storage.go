@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"path/filepath"
 	"slices"
@@ -25,6 +26,7 @@ const (
 	cookieSecret        = privileged.CookieSecret
 	nativeSessionSecret = privileged.NativeSessionSecret
 	adminWebSecret      = privileged.AdminWebSecret
+	localProbeSecret    = privileged.LocalProbeSecret
 )
 
 type Cookie struct {
@@ -46,6 +48,10 @@ type LocalConfig struct {
 	PublicKey     string                    `json:"publicKey,omitempty"`
 	Configuration model.ClientConfiguration `json:"configuration"`
 	AutoConnect   bool                      `json:"autoConnect"`
+	// Administrator records whether the account that authorized this device has
+	// fnOS management privileges. It is refreshed on every AuthorizeNative and
+	// gates access to the management webview (admin-only).
+	Administrator bool `json:"administrator,omitempty"`
 }
 
 type SecretStore interface {
@@ -416,6 +422,104 @@ func (s *ConfigStore) ClearAdminWebSession(fnID string) (failure error) {
 	return s.secrets.Delete(adminWebSecret, account)
 }
 
+// persistedLocalProbe wraps the cached LAN probe configuration together with the
+// time it was last validated. It lets the manager reuse the LAN endpoints without
+// hitting the public gateway first, while still knowing when the cache is stale.
+type persistedLocalProbe struct {
+	Configuration model.LocalProbeConfiguration `json:"configuration"`
+	CheckedAt     time.Time                     `json:"checkedAt,omitempty"`
+}
+
+func (s *ConfigStore) SaveLocalProbeConfig(fnID string, cfg model.LocalProbeConfiguration) (failure error) {
+	s.credentialMu.Lock()
+	defer s.credentialMu.Unlock()
+	defer func() {
+		if failure != nil {
+			failure = model.WithOperation(failure, "credentials.save_local_probe")
+		}
+	}()
+	if s.secrets == nil {
+		return errors.New("client secret store is unavailable")
+	}
+	if !validLocalProbeConfig(cfg) {
+		return errors.New("invalid local probe configuration")
+	}
+	account, err := normalizeFNID(fnID)
+	if err != nil {
+		return err
+	}
+	data, err := json.Marshal(persistedLocalProbe{Configuration: cfg, CheckedAt: time.Now().UTC()})
+	if err != nil {
+		return fmt.Errorf("encode local probe configuration: %w", err)
+	}
+	return s.secrets.Put(localProbeSecret, account, data)
+}
+
+func (s *ConfigStore) LoadLocalProbeConfig(
+	fnID string,
+) (_ model.LocalProbeConfiguration, found bool, checkedAt time.Time, failure error) {
+	s.credentialMu.Lock()
+	defer s.credentialMu.Unlock()
+	defer func() {
+		if failure != nil {
+			failure = model.WithOperation(failure, "credentials.load_local_probe")
+		}
+	}()
+	if s.secrets == nil {
+		return model.LocalProbeConfiguration{}, false, time.Time{}, errors.New("client secret store is unavailable")
+	}
+	account, err := normalizeFNID(fnID)
+	if err != nil {
+		return model.LocalProbeConfiguration{}, false, time.Time{}, err
+	}
+	data, found, err := s.secrets.Get(localProbeSecret, account)
+	if err != nil {
+		return model.LocalProbeConfiguration{}, false, time.Time{}, fmt.Errorf("read local probe configuration: %w", err)
+	}
+	if !found {
+		return model.LocalProbeConfiguration{}, false, time.Time{}, nil
+	}
+	var persisted persistedLocalProbe
+	if err := model.DecodeStrict(data, &persisted); err != nil {
+		return model.LocalProbeConfiguration{}, false, time.Time{}, fmt.Errorf("decode local probe configuration: %w", err)
+	}
+	if !validLocalProbeConfig(persisted.Configuration) {
+		// Silently treat a corrupt/legacy cache as absent so the caller refetches.
+		return model.LocalProbeConfiguration{}, false, time.Time{}, nil
+	}
+	return persisted.Configuration, true, persisted.CheckedAt, nil
+}
+
+func (s *ConfigStore) ClearLocalProbeConfig(fnID string) (failure error) {
+	s.credentialMu.Lock()
+	defer s.credentialMu.Unlock()
+	defer func() {
+		if failure != nil {
+			failure = model.WithOperation(failure, "credentials.clear_local_probe")
+		}
+	}()
+	if s.secrets == nil {
+		return errors.New("client secret store is unavailable")
+	}
+	account, err := normalizeFNID(fnID)
+	if err != nil {
+		return err
+	}
+	return s.secrets.Delete(localProbeSecret, account)
+}
+
+func validLocalProbeConfig(cfg model.LocalProbeConfiguration) bool {
+	if len(cfg.Endpoints) == 0 || cfg.Key == "" {
+		return false
+	}
+	for _, endpoint := range cfg.Endpoints {
+		if _, _, err := net.SplitHostPort(endpoint); err != nil {
+			return false
+		}
+	}
+	return true
+}
+
 func (s *ConfigStore) SaveNativeGatewayCookies(fnID, token string) error {
 	s.credentialMu.Lock()
 	defer s.credentialMu.Unlock()
@@ -450,6 +554,7 @@ func (s *ConfigStore) Forget(fnID string) (failure error) {
 			s.secrets.Delete(cookieSecret, account),
 			s.secrets.Delete(nativeSessionSecret, account),
 			s.secrets.Delete(adminWebSecret, account),
+			s.secrets.Delete(localProbeSecret, account),
 		)
 	}
 	cleanupErrors = append(cleanupErrors, s.Clear())

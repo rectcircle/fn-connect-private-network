@@ -100,7 +100,7 @@ HTTP/IPC 请求上下文分别携带 `http_request_id`、`ipc_request_id`，客�
 | 注册 | 客户端 `existing device reused` 或 `device registration completed`；服务端同名事件用 `created` 明确区分创建和复用 |
 | 选路 | `device configuration ready`、LOCAL 探测开始/结束、FN Connect 发现开始/结束、路由选择、DIRECT 尝试或 RELAY 选择 |
 | 建联 | `relay WebSocket connecting/established`、`relay bridge ready`、`client network applied`、`WireGuard handshake waiting/confirmed`、`client connected` |
-| 恢复 | `client reconnect requested` 带触发原因；`relay WebSocket reconnecting/reconnected`；维护错误恢复单独记录 |
+| 恢复 | `client reconnect requested` 带触发原因；`relay WebSocket reconnecting/reconnected`；维护错误恢复单独记录；完整重连失败后进入指数退避（`maxReconnectBackoff`，成功/网络就绪时重置），避免 NAS 离线时反复重新 discovery 触发网关注流（HTTP 429） |
 | 服务端 | bootstrap 权限检查、设备注册/删除、设备连接状态变化、网络设置变化、网络状态变化、中继会话建立/结束 |
 | 身份与退出 | WireGuard 凭据存储/删除、客户端断开、退出登录保留身份、忘记配置删除身份 |
 
@@ -170,7 +170,7 @@ LOCAL 没有 WireGuard 隧道，不属于此活性指标。该规则是超时策
 | FN Connect 发现 | 记录发现阶段、HTTP 状态或外部业务码/消息，保留网络超时分类 |
 | 凭据与配置 | 读取、保存、清除、忘记均附阶段；文件系统错误与特权拒绝进入 IPC/客户端错误链 |
 | 管理页鉴权 | 加密 Web 登录、Web 会话存储、本地代理启动及上游错误分阶段记录；失败不得覆盖 CLI 会话或改变隧道状态 |
-| LOCAL 探测 | 请求拒绝、无效证明、响应读取错误不再静默丢失；未命中 LOCAL 可继续其他选路 |
+| LOCAL 探测 | 请求拒绝、无效证明、响应读取错误不再静默丢失；未命中 LOCAL 可继续其他选路。已建立 LOCAL 路径的健康检查做多次重试，连续失败（`localProbeHealthChecks`）才判掉线，单次瞬时超时不触发重连 |
 | IPv6 DIRECT | 握手失败及回退原因记录 WARN；应用/清理失败保留主因和回滚原因 |
 | WSS 握手 | 失败正文、HTTP 状态及请求 ID 进入错误；不会将所有 403 当成需要重新登录 |
 | WSS 会话及重拨 | 异常读写、重拨失败记录日志并更新客户端诊断；永久拒绝停止重拨，恢复清除对应中继错误 |

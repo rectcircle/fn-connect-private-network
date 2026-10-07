@@ -348,7 +348,7 @@ private func loginFailureMessage(_ failure: [String: Any]?) -> String {
             ? "用户名或密码无效，请重试"
             : "登录已失效，请重新输入密码"
     case "PERMISSION_DENIED":
-        return "该账号没有注册设备所需的管理员权限"
+        return "该账号权限不足，无法完成授权"
     case "UNAVAILABLE", "TIMEOUT":
         return "暂时无法连接 fnOS，请检查网络后重试"
     case "FAILED_PRECONDITION":
@@ -396,10 +396,12 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
     private var changeButton = NSButton()
     private var returnButton = NSButton()
     private var adminButton = NSButton()
+    private var browserButton = NSButton()
     private var quitButton = NSButton()
     private var menuAction: NSMenuItem?
     private var autoStartItem: NSMenuItem?
     private var statusItem: NSStatusItem?
+    private var reloginMenuItem: NSMenuItem?
     private var statusWatch: DispatchWorkItem?
     private var refreshRetry: DispatchWorkItem?
     private var refreshRetryDelay: TimeInterval = 1
@@ -490,6 +492,18 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         let content = NSView(frame: NSRect(x: 0, y: 0, width: 560, height: 520))
         let title = NSTextField(labelWithString: "FnCPN")
         title.font = .systemFont(ofSize: 24, weight: .semibold)
+        // A gray, body-sized version string shown right after the title.
+        let titleRow = NSStackView(views: [title])
+        titleRow.orientation = .horizontal
+        titleRow.alignment = .firstBaseline
+        titleRow.spacing = 8
+        if let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String,
+           !version.isEmpty {
+            let versionLabel = NSTextField(labelWithString: "v\(version)")
+            versionLabel.font = .systemFont(ofSize: 13)
+            versionLabel.textColor = .secondaryLabelColor
+            titleRow.addArrangedSubview(versionLabel)
+        }
         let icon = NSImageView()
         icon.image = Bundle.main.image(forResource: "AppIcon") ??
             NSImage(systemSymbolName: "network", accessibilityDescription: "FnCPN")
@@ -497,7 +511,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         icon.translatesAutoresizingMaskIntoConstraints = false
         icon.widthAnchor.constraint(equalToConstant: 40).isActive = true
         icon.heightAnchor.constraint(equalToConstant: 40).isActive = true
-        let header = horizontal([icon, title])
+        let header = horizontal([icon, titleRow])
         header.spacing = 14
 
         setupView.orientation = .vertical
@@ -541,17 +555,44 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         fill(serverValue, in: detailsView)
         statusValue.font = .systemFont(ofSize: 20, weight: .medium)
         fill(statusValue, in: detailsView)
+        browserButton = iconButton("arrow.up.right.square", action: #selector(openNASInBrowser), help: "在浏览器中打开 NAS 管理页面")
+
+        // Keep the value cell's height equal to the text label so the NAS IP row
+        // stays exactly as tall as every other row (avoids the vertical mismatch
+        // where the label renders higher than the content). The icon is layered on
+        // top of the value, center-aligned, so it does not affect row height.
+        let nasContainer = NSView()
+        nasContainer.translatesAutoresizingMaskIntoConstraints = false
+        nasValue.translatesAutoresizingMaskIntoConstraints = false
+        browserButton.translatesAutoresizingMaskIntoConstraints = false
+        nasContainer.addSubview(nasValue)
+        nasContainer.addSubview(browserButton)
+        nasContainer.setContentHuggingPriority(.required, for: .horizontal)
+        nasContainer.setContentCompressionResistancePriority(.required, for: .horizontal)
+        NSLayoutConstraint.activate([
+            nasValue.leadingAnchor.constraint(equalTo: nasContainer.leadingAnchor),
+            nasValue.topAnchor.constraint(equalTo: nasContainer.topAnchor),
+            nasValue.bottomAnchor.constraint(equalTo: nasContainer.bottomAnchor),
+            nasContainer.heightAnchor.constraint(equalTo: nasValue.heightAnchor),
+            browserButton.leadingAnchor.constraint(equalTo: nasValue.trailingAnchor, constant: 8),
+            browserButton.centerYAnchor.constraint(equalTo: nasValue.centerYAnchor),
+            browserButton.trailingAnchor.constraint(equalTo: nasContainer.trailingAnchor),
+        ])
+
         let grid = NSGridView(views: [
             row("连接路径", pathValue), row("隧道地址", addressValue),
             row("网络接口", interfaceValue), row("最近握手", handshakeValue),
             row("特权服务", rootValue), row("IPv6 检测", directValue),
-            [nasLabel("NAS IP"), nasValue]
+            [nasLabel("NAS IP"), nasContainer]
         ])
         grid.column(at: 0).width = 84
         grid.columnSpacing = 16
         grid.rowSpacing = 12
         grid.xPlacement = .fill
         grid.yPlacement = .top
+        // The NAS row's value cell must hug its content instead of being stretched
+        // to column width; otherwise the icon gets pushed to the far right.
+        grid.cell(for: nasContainer)?.xPlacement = .leading
         fill(grid, in: detailsView)
 
         nasValue.isSelectable = true
@@ -704,6 +745,23 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         return result
     }
 
+    /// Icon-only button with no border/bezel, sized to match adjacent text baselines.
+    private func iconButton(_ symbolName: String, action: Selector, help: String) -> NSButton {
+        let result = HandCursorButton(title: "", target: self, action: action)
+        result.isBordered = false
+        result.image = NSImage(systemSymbolName: symbolName, accessibilityDescription: help)
+        result.imagePosition = .imageOnly
+        result.toolTip = help
+        result.setAccessibilityLabel(help)
+        result.translatesAutoresizingMaskIntoConstraints = false
+        result.widthAnchor.constraint(equalToConstant: 20).isActive = true
+        result.heightAnchor.constraint(equalToConstant: 20).isActive = true
+        result.contentTintColor = .secondaryLabelColor
+        result.setContentHuggingPriority(.required, for: .horizontal)
+        result.setContentCompressionResistancePriority(.required, for: .horizontal)
+        return result
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
         statusWatch?.cancel()
         refreshRetry?.cancel()
@@ -757,7 +815,12 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(withTitle: "打开 FnCPN", action: #selector(showWindow), keyEquivalent: "")
         menu.addItem(.separator())
         menuAction = menu.addItem(withTitle: "连接", action: #selector(statusBarAction), keyEquivalent: "")
-        menu.addItem(withTitle: "重新登录", action: #selector(relogin), keyEquivalent: "")
+        // The item title becomes "重新登录" exactly when menuAction also shows
+        // "重新登录" (i.e. the session needs re-authentication). The dedicated
+        // relogin item is hidden in that case so the menu does not show two
+        // duplicate "重新登录" entries; it stays visible while connected so the
+        // user can switch accounts.
+        reloginMenuItem = menu.addItem(withTitle: "重新登录", action: #selector(relogin), keyEquivalent: "")
         menu.addItem(.separator())
         autoStartItem = menu.addItem(
             withTitle: "", action: #selector(toggleAutoStart), keyEquivalent: ""
@@ -808,6 +871,15 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         // applicationWillTerminate() halts the client daemon; AutoConnect is
         // preserved so the next launch reconnects automatically.
         NSApp.terminate(nil)
+    }
+
+    @objc private func openNASInBrowser() {
+        guard let address = diagnostics["nasAddress"] as? String, !address.isEmpty else { return }
+        var components = URLComponents()
+        components.scheme = "http"
+        components.host = address
+        guard let url = components.url else { return }
+        NSWorkspace.shared.open(url)
     }
 
     @objc private func openAdmin() {
@@ -1148,6 +1220,8 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         retryButton.isHidden = presentation.needsLogin || savedFNID.isEmpty
         menuAction?.title = presentation.actionTitle
         menuAction?.isEnabled = !busy
+        reloginMenuItem?.isHidden = presentation.needsLogin
+        reloginMenuItem?.isEnabled = !busy
         serverValue.stringValue = fnID
         serverValue.toolTip = fnID
         statusValue.stringValue = busy && loginInFlight ? "正在登录" : presentation.title
@@ -1168,8 +1242,14 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         let nasAddress = displayed["nasAddress"] as? String ?? ""
         nasValue.stringValue = nasAddress.isEmpty ? "-" : nasAddress
         nasValue.isHidden = setup || nasAddress.isEmpty
-        adminButton.isHidden = setup || fnID.isEmpty
+        browserButton.isHidden = setup || nasAddress.isEmpty
+        browserButton.isEnabled = !busy && !nasAddress.isEmpty
+        let administrator = displayed["administrator"] as? Bool == true
+        adminButton.isHidden = setup || fnID.isEmpty || !administrator
         adminButton.isEnabled = !busy
+        if !administrator {
+            adminButton.toolTip = "管理后台仅对 fnOS 管理员账号开放"
+        }
         if !privilegedAvailable && !privilegedStartPrompted {
             notifyRootUnavailable()
         }

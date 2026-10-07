@@ -122,7 +122,8 @@ PoC 已证明内核 WireGuard、macOS 用户态隧道、IPv6 UDP 直连、FN Con
    Web 登录失败不改变 CLI 会话和建链结果。
 5. daemon 通过特权 IPC 分开保存两类会话，并以 CLI 短 token 生成统一网关所需的
    `fnos-token` Cookie；root 进程只保存不透明字节，不参与协议。
-6. daemon 生成本机 WireGuard 密钥，并调用服务端 bootstrap 确认登录用户具有管理员权限。
+6. daemon 生成本机 WireGuard 密钥，并调用服务端 bootstrap 校验会话；bootstrap 同时返回
+   `administrator` 标记，用于区分非管理员建链与仅限管理员的 Web 管理后台访问。
 7. 客户端提交设备名称和公钥；服务端分配最低可用 overlay 地址并启用设备。
 8. 服务端返回连接配置；客户端持久化配置并立即开始自动选路。
 9. 界面进入连接详情页并显示当前路径，首次流程结束。
@@ -161,7 +162,7 @@ PoC 已证明内核 WireGuard、macOS 用户态隧道、IPv6 UDP 直连、FN Con
 
 - P0 设备记录只服务自动注册、地址分配和 WireGuard peer 配置，不作为完整设备管理系统。
 - 新设备默认取得地址池中的最低可用地址。
-- 只有经过 fnOS 统一网关认证的管理员会话可以注册设备。
+- 经过 fnOS 统一网关认证的会话均可注册设备并建立连接；仅管理员会话可访问 Web 管理后台。
 - 每台设备生成独立 WireGuard 密钥；客户端私钥不离开本机，服务端只保存公钥。
 - 同一公钥是注册幂等键；重复注册返回现有设备和最新配置，不能重复占用地址。
 - 设备名称只用于展示，不参与身份判断或授权。
@@ -607,7 +608,9 @@ FnCPN 会按需
 - `user.login` 必须通过 `wss://<fn-id>.fnos.net/websocket?type=main`，并显式携带
   `Cookie: mode=relay`；不得回退到明文 WS。
 - 登录成功后只持久化 `token + longToken + secret + backId + did + username`。
-- daemon 必须再通过 FnCPN bootstrap 检查管理员权限，不能以 `user.login` 成功代替应用授权。
+- daemon 必须再通过 FnCPN bootstrap 校验会话并取得 `administrator` 标记；
+  非管理员同样可以注册设备与建链，但 Web 管理后台仅对管理员开放。
+  不能以 `user.login` 成功代替应用授权。
 - 鉴权失败时详情页提供“重新登录”；登录页预填 FN Connect ID 和用户名，密码始终为空。
 - 当前版本不支持 2FA 登录；检测到 2FA challenge 时明确报错，不保存不完整会话。
 
@@ -689,7 +692,7 @@ fnOS 管理员身份之外的设备 owner、委托授权或安全撤销。
 | 能力 | 建议接口 | 权限 | 结果 |
 |---|---|---|---|
 | 引导信息 | `GET /api/v1/bootstrap` | 已登录用户 | 服务端身份、能力和是否可注册 |
-| 注册设备 | `POST /api/v1/devices` | 管理员 | 设备 ID、分配地址和完整客户端配置 |
+| 注册设备 | `POST /api/v1/devices` | 已登录用户（无需管理员） | 设备 ID、分配地址和完整客户端配置 |
 | 同步当前设备配置 | `GET /api/v1/devices/{id}/config` | 已登录用户；设备必须存在 | 服务端公钥、网络、端口和配置版本 |
 | 网络设置 | `/api/v1/admin/networks` | 管理员 | 读取和更新 overlay 与允许的 LAN 网段 |
 | 中继数据 | `GET /relay/v1/wireguard` | 已登录用户 | 升级为二进制 WebSocket |

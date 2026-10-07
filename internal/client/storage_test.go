@@ -112,6 +112,59 @@ func TestConfigStoreKeepsSecretsOutsideConfigFile(t *testing.T) {
 	}
 }
 
+func TestConfigStorePersistsLocalProbeConfiguration(t *testing.T) {
+	store := NewConfigStore(
+		filepath.Join(t.TempDir(), "config.json"),
+		newMemorySecretStore(),
+	)
+	cfg := model.LocalProbeConfiguration{
+		Endpoints: []string{"192.168.71.2:54790"},
+		Key:       "probe-hmac-key",
+	}
+	if err := store.SaveLocalProbeConfig("home-nas", cfg); err != nil {
+		t.Fatalf("save local probe: %v", err)
+	}
+	reloaded, found, checkedAt, err := store.LoadLocalProbeConfig("home-nas")
+	if err != nil || !found {
+		t.Fatalf("load local probe: found=%v err=%v", found, err)
+	}
+	if !reflect.DeepEqual(reloaded, cfg) {
+		t.Fatalf("local probe = %#v, want %#v", reloaded, cfg)
+	}
+	if checkedAt.IsZero() {
+		t.Fatal("local probe cache did not record a check time")
+	}
+	if err := store.ClearLocalProbeConfig("home-nas"); err != nil {
+		t.Fatalf("clear local probe: %v", err)
+	}
+	if _, found, _, err := store.LoadLocalProbeConfig("home-nas"); err != nil || found {
+		t.Fatalf("local probe cache not cleared: found=%v err=%v", found, err)
+	}
+}
+
+func TestConfigStoreRejectsInvalidLocalProbeConfiguration(t *testing.T) {
+	store := NewConfigStore(
+		filepath.Join(t.TempDir(), "config.json"),
+		newMemorySecretStore(),
+	)
+	// Missing key is invalid and must not be persisted.
+	if err := store.SaveLocalProbeConfig("home-nas", model.LocalProbeConfiguration{
+		Endpoints: []string{"192.168.71.2:54790"},
+	}); err == nil {
+		t.Fatal("expected invalid local probe configuration to be rejected")
+	}
+	// Missing/invalid endpoint is invalid.
+	if err := store.SaveLocalProbeConfig("home-nas", model.LocalProbeConfiguration{
+		Endpoints: []string{"not-an-endpoint"},
+		Key:       "probe-hmac-key",
+	}); err == nil {
+		t.Fatal("expected invalid endpoint to be rejected")
+	}
+	if _, found, _, err := store.LoadLocalProbeConfig("home-nas"); err != nil || found {
+		t.Fatalf("invalid config was stored: found=%v err=%v", found, err)
+	}
+}
+
 type memorySecretStore struct {
 	values map[string][]byte
 }

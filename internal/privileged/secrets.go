@@ -26,6 +26,7 @@ const (
 	CookieSecret        = "cn.rectcircle.fncpn.cookies"
 	NativeSessionSecret = "cn.rectcircle.fncpn.native-session"
 	AdminWebSecret      = "cn.rectcircle.fncpn.admin-web-session"
+	LocalProbeSecret    = "cn.rectcircle.fncpn.local-probe"
 	maxSecretSize       = 64 * 1024
 )
 
@@ -72,7 +73,8 @@ func (s *SecretStore) Handle(ctx context.Context, request ipc.Request) ipc.Respo
 	if (input.Service != WireGuardSecret &&
 		input.Service != CookieSecret &&
 		input.Service != NativeSessionSecret &&
-		input.Service != AdminWebSecret) ||
+		input.Service != AdminWebSecret &&
+		input.Service != LocalProbeSecret) ||
 		len(input.Account) == 0 || len(input.Account) > 63 ||
 		len(input.Value) > maxSecretSize ||
 		(request.Method == MethodPutSecret && len(input.Value) == 0) ||

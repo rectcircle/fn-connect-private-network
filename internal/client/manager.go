@@ -174,6 +174,14 @@ type Manager struct {
 	// fires another reconnect ~2ms later. Only physical-network changes where the
 	// fingerprint actually differs still reconnect during this window.
 	ignoreNetworkChangesUntil time.Time
+	// reconnectRetryAfter holds the earliest time a full reconnect (and its
+	// address discovery) may run again after a recent connect failure. It protects
+	// fnos.net from a reconnect/rediscovery storm when the NAS is unreachable.
+	reconnectRetryAfter time.Time
+	// reconnectBackoff is the next backoff interval to apply on the next failed
+	// reconnect; it doubles up to maxReconnectBackoff and resets when connect
+	// succeeds or a network-ready event fires.
+	reconnectBackoff time.Duration
 }
 
 func NewManager(options ManagerOptions) (*Manager, error) {
@@ -254,6 +262,37 @@ func (m *Manager) Start() error {
 	m.logger.Info("client configuration loaded", "fn_id", config.FNID,
 		"device_id", config.DeviceID, "auto_connect", config.AutoConnect)
 	return nil
+}
+
+// loadLocalProbeCache restores a previously persisted LAN probe configuration so
+// the LOCAL path can be established without first contacting the public gateway.
+// It is a best-effort hint: an absent or invalid cache is ignored. It must only
+// be called once the IPC/privileged secret path is available (i.e. during
+// connect), never from Start — the daemon may not have its privileged IPC ready
+// yet and reading a secret would block Startup.
+func (m *Manager) loadLocalProbeCache(fnID string) {
+	cfg, found, _, err := m.store.LoadLocalProbeConfig(fnID)
+	if err != nil {
+		m.logger.Warn("load cached local probe configuration", "fn_id", fnID, "error", err)
+		return
+	}
+	if !found {
+		return
+	}
+	m.mu.Lock()
+	m.localProbeConfig = &cfg
+	m.mu.Unlock()
+	m.logger.Info("cached local probe configuration loaded", "fn_id", fnID,
+		"endpoint_count", len(cfg.Endpoints))
+}
+
+// persistLocalProbeConfig writes the local-probe cache to disk. Failures are
+// logged but never fatal: the cache is an optimization, so a stale cache still
+// falls back to fetching from the gateway.
+func (m *Manager) persistLocalProbeConfig(fnID string, cfg model.LocalProbeConfiguration) {
+	if err := m.store.SaveLocalProbeConfig(fnID, cfg); err != nil {
+		m.logger.Warn("save cached local probe configuration", "fn_id", fnID, "error", err)
+	}
 }
 
 func (m *Manager) Authorize(
@@ -349,14 +388,10 @@ func (m *Manager) authorize(
 	if err != nil {
 		return m.fail(err)
 	}
-	if !bootstrap.Administrator {
-		return m.fail(model.NewError(
-			model.ErrorPermissionDenied,
-			"administrator access is required to register this device",
-			false,
-		))
-	}
-	logger.Info("gateway session validated", "administrator", true)
+	// Non-administrator fnOS accounts may also register a device and establish a
+	// network connection. Administrator status is retained separately and only
+	// gates access to the admin-only management webview.
+	logger.Info("gateway session validated", "administrator", bootstrap.Administrator)
 	registrationReason := "no_saved_device"
 	if existing != nil && existing.FNID != fnID {
 		registrationReason = "different_server"
@@ -384,6 +419,7 @@ func (m *Manager) authorize(
 			}
 			existing.Configuration = configuration
 			existing.AutoConnect = true
+			existing.Administrator = bootstrap.Administrator
 			if err := m.store.SaveCookies(fnID, candidateCookies); err != nil {
 				return m.fail(err)
 			}
@@ -430,6 +466,7 @@ func (m *Manager) authorize(
 		PublicKey:     publicKey,
 		Configuration: configuration,
 		AutoConnect:   true,
+		Administrator: bootstrap.Administrator,
 	}
 	if err := m.store.SaveCookies(fnID, candidateCookies); err != nil {
 		return m.fail(err)
@@ -1056,10 +1093,61 @@ func (m *Manager) reconnect(ctx context.Context, config LocalConfig) error {
 	if !canAutoConnect(&config, m.Status()) {
 		return nil
 	}
+	m.mu.RLock()
+	retryAt := m.reconnectRetryAfter
+	m.mu.RUnlock()
+	if !retryAt.IsZero() && time.Now().Before(retryAt) {
+		// Still in cooldown after a recent connect failure (NAS unreachable or
+		// gateway rate-limiting). Skip rebuilding the tunnel — and therefore skip
+		// re-running address discovery — so a flapping privileged/network event
+		// source cannot spam fnos.net until it returns HTTP 429.
+		return nil
+	}
 	m.cancelConfigurationWatch()
 	reconnectContext, cancel := context.WithTimeout(ctx, 45*time.Second)
 	defer cancel()
-	return m.connectWithKnownConfiguration(reconnectContext, config)
+	err := m.connectWithKnownConfiguration(reconnectContext, config)
+	m.noteReconnectOutcome(err)
+	return err
+}
+
+// noteReconnectOutcome grows the reconnect backoff whenever a full reconnect
+// fails with a retryable error, and resets it on success. On each failed attempt
+// the next reconnect is gated behind the growing interval (capped at
+// maxReconnectBackoff), which is what stops the sub-second rediscovery storm.
+func (m *Manager) noteReconnectOutcome(err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err == nil {
+		m.reconnectBackoff = 0
+		m.reconnectRetryAfter = time.Time{}
+		return
+	}
+	if !model.AsError(err).Retryable {
+		return
+	}
+	delay := m.reconnectBackoff
+	if delay == 0 {
+		delay = time.Second
+	}
+	m.reconnectRetryAfter = time.Now().Add(delay)
+	if m.reconnectBackoff == 0 {
+		m.reconnectBackoff = 2 * time.Second
+	} else {
+		m.reconnectBackoff *= 2
+	}
+	if m.reconnectBackoff > maxReconnectBackoff {
+		m.reconnectBackoff = maxReconnectBackoff
+	}
+}
+
+// resetReconnectCooldown clears the reconnect backoff so a recovery path (e.g.
+// the physical network becoming ready again) can reconnect immediately.
+func (m *Manager) resetReconnectCooldown() {
+	m.mu.Lock()
+	m.reconnectBackoff = 0
+	m.reconnectRetryAfter = time.Time{}
+	m.mu.Unlock()
 }
 
 func (m *Manager) privilegedLifecycleEvents(ctx context.Context) <-chan struct{} {
@@ -1108,6 +1196,55 @@ func (m *Manager) privilegedLifecycleEvents(ctx context.Context) <-chan struct{}
 		}
 	}()
 	return events
+}
+
+// localProbeHealthChecks is how many consecutive failed LAN probe checks mark an
+// established LOCAL path as lost. A single transient probe timeout must not tear
+// down a working LAN link: doing so forces a costly reconnect that re-fetches
+// the local-probe config over the public gateway (which itself may be flaky).
+const localProbeHealthChecks = 2
+
+// localProbeHealthRetryInterval is the small wait between consecutive probe
+// checks inside a single maintainHealth pass.
+const localProbeHealthRetryInterval = 300 * time.Millisecond
+
+// localPathStillHealthy re-probes the NAS on the LAN a few times before
+// declaring the LOCAL path lost, so one transient timeout does not drop an
+// otherwise healthy direct path. It returns true on the first successful probe
+// (refreshing the cached config) and false only after localProbeHealthChecks
+// consecutive failures.
+func (m *Manager) localPathStillHealthy(ctx context.Context, config *LocalConfig) bool {
+	snapshot, snapshotErr := m.probe.Snapshot()
+	if snapshotErr != nil {
+		return false
+	}
+	for attempt := 0; attempt < localProbeHealthChecks; attempt++ {
+		if attempt > 0 {
+			select {
+			case <-ctx.Done():
+				return false
+			case <-time.After(localProbeHealthRetryInterval):
+			}
+		}
+		probeConfiguration := cloneLocalProbeConfiguration(m.localProbeConfig)
+		if probeConfiguration == nil {
+			return false
+		}
+		reachable, probeErr := m.probe.Reachable(
+			ctx,
+			*probeConfiguration,
+			config.DeviceID,
+			snapshot,
+		)
+		if probeErr != nil {
+			m.logger.Warn("local path check failed", logging.ErrorAttrs(probeErr)...)
+		}
+		if reachable {
+			m.localProbeConfig = probeConfiguration
+			return true
+		}
+	}
+	return false
 }
 
 func (m *Manager) maintainPrivileged(ctx context.Context) {
@@ -1220,25 +1357,7 @@ func (m *Manager) maintainHealth(ctx context.Context) {
 			return
 		}
 	case model.ClientLocal:
-		snapshot, snapshotErr := m.probe.Snapshot()
-		reachable := false
-		probeConfiguration := cloneLocalProbeConfiguration(m.localProbeConfig)
-		if probeConfiguration != nil && snapshotErr == nil {
-			var probeErr error
-			reachable, probeErr = m.probe.Reachable(
-				ctx,
-				*probeConfiguration,
-				config.DeviceID,
-				snapshot,
-			)
-			if probeErr != nil {
-				m.logger.Warn("local path check failed", logging.ErrorAttrs(probeErr)...)
-			}
-			if reachable {
-				m.localProbeConfig = probeConfiguration
-			}
-		}
-		if !reachable {
+		if !m.localPathStillHealthy(ctx, config) {
 			m.logger.Info("client reconnect requested", "reason", "local_path_lost", "device_id", config.DeviceID)
 			m.setStatus(
 				model.ClientReconnecting,
@@ -1294,6 +1413,14 @@ const networkReadinessTimeout = 20 * time.Second
 // reconnect. Without this window a successful reconnect is immediately followed
 // by another reconnect triggered by the very events it caused.
 const networkChangeQuietWindow = 3 * time.Second
+
+// maxReconnectBackoff caps the exponential backoff applied after a failed full
+// reconnect. Every reconnect re-runs address discovery, so without this a
+// flapping privileged/network event source would reconnect (and re-discover)
+// at sub-second intervals while the NAS is off, hammering fnos.net until it
+// returns HTTP 429. On success the backoff resets immediately; on "network ready"
+// it is bypassed so recovery is never delayed.
+const maxReconnectBackoff = 60 * time.Second
 
 type networkReadinessResult struct {
 	ready bool
@@ -1448,6 +1575,9 @@ func (m *Manager) restoreAfterNetworkReady(ctx context.Context) {
 		return
 	}
 	m.logger.Info("network ready; client reconnect requested", "reason", "network_ready", "device_id", config.DeviceID)
+	// The physical network just became ready again; bypass any reconnect cooldown
+	// accumulated while it was down so we do not delay recovery.
+	m.resetReconnectCooldown()
 	_ = m.reconnect(ctx, *config)
 }
 
@@ -1531,6 +1661,7 @@ func (m *Manager) Diagnose(ctx context.Context) model.ClientDiagnostics {
 	if configErr == nil && config != nil {
 		diagnostics.FNID = config.FNID
 		diagnostics.ClientAddress = config.Configuration.ClientAddress
+		diagnostics.Administrator = config.Administrator
 		if session, found, err := m.store.LoadNativeSession(config.FNID); err == nil && found {
 			diagnostics.Username = session.Username
 		}
@@ -1567,6 +1698,13 @@ func (m *Manager) AdminProxyURL(ctx context.Context) (string, error) {
 	}
 	if config == nil || config.FNID == "" {
 		return "", errors.New("no matched NAS configured")
+	}
+	if !config.Administrator {
+		return "", model.WrapError(
+			model.ErrorPermissionDenied,
+			"only administrator accounts can access the management page",
+			false, nil,
+		)
 	}
 	session, found, err := m.store.LoadAdminWebSession(config.FNID)
 	if err != nil {
@@ -1839,31 +1977,51 @@ func (m *Manager) connectWithOptionalConfiguration(
 		return m.fail(err)
 	}
 	logger.Info("local probe started")
-	// The local-probe configuration is only an optimization to detect an on-LAN
-	// path to the gateway. Fetching it must not block the reconnect critical path
-	// when the physical network just changed and the WAN/uplink is not ready yet;
-	// otherwise the default 30s HTTP client timeout stalls reconnection by ~30s.
-	// Bound this request with a short timeout so the connect flow falls through to
-	// discovery promptly instead of waiting for the full HTTP client timeout.
-	probeContext, cancelProbe := context.WithTimeout(ctx, 3*time.Second)
-	probeConfiguration, probeErr := remote.LocalProbeConfiguration(
-		probeContext,
-		config.DeviceID,
-	)
-	cancelProbe()
+	// Prefer a cached LAN probe configuration (from memory or disk) so an on-LAN
+	// path can be established without contacting the public gateway first. The
+	// gateway is only consulted to refresh the endpoint list when the cache is
+	// unreachable. This decouples LOCAL bring-up from the WAN uplink, which is
+	// exactly what used to wedge the client when the NAS and Mac share a LAN but
+	// the public relay was flaky.
+	var probeConfiguration model.LocalProbeConfiguration
 	local := false
-	if probeErr == nil {
-		local, err = m.probe.Reachable(
-			ctx,
-			probeConfiguration,
-			config.DeviceID,
-			networkSnapshot,
+	if m.localProbeConfig == nil {
+		m.loadLocalProbeCache(config.FNID)
+	}
+	if cached := cloneLocalProbeConfiguration(m.localProbeConfig); cached != nil {
+		reachable, probeErr := m.probe.Reachable(
+			ctx, *cached, config.DeviceID, networkSnapshot,
 		)
-		if err != nil {
-			logger.Warn("probe local server", logging.ErrorAttrs(err)...)
+		if probeErr != nil {
+			logger.Warn("probe local server (cached)", logging.ErrorAttrs(probeErr)...)
 		}
-	} else {
-		logger.Warn("get local probe configuration", logging.ErrorAttrs(probeErr)...)
+		if reachable {
+			probeConfiguration = *cached
+			local = true
+		}
+	}
+	if !local {
+		// The local-probe configuration is only an optimization to detect an
+		// on-LAN path to the gateway. Fetching it must not block the reconnect
+		// critical path when the WAN/uplink is not ready; the short timeout lets
+		// the connect flow fall through to discovery promptly.
+		probeContext, cancelProbe := context.WithTimeout(ctx, 3*time.Second)
+		fresh, probeErr := remote.LocalProbeConfiguration(probeContext, config.DeviceID)
+		cancelProbe()
+		if probeErr != nil {
+			logger.Warn("get local probe configuration", logging.ErrorAttrs(probeErr)...)
+		} else {
+			reachable, reachErr := m.probe.Reachable(
+				ctx, fresh, config.DeviceID, networkSnapshot,
+			)
+			if reachErr != nil {
+				logger.Warn("probe local server", logging.ErrorAttrs(reachErr)...)
+			}
+			if reachable {
+				probeConfiguration = fresh
+				local = true
+			}
+		}
 	}
 	logger.Info("local probe completed", "reachable", local)
 	// Persist the NAS LAN IPv4 from the probe endpoints regardless of whether the
@@ -1874,6 +2032,7 @@ func (m *Manager) connectWithOptionalConfiguration(
 	if local {
 		m.setDirectDiagnostics(model.DirectDiagnostics{Reason: "local_network", LocalPublicIPv6: networkSnapshot.HasPublicIPv6})
 		m.localProbeConfig = cloneLocalProbeConfiguration(&probeConfiguration)
+		m.persistLocalProbeConfig(config.FNID, probeConfiguration)
 		m.setStatus(
 			model.ClientLocal,
 			"local",

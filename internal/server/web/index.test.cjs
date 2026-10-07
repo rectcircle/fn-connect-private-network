@@ -4,9 +4,10 @@ const path = require('node:path');
 const test = require('node:test');
 const vm = require('node:vm');
 
-const script = fs.readFileSync(path.join(__dirname, 'index.html'), 'utf8')
-  .match(/<script>([\s\S]*?)<\/script>/)[1]
-  .replace('refresh().then(watchChanges);', '');
+const rawScript = fs.readFileSync(path.join(__dirname, 'index.html'), 'utf8')
+  .match(/<script>([\s\S]*?)<\/script>/)[1];
+// The page auto-boots after the layout is available; tests drive it manually.
+const script = rawScript.replace('boot();', '');
 
 const sample = {
   settings: {overlayCIDR: '10.253.203.0/24', listenPort: 54789, lanCIDRs: ['192.168.1.0/24']},
@@ -311,4 +312,19 @@ test('Overlay change uses the same in-page confirmation before sending PUT', asy
   await accepted;
   assert.equal(updates, 1);
   assert.equal(ui.get('overlayInput').value, settings.overlayCIDR);
+});
+
+test('non-admin caller sees a friendly notice instead of a snapshot permission error', async () => {
+  let bootstrapCalls = 0;
+  const ui = page(async url => {
+    if (url === '/app/fncpn/api/v1/bootstrap') {
+      bootstrapCalls++;
+      return {ok: true, status: 200, json: async () => ({administrator: false})};
+    }
+    throw new Error(`snapshot must not be fetched for non-admin: ${url}`);
+  });
+  await ui.evaluate('boot()');
+  assert.equal(bootstrapCalls, 1);
+  assert.equal(ui.get('mainPanel').hidden, true);
+  assert.equal(ui.get('accessDenied').hidden, false);
 });

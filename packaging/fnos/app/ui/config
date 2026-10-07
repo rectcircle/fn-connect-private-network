@@ -8,9 +8,9 @@
       "gatewayPrefix": "/app/fncpn",
       "gatewaySocket": "run/app.sock",
       "url": "/app/fncpn",
-      "allUsers": false,
+      "allUsers": true,
       "control": {
-        "accessPerm": "readonly"
+        "accessPerm": "editable"
       }
     }
   }

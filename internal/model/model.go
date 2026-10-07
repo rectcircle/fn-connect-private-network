@@ -173,6 +173,7 @@ type ClientDiagnostics struct {
 	MTU                 int               `json:"mtu,omitempty"`
 	LANOverlap          bool              `json:"lanOverlap"`
 	RoutePolicy         string            `json:"routePolicy,omitempty"`
+	Administrator       bool              `json:"administrator"`
 	CheckedAt           time.Time         `json:"checkedAt"`
 }
 

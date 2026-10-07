@@ -549,6 +549,41 @@ func TestLocalProbeConfigurationRequiresAuthentication(t *testing.T) {
 	}
 }
 
+func TestNonAdminCanRegisterDeviceButNotAdminEndpoints(t *testing.T) {
+	store, err := OpenService(t.TempDir(), testNetwork{}, nil)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	handler := NewHTTPHandler(store, nil)
+
+	// A non-admin (has X-Trim-Userid but no X-Trim-Isadmin=true) must be able
+	// to register a device and establish a connection.
+	createBody, _ := json.Marshal(map[string]string{
+		"name":      "MacBook",
+		"publicKey": testPublicKey(9),
+	})
+	createRequest := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/devices",
+		bytes.NewReader(createBody),
+	)
+	createRequest.Header.Set("X-Trim-Userid", "regular-user")
+	create := httptest.NewRecorder()
+	handler.ServeHTTP(create, createRequest)
+	if create.Code != http.StatusCreated {
+		t.Fatalf("non-admin register status = %d body=%s", create.Code, create.Body.String())
+	}
+
+	// The management (admin-only) endpoints must still reject non-admin users.
+	adminList := httptest.NewRecorder()
+	adminListRequest := httptest.NewRequest(http.MethodGet, "/api/v1/admin/devices", nil)
+	adminListRequest.Header.Set("X-Trim-Userid", "regular-user")
+	handler.ServeHTTP(adminList, adminListRequest)
+	if adminList.Code != http.StatusForbidden {
+		t.Fatalf("non-admin admin list status = %d body=%s", adminList.Code, adminList.Body.String())
+	}
+}
+
 func TestDeviceRegistrationAndConfiguration(t *testing.T) {
 	store, err := OpenService(t.TempDir(), testNetwork{}, nil)
 	if err != nil {
