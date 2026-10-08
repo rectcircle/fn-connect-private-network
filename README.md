@@ -134,3 +134,11 @@ macOS 卸载默认保留用户配置、日志和 root 凭据文件。需要同�
 sudo /Library/PrivilegedHelperTools/cn.rectcircle.fncpn/uninstall.sh \
   --purge-user-data "$(id -u)"
 ```
+
+### 图标生成
+
+应用图标由 `scripts/generate-icons.swift` 使用 AppKit 程序绘制，macOS 构建时自动生成完整 Retina iconset 和 `AppIcon.icns`，fnOS 使用同源的 64 / 256 像素 PNG。macOS 上可运行 `swift scripts/generate-icons.swift packaging/assets` 重新生成；其他平台打包使用已提交的 PNG。
+
+macOS 状态栏使用22 × 18 pt 模板图标，自动适配深浅色及菜单选中颜色。应用与状态栏图标都由 `scripts/generate-icons.swift` 中同一个 `connectionMark()` 绘制，使用一致的“内网边界、飞牛标志与接入路径”图形。应用图标采用 fnOS 默认图标风格的浅蓝底与亮蓝前景。所有状态保留内网边界和飞牛标志，以连接线最左侧的端点替换图形表达状态：圆点表示已连接，省略号表示连接中，叉号表示断开，感叹号表示异常或需要登录。局域网、IPv6 直连、中继共用已连接图标，具体连接方式由悬停提示和界面详情说明。生成脚本和生成的资源均保留在仓库中。
+
+正式图标采用圆角矩形表示内网边界，内部复用 `packaging/assets/fnos-original.png` 中的飞牛原始标志，外部连接采用圆角水平 / 垂直折线，并通过边框预留的入口进入内网。原始标志素材与绘图脚本一同保留，重新生成时无需联网。

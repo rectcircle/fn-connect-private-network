@@ -5,8 +5,8 @@ export COPYFILE_DISABLE=1
 export COPY_EXTENDED_ATTRIBUTES_DISABLE=1
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-VERSION="${VERSION:-0.1.35}"
-BUILD_NUMBER="${BUILD_NUMBER:-35}"
+VERSION="${VERSION:-0.1.45}"
+BUILD_NUMBER="${BUILD_NUMBER:-45}"
 ARCH="$(go env GOARCH)"
 BUILD_DIR="${TMPDIR:-/tmp}/fncpn-macos-pkg-${UID}"
 PAYLOAD="${BUILD_DIR}/root"
@@ -19,12 +19,15 @@ if [ "$(uname -s)" != "Darwin" ]; then
   echo "macOS package must be built on macOS" >&2
   exit 1
 fi
-for tool in go swiftc pkgbuild pkgutil plutil codesign bsdtar lsbom mkbom gzip; do
+for tool in go swiftc pkgbuild pkgutil plutil codesign bsdtar lsbom mkbom gzip iconutil; do
   command -v "$tool" >/dev/null || {
     echo "missing build dependency: $tool" >&2
     exit 1
   }
 done
+
+swift "${ROOT_DIR}/scripts/generate-icons.swift" "${ROOT_DIR}/packaging/assets"
+iconutil -c icns "${ROOT_DIR}/packaging/assets/AppIcon.iconset"
 
 rm -rf "$BUILD_DIR"
 mkdir -p \
@@ -62,8 +65,9 @@ plutil -replace CFBundleShortVersionString -string "$VERSION" \
   "${APP_DIR}/Contents/Info.plist"
 plutil -replace CFBundleVersion -string "$BUILD_NUMBER" \
   "${APP_DIR}/Contents/Info.plist"
-cp -X "${ROOT_DIR}/packaging/assets/ICON_256.PNG" \
-  "${APP_DIR}/Contents/Resources/AppIcon.png"
+cp -X "${ROOT_DIR}"/packaging/assets/Status-*.png "${APP_DIR}/Contents/Resources/"
+cp -X "${ROOT_DIR}/packaging/assets/AppIcon.icns" \
+  "${APP_DIR}/Contents/Resources/AppIcon.icns"
 cp -X "${ROOT_DIR}/packaging/macos/cn.rectcircle.fncpn.privileged.plist" \
   "${PAYLOAD}/Library/LaunchDaemons/"
 # The client LaunchAgent is user-managed: ship its template inside the app bundle

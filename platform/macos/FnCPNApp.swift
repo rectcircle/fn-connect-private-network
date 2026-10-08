@@ -295,6 +295,22 @@ private final class LaunchAgentManager {
     }
 }
 
+// Generated from the same connectionMark() as the app icon, including Retina variants.
+private func connectionStatusIcon(_ state: String) -> NSImage {
+    let variant: String
+    switch state {
+    case "LOCAL", "DIRECT", "RELAY": variant = "connected"
+    case "AUTHORIZING", "PROBING", "RECONNECTING": variant = "working"
+    case "ERROR", "DAEMON_UNAVAILABLE", "AUTH_REQUIRED": variant = "attention"
+    default: variant = "offline"
+    }
+    let image = Bundle.main.image(forResource: "Status-" + variant) ??
+        NSImage(systemSymbolName: "link", accessibilityDescription: "FnCPN")!
+    image.size = NSSize(width: 22, height: 18)
+    image.isTemplate = true
+    return image
+}
+
 private struct ConnectionPresentation {
     let state: String
     let needsLogin: Bool
@@ -809,8 +825,9 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func configureStatusItem() {
-        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        item.button?.title = "FnCPN"
+        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        item.button?.image = connectionStatusIcon("UNCONFIGURED")
+        item.button?.setAccessibilityLabel("FnCPN：尚未连接")
         let menu = NSMenu()
         menu.addItem(withTitle: "打开 FnCPN", action: #selector(showWindow), keyEquivalent: "")
         menu.addItem(.separator())
@@ -1010,6 +1027,15 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func submitLogin() {
         guard !busy else { return }
+        // Local Network access on macOS 15+ requires user permission. Trigger
+        // the system prompt (and confirm it was not denied) BEFORE the daemon
+        // runs its LOCAL LAN probe, otherwise that probe can be silently
+        // blocked by the privacy system.
+        guard ensureLocalNetworkAccess() else {
+            setupError.stringValue = "请在系统设置中允许 FnCPN 访问本地网络，然后重试。"
+            window?.makeFirstResponder(fnIDField)
+            return
+        }
         guard let fnID = normalizeFNID(fnIDField.stringValue) else {
             setupError.stringValue = "FN Connect ID 格式不正确"
             window?.makeFirstResponder(fnIDField)
@@ -1269,7 +1295,12 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         setupError.maximumNumberOfLines = 3
         setupError.toolTip = setupError.stringValue
         if busy { progress.startAnimation(nil) } else { progress.stopAnimation(nil) }
-        statusItem?.button?.title = presentation.connected ? "FnCPN ●" : "FnCPN"
+        let iconState = presentation.needsLogin ? "AUTH_REQUIRED" :
+            (busy ? "PROBING" : presentation.state)
+        statusItem?.button?.image = connectionStatusIcon(iconState)
+        let statusDescription = "FnCPN：" + (busy && loginInFlight ? "正在登录" : presentation.title)
+        statusItem?.button?.toolTip = statusDescription
+        statusItem?.button?.setAccessibilityLabel(statusDescription)
         adjustWindowHeightForPage(setup)
     }
 
@@ -1299,6 +1330,54 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func openLogs() {
         let directory = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Logs/FnCPN")
         NSWorkspace.shared.open(directory)
+    }
+
+    /// macOS 15+ (Sequoia) blocks access to addresses on the local network
+    /// until the user grants the "Local Network" permission. The system prompt
+    /// is only surfaced after a real local-network operation, so we fire a
+    /// multicast probe from the app bundle (the process that owns the
+    /// `NSLocalNetworkUsageDescription` key) to bring up the authorization
+    /// dialog. It returns false when the user has explicitly denied access, so
+    /// the connect flow stops instead of letting the daemon's LOCAL probe get
+    /// blocked silently. On macOS older than 15 local network access is
+    /// unrestricted, so it is always allowed.
+    private func ensureLocalNetworkAccess() -> Bool {
+        guard #available(macOS 15.0, *) else { return true }
+        let descriptor = Darwin.socket(AF_INET, SOCK_DGRAM, 0)
+        guard descriptor >= 0 else { return true }
+        defer { Darwin.close(descriptor) }
+        // mDNS multicast group: reaching it exercises the local-network path
+        // and causes macOS to present the Local Network permission prompt.
+        var destination = sockaddr_in()
+        destination.sin_family = sa_family_t(AF_INET)
+        destination.sin_port = in_port_t(5353).bigEndian
+        destination.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+        destination.sin_addr.s_addr = inet_addr("224.0.0.251")
+        var loop: UInt8 = 1
+        _ = withUnsafePointer(to: &loop) { pointer in
+            Darwin.setsockopt(
+                descriptor, IPPROTO_IP, IP_MULTICAST_LOOP,
+                pointer, socklen_t(MemoryLayout<UInt8>.size)
+            )
+        }
+        let payload: [UInt8] = [0]
+        let result = payload.withUnsafeBytes { bytes -> Int in
+            var target = destination
+            return withUnsafePointer(to: &target) { pointer -> Int in
+                pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { socketAddress in
+                    Darwin.sendto(
+                        descriptor, bytes.baseAddress, payload.count, 0,
+                        socketAddress, socklen_t(MemoryLayout<sockaddr_in>.size)
+                    )
+                }
+            }
+        }
+        if result < 0 {
+            let code = Darwin.errno
+            // EPERM/EACCES indicate the user denied Local Network access.
+            if code == EPERM || code == EACCES { return false }
+        }
+        return true
     }
 
     private func startStatusWatch() {

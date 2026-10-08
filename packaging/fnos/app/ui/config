@@ -1,7 +1,7 @@
 {
   ".url": {
     "fncpn.main": {
-      "title": "FN Connect Private Network",
+      "title": "FnCPN",
       "icon": "images/icon_{0}.png",
       "type": "iframe",
       "protocol": "",
