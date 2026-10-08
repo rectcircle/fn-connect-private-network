@@ -91,8 +91,8 @@ func TestManagerLogsRemoteCauseWithoutChangingPublicError(t *testing.T) {
 				status:        model.ClientStatus{State: model.ClientRelay},
 			}
 			if phase == "authorize" {
-				if returned := manager.fail(err); returned != err {
-					t.Fatal("logging changed the returned error")
+				if returned := manager.fail(err); !errors.Is(returned, err) || model.AsError(returned).Code != model.AsError(err).Code || returned.Error() != err.Error() {
+					t.Fatal("logging changed the public error or lost its cause")
 				}
 			} else {
 				manager.recordMaintenanceError(phase, err)

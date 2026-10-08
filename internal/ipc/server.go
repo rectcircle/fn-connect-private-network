@@ -126,6 +126,13 @@ func (s Server) handleConnection(
 	_ = connection.SetDeadline(time.Now().Add(timeout + responseWriteGrace))
 	ctx, cancel := context.WithTimeout(parent, timeout)
 	defer cancel()
+	// Each connection carries exactly one request. Watching for EOF propagates
+	// caller cancellation/timeouts across the process boundary while Handle runs.
+	go func() {
+		var extra [1]byte
+		_, _ = connection.Read(extra[:])
+		cancel()
+	}()
 	ctx = logging.WithLogger(ctx, logger.With(
 		"ipc_request_id", model.SafeRequestID(request.ID), "ipc_method", request.Method,
 	))

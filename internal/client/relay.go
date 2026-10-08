@@ -362,7 +362,7 @@ func runRelaySession(
 	}()
 	err := <-errs
 	cancel()
-	_ = connection.Close(websocket.StatusNormalClosure, "session ended")
+	connection.CloseNow()
 	return err
 }
 

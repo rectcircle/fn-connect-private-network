@@ -116,8 +116,11 @@ func (e *ClientEngine) Apply(
 
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
 	if e.degraded || e.interfaceName != "" || e.runtime.Status().Active {
-		if err := e.cleanupToEmptyLocked(); err != nil {
+		if err := e.cleanupToEmptyLocked(ctx); err != nil {
 			return err
 		}
 	}
@@ -159,7 +162,10 @@ func (e *ClientEngine) Apply(
 }
 
 func (e *ClientEngine) failToEmptyLocked(cause error) error {
-	cleanupErr := e.cleanupToEmptyLocked()
+	rollback, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	e.logger.Info("rolling back client network", "budget", 2*time.Second)
+	cleanupErr := e.cleanupToEmptyLocked(rollback)
 	if cleanupErr == nil {
 		return cause
 	}
@@ -170,20 +176,20 @@ func (e *ClientEngine) failToEmptyLocked(cause error) error {
 func (e *ClientEngine) Remove(ctx context.Context) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	if err := e.cleanupToEmptyLocked(); err != nil {
+	if err := e.cleanupToEmptyLocked(ctx); err != nil {
 		return err
 	}
 	return nil
 }
 
-func (e *ClientEngine) cleanupToEmptyLocked() error {
+func (e *ClientEngine) cleanupToEmptyLocked(ctx context.Context) error {
 	interfaceName := e.interfaceName
 	if interfaceName == "" && e.runtime != nil {
 		interfaceName = e.runtime.Status().Interface
 	}
 	var cleanupErr error
 	if interfaceName != "" {
-		cleanupContext, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		cleanupContext, cancel := context.WithTimeout(ctx, 2*time.Second)
 		cleanupErr = e.network.Remove(cleanupContext, interfaceName)
 		cancel()
 	}

@@ -97,7 +97,16 @@ type NetworkMonitor interface {
 	Events(context.Context) <-chan model.NetworkChange
 }
 
+type PhysicalLink struct {
+	Name      string
+	Index     int
+	Prefixes  []netip.Prefix
+	Addresses []netip.Addr
+	Identity  string
+}
+
 type NetworkSnapshot struct {
+	Links          []PhysicalLink
 	InterfaceName  string
 	InterfaceIndex int
 	Prefixes       []netip.Prefix
@@ -110,6 +119,22 @@ func (s NetworkSnapshot) Fingerprint() string {
 	values := []string{s.InterfaceName, strconv.Itoa(s.InterfaceIndex)}
 	for _, prefix := range s.Prefixes {
 		values = append(values, prefix.String())
+	}
+	for _, address := range s.Addresses {
+		if address.Is4() {
+			values = append(values, "address:"+address.String())
+		}
+	}
+	for _, link := range s.Links {
+		values = append(values, "link:"+link.Name+":"+strconv.Itoa(link.Index)+":"+link.Identity)
+		for _, prefix := range link.Prefixes {
+			values = append(values, link.Name+":"+prefix.String())
+		}
+		for _, address := range link.Addresses {
+			if address.Is4() {
+				values = append(values, link.Name+":"+address.String())
+			}
+		}
 	}
 	values = append(values, strconv.FormatBool(s.HasPublicIPv6))
 	values = append(values, s.IPv6Networks...)
@@ -167,13 +192,11 @@ type Manager struct {
 	statusChanges    *notify.Change
 	watchCancel      context.CancelFunc
 	adminProxy       *AdminProxy
-	// ignoreNetworkChangesUntil absorbs the network-change events that our own
-	// tunnel bring-up triggers (creating a utun interface / adding routes changes
-	// State:/Network/Global/IPv4|IPv6, which the monitor surfaces as a primary
-	// network change). Without this guard, every successful reconnect immediately
-	// fires another reconnect ~2ms later. Only physical-network changes where the
-	// fingerprint actually differs still reconnect during this window.
-	ignoreNetworkChangesUntil time.Time
+	coordinatorMu    sync.Mutex
+	coordinator      *connectionCoordinator
+	// The following connection evidence is owned by operation.
+	lastPlan               *model.ClientPlan
+	lastNetworkFingerprint string
 	// reconnectRetryAfter holds the earliest time a full reconnect (and its
 	// address discovery) may run again after a recent connect failure. It protects
 	// fnos.net from a reconnect/rediscovery storm when the NAS is unreachable.
@@ -300,6 +323,8 @@ func (m *Manager) Authorize(
 	fnID string,
 	cookies []Cookie,
 ) error {
+	defer m.allowConnections()
+	m.suspendConnections()
 	m.operation.Lock()
 	defer m.operation.Unlock()
 	return m.authorize(ctx, fnID, cookies)
@@ -311,6 +336,8 @@ func (m *Manager) AuthorizeNative(
 	username string,
 	password string,
 ) error {
+	defer m.allowConnections()
+	m.suspendConnections()
 	m.operation.Lock()
 	defer m.operation.Unlock()
 	fnID, err := normalizeFNID(fnID)
@@ -481,10 +508,23 @@ func (m *Manager) authorize(
 }
 
 func (m *Manager) Connect(ctx context.Context) error {
+	if coordinator := m.connectionCoordinator(); coordinator != nil {
+		return coordinator.manual(ctx)
+	}
 	m.operation.Lock()
 	defer m.operation.Unlock()
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	attempt, cancel := context.WithTimeout(ctx, connectionAttemptTimeout)
+	defer cancel()
 	m.directRetryAfter = time.Time{}
-	return m.connect(ctx)
+	err := m.connect(attempt)
+	if errors.Is(err, context.DeadlineExceeded) {
+		err = m.fail(err)
+	}
+	m.noteReconnectOutcome(err)
+	return err
 }
 
 func (m *Manager) connect(ctx context.Context) error {
@@ -505,10 +545,19 @@ func (m *Manager) connect(ctx context.Context) error {
 	if err := m.store.Save(*config); err != nil {
 		return m.fail(err)
 	}
+	// A manual recheck of an unchanged healthy tunnel needs path discovery, not
+	// another blocking configuration fetch. The configuration watch continues
+	// to deliver changes; unhealthy or changed networks retain the full fetch.
+	if isValidClientConfiguration(config.Configuration) && m.lastPlan != nil {
+		if snapshot, snapshotErr := m.probe.Snapshot(); snapshotErr == nil && m.keepCurrentPlan(ctx, *m.lastPlan, snapshot) {
+			return m.connectWithKnownConfiguration(ctx, *config)
+		}
+	}
 	return m.connectWithConfig(ctx, *config)
 }
 
 func (m *Manager) Disconnect(ctx context.Context) error {
+	m.suspendConnections()
 	m.operation.Lock()
 	defer m.operation.Unlock()
 	return m.disconnect(ctx)
@@ -531,7 +580,9 @@ func (m *Manager) disconnect(ctx context.Context) error {
 	m.cancelConfigurationWatch()
 	m.bridge.Stop()
 	m.localProbeConfig = nil
-	if err := m.privileged.Remove(ctx); err != nil {
+	m.lastPlan = nil
+	m.lastNetworkFingerprint = ""
+	if err := m.removeNetwork(ctx); err != nil {
 		typed := model.AsError(err)
 		m.logger.Error(
 			"disconnect network cleanup failed",
@@ -563,7 +614,7 @@ func (m *Manager) convergeStoppedNetwork(
 	config LocalConfig,
 	status model.ClientStatus,
 ) {
-	network, statusErr := m.privileged.Status(ctx)
+	network, statusErr := m.networkStatus(ctx)
 	if statusErr != nil {
 		m.recordStoppedCleanupError(config, status, statusErr)
 		return
@@ -579,7 +630,7 @@ func (m *Manager) convergeStoppedNetwork(
 		}
 		return
 	}
-	if err := m.privileged.Remove(ctx); err != nil {
+	if err := m.removeNetwork(ctx); err != nil {
 		m.recordStoppedCleanupError(config, status, err)
 		return
 	}
@@ -627,6 +678,7 @@ func (m *Manager) Retry(ctx context.Context) error {
 }
 
 func (m *Manager) Logout(ctx context.Context) error {
+	m.suspendConnections()
 	m.operation.Lock()
 	defer m.operation.Unlock()
 	config, err := m.store.Load()
@@ -658,6 +710,7 @@ func (m *Manager) Logout(ctx context.Context) error {
 }
 
 func (m *Manager) Forget(ctx context.Context) error {
+	m.suspendConnections()
 	m.operation.Lock()
 	defer m.operation.Unlock()
 	m.cancelConfigurationWatch()
@@ -668,7 +721,9 @@ func (m *Manager) Forget(ctx context.Context) error {
 	}
 	m.bridge.Stop()
 	m.localProbeConfig = nil
-	if err := m.privileged.Remove(ctx); err != nil {
+	m.lastPlan = nil
+	m.lastNetworkFingerprint = ""
+	if err := m.removeNetwork(ctx); err != nil {
 		return m.fail(err)
 	}
 	if config != nil {
@@ -684,11 +739,14 @@ func (m *Manager) Forget(ctx context.Context) error {
 }
 
 func (m *Manager) Close(ctx context.Context) error {
+	m.suspendConnections()
 	m.operation.Lock()
 	defer m.operation.Unlock()
 	m.cancelConfigurationWatch()
 	m.bridge.Stop()
 	m.localProbeConfig = nil
+	m.lastPlan = nil
+	m.lastNetworkFingerprint = ""
 	m.mu.Lock()
 	proxy := m.adminProxy
 	m.adminProxy = nil
@@ -699,7 +757,7 @@ func (m *Manager) Close(ctx context.Context) error {
 			return closeErr
 		}
 	}
-	return m.privileged.Remove(ctx)
+	return m.removeNetwork(ctx)
 }
 
 func (m *Manager) closeAdminProxy() {
@@ -715,156 +773,68 @@ func (m *Manager) closeAdminProxy() {
 }
 
 func (m *Manager) Run(ctx context.Context) {
-	m.resume(ctx)
+	m.runCoordinator(ctx)
+}
+
+// handleRelayFailure runs in the coordinator worker, never in its event loop.
+func (m *Manager) handleRelayFailure(ctx context.Context, err error) {
+	m.operation.Lock()
+	defer m.operation.Unlock()
 	if ctx.Err() != nil {
 		return
 	}
-	previous := m.networkFingerprint()
-	maintenanceTicker := time.NewTicker(60 * time.Second)
-	defer maintenanceTicker.Stop()
-	bridgeEvents := m.bridge.Events()
-	privilegedEvents := m.privilegedLifecycleEvents(ctx)
-	go m.watchConfiguration(ctx)
-	var networkEvents <-chan model.NetworkChange
-	if m.monitor != nil {
-		networkEvents = m.monitor.Events(ctx)
+	config, loadErr := m.store.Load()
+	if loadErr != nil || !canAutoConnect(config, m.Status()) {
+		return
 	}
-	var debounce <-chan time.Time
-	var pendingNetworkChange model.NetworkChange
-	var readinessEvents <-chan networkReadinessResult
-	var stopReadiness func()
-	// startReadiness starts a network-readiness wait unless one is already in
-	// progress. Reusing an in-flight wait prevents a physical network change that
-	// is reported multiple times (macOS emits several SCDynamicStore callbacks for
-	// one switch) from repeatedly tearing down and restarting the wait, which
-	// would otherwise cause several reconnect cycles within seconds. The in-flight
-	// probe re-evaluates `networkReady` on every tick, so it automatically reflects
-	// the latest network state and restores the link once ready.
-	startReadiness := func() {
-		if readinessEvents != nil {
+	if model.AsError(err).Code == model.ErrorAuthRequired {
+		recovered, recoverErr := m.recoverNativeSession(ctx, config.FNID, true)
+		if recoverErr == nil && recovered {
+			_ = m.reconnect(ctx, *config)
 			return
 		}
-		readinessEvents, stopReadiness = m.beginNetworkReadiness(ctx)
-	}
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case result := <-readinessEvents:
-			readinessEvents = nil
-			if stopReadiness != nil {
-				stopReadiness()
-				stopReadiness = nil
-			}
-			if result.ready {
-				m.restoreAfterNetworkReady(ctx)
-			} else {
-				m.markNetworkUnavailable()
-			}
-		case err := <-bridgeEvents:
-			if err == nil {
-				m.mu.RLock()
-				relayError := m.maintenanceError && m.maintenancePhase == "relay"
-				m.mu.RUnlock()
-				if relayError {
-					m.clearMaintenanceError()
-				}
-				continue
-			}
-			if model.AsError(err).Code == model.ErrorAuthRequired {
-				m.operation.Lock()
-				config, loadErr := m.store.Load()
-				recovered := false
-				if loadErr == nil && config != nil {
-					recovered, loadErr = m.recoverNativeSession(ctx, config.FNID, true)
-				}
-				if loadErr == nil && recovered {
-					m.logger.Info("relay credentials recovered; reconnecting", "fn_id", config.FNID)
-					m.bridge.Stop()
-					if cleanupErr := m.privileged.Remove(ctx); cleanupErr != nil {
-						loadErr = cleanupErr
-					} else {
-						loadErr = m.reconnect(ctx, *config)
-					}
-				}
-				m.operation.Unlock()
-				if loadErr == nil && recovered {
-					continue
-				}
-				if loadErr != nil {
-					err = loadErr
-				}
-			}
-			if model.AsError(err).Retryable {
-				m.recordMaintenanceError("relay", err)
-				continue
-			}
-			m.operation.Lock()
-			m.bridge.Stop()
-			m.localProbeConfig = nil
-			if cleanupErr := m.privileged.Remove(ctx); cleanupErr != nil {
-				m.logger.Error(
-					"clean up network after relay failure",
-					"code",
-					model.AsError(cleanupErr).Code,
-					"error",
-					cleanupErr,
-				)
-			}
-			_ = m.fail(err)
-			m.operation.Unlock()
-		case change, ok := <-networkEvents:
-			if !ok {
-				networkEvents = nil
-				continue
-			}
-			pendingNetworkChange.PrimaryNetworkChanged =
-				pendingNetworkChange.PrimaryNetworkChanged ||
-					change.PrimaryNetworkChanged
-			debounce = time.After(time.Second)
-		case <-debounce:
-			debounce = nil
-			change := pendingNetworkChange
-			pendingNetworkChange = model.NetworkChange{}
-			if m.handleNetworkChange(ctx, &previous, change.PrimaryNetworkChanged) {
-				startReadiness()
-			}
-		case <-maintenanceTicker.C:
-			m.maintainHealth(ctx)
-			if m.handleNetworkChange(ctx, &previous, false) {
-				startReadiness()
-			}
-		case _, ok := <-privilegedEvents:
-			if !ok {
-				privilegedEvents = nil
-				continue
-			}
-			m.maintainPrivileged(ctx)
+		if recoverErr != nil {
+			err = recoverErr
 		}
 	}
+	if model.AsError(err).Retryable {
+		m.recordMaintenanceError("relay", err)
+		return
+	}
+	m.bridge.Stop()
+	if cleanupErr := m.removeNetwork(ctx); cleanupErr != nil {
+		m.logger.Error("clean up network after relay failure", "error", cleanupErr)
+	}
+	_ = m.fail(err)
 }
 
-func (m *Manager) resume(ctx context.Context) {
+func (m *Manager) resume(ctx context.Context) error {
 	m.operation.Lock()
 	defer m.operation.Unlock()
-	if ctx.Err() != nil || m.Status().State != model.ClientPaused {
-		return
+	if ctx.Err() != nil {
+		return ctx.Err()
 	}
-	// Re-read after taking the operation lock so a concurrent disconnect wins.
+	if m.Status().State != model.ClientPaused {
+		return nil
+	}
 	config, err := m.store.Load()
 	if err != nil {
-		_ = m.fail(err)
-		return
+		return m.fail(err)
 	}
 	if config == nil {
-		return
+		return nil
 	}
 	if config.AutoConnect {
 		m.logger.Info("automatic connection requested", "fn_id", config.FNID, "device_id", config.DeviceID)
-		_ = m.connect(ctx)
-	} else {
-		m.convergeStoppedNetwork(ctx, *config, m.Status())
+		err := m.connect(ctx)
+		if errors.Is(err, context.DeadlineExceeded) {
+			err = m.fail(err)
+		}
+		m.noteReconnectOutcome(err)
+		return err
 	}
+	m.convergeStoppedNetwork(ctx, *config, m.Status())
+	return nil
 }
 
 func (m *Manager) watchConfiguration(ctx context.Context) {
@@ -970,6 +940,14 @@ func (m *Manager) watchConfiguration(ctx context.Context) {
 			if loadErr == nil && len(latestCookies) > 0 && !slices.Equal(expected, latestCookies) {
 				err = model.WithOperation(model.NewError(model.ErrorUnavailable,
 					"gateway credentials changed during configuration watch; retrying", true), "configuration.watch")
+			}
+		}
+		if err != nil && model.AsError(err).Code == model.ErrorAuthRequired {
+			// One recovery per rejected credential sequence. A second rejection
+			// after recovery is terminal; polls while recovery is pending just wait.
+			if m.authenticationRecoveryInProgress() || !nativeRecoveryAttempted && m.scheduleAuthenticationRecovery() {
+				nativeRecoveryAttempted = true
+				err = model.NewError(model.ErrorUnavailable, "gateway authentication recovery pending", true)
 			}
 		}
 		if err != nil && model.AsError(err).Code == model.ErrorAuthRequired && !nativeRecoveryAttempted {
@@ -1084,7 +1062,9 @@ func (m *Manager) applyWatchedConfiguration(
 	}
 	m.clearMaintenanceError()
 	m.logger.Info("client reconnect requested", "reason", "configuration_changed", "device_id", config.DeviceID)
-	_ = m.reconnect(ctx, *config)
+	if !m.scheduleConnection(workReconcile) {
+		_ = m.reconnect(ctx, *config)
+	}
 	return nil
 }
 
@@ -1104,9 +1084,12 @@ func (m *Manager) reconnect(ctx context.Context, config LocalConfig) error {
 		return nil
 	}
 	m.cancelConfigurationWatch()
-	reconnectContext, cancel := context.WithTimeout(ctx, 45*time.Second)
+	reconnectContext, cancel := context.WithTimeout(ctx, connectionAttemptTimeout)
 	defer cancel()
 	err := m.connectWithKnownConfiguration(reconnectContext, config)
+	if errors.Is(err, context.DeadlineExceeded) {
+		err = m.fail(err)
+	}
 	m.noteReconnectOutcome(err)
 	return err
 }
@@ -1123,7 +1106,7 @@ func (m *Manager) noteReconnectOutcome(err error) {
 		m.reconnectRetryAfter = time.Time{}
 		return
 	}
-	if !model.AsError(err).Retryable {
+	if errors.Is(err, context.Canceled) || !model.AsError(err).Retryable {
 		return
 	}
 	delay := m.reconnectBackoff
@@ -1250,6 +1233,9 @@ func (m *Manager) localPathStillHealthy(ctx context.Context, config *LocalConfig
 func (m *Manager) maintainPrivileged(ctx context.Context) {
 	m.operation.Lock()
 	defer m.operation.Unlock()
+	if ctx.Err() != nil {
+		return
+	}
 	status := m.Status()
 	config, err := m.store.Load()
 	if err != nil {
@@ -1265,9 +1251,10 @@ func (m *Manager) maintainPrivileged(ctx context.Context) {
 	if status.State == model.ClientLocal {
 		return
 	}
-	statusContext, cancel := context.WithTimeout(ctx, 5*time.Second)
-	network, err := m.privileged.Status(statusContext)
-	cancel()
+	network, err := m.networkStatus(ctx)
+	if ctx.Err() != nil {
+		return
+	}
 	if err != nil {
 		m.setStatus(
 			model.ClientReconnecting,
@@ -1298,6 +1285,9 @@ func (m *Manager) maintainPrivileged(ctx context.Context) {
 func (m *Manager) maintainHealth(ctx context.Context) {
 	m.operation.Lock()
 	defer m.operation.Unlock()
+	if ctx.Err() != nil {
+		return
+	}
 	config, err := m.store.Load()
 	if err != nil {
 		m.recordMaintenanceError("load_configuration", err)
@@ -1318,9 +1308,16 @@ func (m *Manager) maintainHealth(ctx context.Context) {
 		return
 	}
 
+	if (status.State == model.ClientDirect || status.State == model.ClientRelay) && m.tryLocalUpgrade(ctx, *config) {
+		return
+	}
+	if ctx.Err() != nil {
+		return
+	}
+
 	switch status.State {
 	case model.ClientDirect, model.ClientRelay:
-		networkStatus, statusErr := m.privileged.Status(ctx)
+		networkStatus, statusErr := m.networkStatus(ctx)
 		healthErr := clientNetworkHealthError(
 			status.State,
 			networkStatus,
@@ -1341,6 +1338,11 @@ func (m *Manager) maintainHealth(ctx context.Context) {
 				m.statusChanges.Notify()
 			}
 		}
+		if healthErr != nil && status.State == model.ClientRelay && statusErr == nil &&
+			networkStatus.Active && !networkStatus.Degraded && !m.bridge.Connected() {
+			m.recordMaintenanceError("relay", healthErr)
+			return
+		}
 		if healthErr != nil {
 			m.logger.Warn("client network unhealthy", logging.ErrorAttrs(healthErr)...)
 			if status.State == model.ClientDirect {
@@ -1358,6 +1360,9 @@ func (m *Manager) maintainHealth(ctx context.Context) {
 		}
 	case model.ClientLocal:
 		if !m.localPathStillHealthy(ctx, config) {
+			if ctx.Err() != nil {
+				return
+			}
 			m.logger.Info("client reconnect requested", "reason", "local_path_lost", "device_id", config.DeviceID)
 			m.setStatus(
 				model.ClientReconnecting,
@@ -1375,7 +1380,9 @@ func (m *Manager) maintainHealth(ctx context.Context) {
 		time.Now().After(m.directRetryAfter) {
 		// Address discovery alone must not tear down a working relay.
 		snapshot, snapshotErr := m.probe.Snapshot()
-		discovery, discoveryErr := m.discoverer.Discover(ctx, config.FNID)
+		discoveryContext, cancelDiscovery := context.WithTimeout(ctx, discoveryTimeout)
+		discovery, discoveryErr := m.discoverer.Discover(discoveryContext, config.FNID)
+		cancelDiscovery()
 		if snapshotErr != nil || discoveryErr != nil ||
 			discovery.ForbidPublicIPv6 || len(discovery.DirectIPv6Candidates()) == 0 {
 			m.directRetryAfter = time.Now().Add(5 * time.Minute)
@@ -1393,232 +1400,20 @@ func (m *Manager) maintainHealth(ctx context.Context) {
 		}
 		m.directRetryAfter = time.Time{}
 		m.logger.Info("client reconnect requested", "reason", "direct_retry", "device_id", config.DeviceID)
-		_ = m.reconnect(ctx, *config)
+		attempt := context.WithValue(ctx, discoveryEvidenceKey{}, discoveryEvidence{discovery, nil})
+		_ = m.reconnect(attempt, *config)
 	}
 }
 
-// networkReadinessInterval controls how often connectivity is re-probed while
-// waiting for the physical network to become ready after a change.
-const networkReadinessInterval = time.Second
-
-// networkReadinessTimeout bounds how long the client waits for the network to
-// become ready after a change. If it never becomes ready in this window, the
-// client reports an explicit "network unavailable" error instead of repeatedly
-// trying to build links against a network that is not up yet, and recovers
-// automatically when the next network change reports the network as ready.
-const networkReadinessTimeout = 20 * time.Second
-
-// networkChangeQuietWindow absorbs the network-change events produced by our own
-// tunnel bring-up (utun creation / route changes) right after a successful
-// reconnect. Without this window a successful reconnect is immediately followed
-// by another reconnect triggered by the very events it caused. It is kept short
-// (1s) so a genuine secondary network switch shortly after a reconnect is not
-// swallowed for a long time — a real switch that lands inside the window is still
-// picked up again by the next network change or the periodic health check.
-const networkChangeQuietWindow = time.Second
-
-// maxReconnectBackoff caps the exponential backoff applied after a failed full
-// reconnect. Every reconnect re-runs address discovery, so without this a
-// flapping privileged/network event source would reconnect (and re-discover)
-// at sub-second intervals while the NAS is off, hammering fnos.net until it
-// returns HTTP 429. On success the backoff resets immediately; on "network ready"
-// it is bypassed so recovery is never delayed.
-const maxReconnectBackoff = 60 * time.Second
-
-// configurationFetchTimeout bounds the network request that retrieves the latest
-// device configuration from the gateway on first connect / re-registration. It is
-// kept short so a slow/unreachable public gateway cannot hold a manual "重新检测"
-// or reconnect for the full http.Client timeout (30s). Configuration refreshes are
-// primarily delivered by the background WatchConfiguration loop, so this fetch is
-// only a bootstrap fallback and a short timeout is acceptable: on failure the
-// client reuses any locally known configuration.
-const configurationFetchTimeout = 3 * time.Second
-
-type networkReadinessResult struct {
-	ready bool
-}
-
-// handleNetworkChange decides whether a reconnection is needed after the
-// physical network changed. It does not immediately rebuild the tunnel:
-// rebuilding before the network is actually ready only wastes the whole connect
-// path on requests/probes that cannot reach the peer yet (e.g. a local-probe
-// configuration request that hangs until its 30s HTTP timeout). Instead it
-// returns true to let Run() gate the reconnect behind a network-readiness check.
-func (m *Manager) handleNetworkChange(
-	ctx context.Context,
-	previous *string,
-	primaryNetworkChanged bool,
-) bool {
-	current := m.networkFingerprint()
-	// A short quiet window is armed right after a successful tunnel bring-up
-	// (utun creation / route changes). Inside it we absorb network-change events
-	// even when the fingerprint changed, because that churn is almost always our
-	// own tunnel settling, not a second real switch. Without this, one physical
-	// switch followed by an IPv6 DIRECT bring-up produced two full reconnects and
-	// two discoveries (the second triggered ~1ms after the tunnel came up). A
-	// genuine switch that later changes the fingerprint is picked up again when
-	// the quiet window expires and the periodic health check re-evaluates it.
-	m.mu.RLock()
-	withinQuietWindow := time.Now().Before(m.ignoreNetworkChangesUntil)
-	m.mu.RUnlock()
-	if withinQuietWindow && primaryNetworkChanged {
-		return false
-	}
-	if current == *previous {
-		// The physical network fingerprint is unchanged. A periodic maintenance
-		// probe with no change (or a spurious change outside the quiet window)
-		// requires a real fingerprint difference to reconnect.
-		if !primaryNetworkChanged {
-			return false
-		}
-	}
-	*previous = current
-	m.operation.Lock()
-	defer m.operation.Unlock()
-	m.directRetryAfter = time.Time{}
-	config, err := m.store.Load()
-	if err != nil {
-		m.recordMaintenanceError("load_configuration", err)
-		return false
-	}
-	if !canAutoConnect(config, m.Status()) {
-		return false
-	}
-	m.logger.Info("client reconnect pending; waiting for network readiness",
-		"reason", "physical_network_changed", "device_id", config.DeviceID)
-	return true
-}
-
-// beginNetworkReadiness starts a background readiness probe and returns its
-// result channel, plus a cancel function to abandon the wait (e.g. when an even
-// newer network change arrives). The caller must eventually cancel the returned
-// function once the result is consumed or superseded.
-func (m *Manager) beginNetworkReadiness(
-	ctx context.Context,
-) (<-chan networkReadinessResult, func()) {
-	readinessContext, cancel := context.WithCancel(ctx)
-	result := make(chan networkReadinessResult, 1)
-	go m.waitNetworkReadiness(readinessContext, result)
-	return result, cancel
-}
-
-func (m *Manager) waitNetworkReadiness(
-	readinessContext context.Context,
-	result chan<- networkReadinessResult,
-) {
-	ticker := time.NewTicker(networkReadinessInterval)
-	defer ticker.Stop()
-	deadline := time.NewTimer(networkReadinessTimeout)
-	defer deadline.Stop()
-	emit := func(ready bool) {
-		if readinessContext.Err() != nil {
-			return
-		}
-		select {
-		case result <- networkReadinessResult{ready: ready}:
-		default:
-		}
-	}
-	for {
-		if m.networkReady(readinessContext) {
-			emit(true)
-			return
-		}
-		select {
-		case <-readinessContext.Done():
-			return
-		case <-deadline.C:
-			emit(false)
-			return
-		case <-ticker.C:
-		}
-	}
-}
-
-// networkReady reports whether the physical network is ready enough to build a
-// connection. LAN-first: if cached local-probe config exists and the local
-// gateway is reachable on the current interface, the network is considered
-// ready (a fast LOCAL path exists). Otherwise fall back to probing the public
-// network via an existing FN Connect API call.
-func (m *Manager) networkReady(ctx context.Context) bool {
-	config, err := m.store.Load()
-	if err == nil && config != nil {
-		probeConfiguration := cloneLocalProbeConfiguration(m.localProbeConfig)
-		snapshot, snapshotErr := m.probe.Snapshot()
-		if probeConfiguration != nil && snapshotErr == nil {
-			reachable, probeErr := m.probe.Reachable(
-				ctx,
-				*probeConfiguration,
-				config.DeviceID,
-				snapshot,
-			)
-			if probeErr == nil && reachable {
-				return true
-			}
-		}
-	}
-	return m.publicNetworkReachable(ctx)
-}
-
-// publicNetworkReachable reports whether the public network (and the FN Connect
-// discovery endpoint) is reachable, by reusing the existing public discovery API
-// as a real connectivity probe. Unlike the authenticated gateway APIs, discovery
-// needs no cookies, so it never fails for credential reasons and only reflects
-// whether the public link can reach fnos. A response with a real HTTP status
-// (even non-2xx) means the request was delivered over the public link, so the
-// network is up. A network-layer failure (HTTPStatus == 0) is the only case
-// treated as "not ready". The call is bounded by a short timeout so a half-up
-// network does not stall the readiness wait.
-func (m *Manager) publicNetworkReachable(ctx context.Context) bool {
-	config, err := m.store.Load()
-	if err != nil || config == nil {
-		return false
-	}
-	probeContext, cancel := context.WithTimeout(ctx, 3*time.Second)
-	defer cancel()
-	_, err = m.discoverer.Discover(probeContext, config.FNID)
-	if err == nil {
-		return true
-	}
-	// A response with a real HTTP status (even 401/5xx/login page) proves the
-	// public link delivered the request. Only HTTPStatus == 0 means the request
-	// never reached fnos (network-layer failure), i.e. public network not ready.
-	return model.AsError(err).HTTPStatus > 0
-}
-
-// restoreAfterNetworkReady rebuilds the tunnel now that the network is ready.
-// It is called from Run() only after a network-readiness wait reported success.
-func (m *Manager) restoreAfterNetworkReady(ctx context.Context) {
-	m.operation.Lock()
-	defer m.operation.Unlock()
-	config, err := m.store.Load()
-	if err != nil || !canAutoConnect(config, m.Status()) {
-		return
-	}
-	m.logger.Info("network ready; client reconnect requested", "reason", "network_ready", "device_id", config.DeviceID)
-	// The physical network just became ready again; bypass any reconnect cooldown
-	// accumulated while it was down so we do not delay recovery.
-	m.resetReconnectCooldown()
-	_ = m.reconnect(ctx, *config)
-}
-
-// markNetworkUnavailable reports an explicit "network unavailable" error state
-// after the readiness wait timed out, instead of rebuilding links blindly over
-// an unavailable network. The next network change that becomes ready will
-// trigger restoreAfterNetworkReady automatically.
-func (m *Manager) markNetworkUnavailable() {
-	m.logger.Warn("network did not become ready; pausing reconnect until the network recovers")
-	m.setStatus(
-		model.ClientReconnecting,
-		"",
-		"",
-		model.NewError(
-			model.ErrorUnavailable,
-			"网络不可达，等待网络恢复后自动重连",
-			true,
-		),
-	)
-}
+// Connection budgets are shared by manual and automatic attempts.
+const (
+	connectionAttemptTimeout  = 20 * time.Second
+	discoveryTimeout          = 3 * time.Second
+	directPhaseTimeout        = 6 * time.Second
+	privilegedCallTimeout     = 2 * time.Second
+	maxReconnectBackoff       = 60 * time.Second
+	configurationFetchTimeout = 3 * time.Second
+)
 
 func (m *Manager) Status() model.ClientStatus {
 	m.mu.RLock()
@@ -1640,7 +1435,7 @@ func (m *Manager) WatchStatus(
 
 func (m *Manager) Diagnose(ctx context.Context) model.ClientDiagnostics {
 	status := m.Status()
-	networkStatus, err := m.privileged.Status(ctx)
+	networkStatus, err := m.networkStatus(ctx)
 	snapshot, snapshotErr := m.probe.Snapshot()
 	fingerprint := ""
 	if snapshotErr == nil {
@@ -1901,20 +1696,19 @@ func (m *Manager) connectWithOptionalConfiguration(
 	config LocalConfig,
 	known *model.ClientConfiguration,
 ) error {
+	attemptContext, cancelAttempt := context.WithTimeout(ctx, connectionAttemptTimeout)
+	defer cancelAttempt()
+	ctx = attemptContext
 	connectionStarted := time.Now()
 	m.setDirectDiagnostics(model.DirectDiagnostics{Reason: "checking"})
 	logger := logging.FromContext(ctx, m.logger).With("fn_id", config.FNID, "device_id", config.DeviceID)
 	logger.Info("client connection started")
-	m.setStatus(
-		model.ClientProbing,
-		"",
-		"",
-		nil,
-	)
-	m.bridge.Stop()
-	m.localProbeConfig = nil
-	if err := m.privileged.Remove(ctx); err != nil {
-		return m.fail(err)
+	initialStatus := m.Status()
+	if initialStatus.State != model.ClientLocal && initialStatus.State != model.ClientDirect && initialStatus.State != model.ClientRelay {
+		m.setStatus(model.ClientProbing, "", "", nil)
+	}
+	if ctx.Err() != nil {
+		return ctx.Err()
 	}
 	cookies, err := m.store.LoadCookies(config.FNID)
 	if err != nil {
@@ -1939,8 +1733,35 @@ func (m *Manager) connectWithOptionalConfiguration(
 	if err != nil {
 		return m.fail(err)
 	}
+	networkSnapshot, err := m.probe.Snapshot()
+	if err != nil {
+		return m.fail(err)
+	}
+	logger.Info("local probe started")
+	selection := m.selectLocal(ctx, remote, config, networkSnapshot)
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	local := selection.reachable
+	probeConfiguration := selection.configuration
+	observedEndpoints := selection.endpoints
+	logger.Info("local probe completed", "reachable", local)
+	// Persist the NAS LAN IPv4 from every endpoint observed (cache + gateway
+	// refresh). It stays reachable once the tunnel is up regardless of which
+	// transport path (LOCAL / IPv6 DIRECT / relay) was actually selected, so the
+	// UI always shows the NAS IPv4 on detail view after a successful connection.
+	m.mu.Lock()
+	m.nasAddress = primaryNASAddress(observedEndpoints)
+	m.mu.Unlock()
+	var discoveryResults chan discoveryEvidence
+	if !local {
+		discoveryResults = make(chan discoveryEvidence, 1)
+		discoveryContext, cancelDiscovery := context.WithCancel(ctx)
+		defer cancelDiscovery()
+		go func() { discoveryResults <- m.discoverForAttempt(discoveryContext, config.FNID) }()
+	}
 	latest := config.Configuration
-	if known == nil {
+	if known == nil && !(local && isValidClientConfiguration(config.Configuration)) {
 		logger.Info("device configuration requested")
 		// Bound the gateway fetch so a slow/unreachable public gateway cannot hold a
 		// manual "重新检测" or reconnect for the full 30s http.Client timeout. A fetch
@@ -1995,7 +1816,7 @@ func (m *Manager) connectWithOptionalConfiguration(
 				}
 			}
 		}
-	} else {
+	} else if known != nil {
 		latest = *known
 	}
 	configuration, changed, err := selectClientConfiguration(
@@ -2014,112 +1835,16 @@ func (m *Manager) connectWithOptionalConfiguration(
 	logger.Info("device configuration ready", "address", configuration.ClientAddress,
 		"route_count", len(configuration.AllowedIPs), "changed", changed)
 
-	networkSnapshot, err := m.probe.Snapshot()
-	if err != nil {
-		return m.fail(err)
-	}
-	logger.Info("local probe started")
-	// Prefer a cached LAN probe configuration (from memory or disk) so an on-LAN
-	// path can be established without contacting the public gateway first. The
-	// gateway is only consulted to refresh the endpoint list when the cache is
-	// unreachable. This decouples LOCAL bring-up from the WAN uplink, which is
-	// exactly what used to wedge the client when the NAS and Mac share a LAN but
-	// the public relay was flaky.
-	var probeConfiguration model.LocalProbeConfiguration
-	local := false
-	// observedEndpoints collects every NAS LAN endpoint we obtain (from the cached
-	// local-probe config and from the gateway refresh), whether or not the LAN probe
-	// actually succeeds. The private IPv4 among them is the NAS address reachable
-	// through the tunnel once connected — even when this connection went up over
-	// IPv6 DIRECT or relay instead of LOCAL — so it must be surfaced in the UI
-	// regardless of the transport path that was selected.
-	var observedEndpoints []string
-	if m.localProbeConfig == nil {
-		m.loadLocalProbeCache(config.FNID)
-	}
-	if cached := cloneLocalProbeConfiguration(m.localProbeConfig); cached != nil {
-		observedEndpoints = append(observedEndpoints, cached.Endpoints...)
-		reachable, probeErr := m.probe.Reachable(
-			ctx, *cached, config.DeviceID, networkSnapshot,
-		)
-		if probeErr != nil {
-			logger.Warn("probe local server (cached)", logging.ErrorAttrs(probeErr)...)
-		}
-		// Right after a physical network switch the LAN route/neighbour entry may
-		// not be active for a few hundred milliseconds even though the Mac is on the
-		// NAS's subnet. If the cached endpoint shares this Mac's /24 we are almost
-		// certainly co-LAN, so retry once instead of giving up on LOCAL and falling
-		// through to IPv6 DIRECT/relay. Without this, switching networks into the
-		// NAS LAN transiently picked the IPv6 path even though LOCAL was reachable.
-		if !reachable && localProbeOnSameSubnet(&networkSnapshot, cached.Endpoints) {
-			select {
-			case <-ctx.Done():
-				return m.fail(ctx.Err())
-			case <-time.After(localProbeHealthRetryInterval):
-			}
-			reachable, probeErr = m.probe.Reachable(
-				ctx, *cached, config.DeviceID, networkSnapshot,
-			)
-			if probeErr != nil {
-				logger.Warn("probe local server (cached retry)", logging.ErrorAttrs(probeErr)...)
-			}
-		}
-		if reachable {
-			probeConfiguration = *cached
-			local = true
-		}
-	}
-	if !local {
-		// The local-probe configuration is only an optimization to detect an
-		// on-LAN path to the gateway. Fetching it must not block the reconnect
-		// critical path when the WAN/uplink is not ready; the short timeout lets
-		// the connect flow fall through to discovery promptly.
-		probeContext, cancelProbe := context.WithTimeout(ctx, 3*time.Second)
-		fresh, probeErr := remote.LocalProbeConfiguration(probeContext, config.DeviceID)
-		cancelProbe()
-		if probeErr != nil {
-			logger.Warn("get local probe configuration", logging.ErrorAttrs(probeErr)...)
-		} else {
-			// Keep the refreshed endpoints even if the LAN probe fails, so the NAS
-			// LAN IPv4 is still reported when the link went up via IPv6 DIRECT/relay.
-			observedEndpoints = append(observedEndpoints, fresh.Endpoints...)
-			reachable, reachErr := m.probe.Reachable(
-				ctx, fresh, config.DeviceID, networkSnapshot,
-			)
-			if reachErr != nil {
-				logger.Warn("probe local server", logging.ErrorAttrs(reachErr)...)
-			}
-			if reachable {
-				probeConfiguration = fresh
-				local = true
-			}
-		}
-	}
-	logger.Info("local probe completed", "reachable", local)
-	// Persist the NAS LAN IPv4 from every endpoint observed (cache + gateway
-	// refresh). It stays reachable once the tunnel is up regardless of which
-	// transport path (LOCAL / IPv6 DIRECT / relay) was actually selected, so the
-	// UI always shows the NAS IPv4 on detail view after a successful connection.
-	m.mu.Lock()
-	m.nasAddress = primaryNASAddress(observedEndpoints)
-	m.mu.Unlock()
 	if local {
-		m.setDirectDiagnostics(model.DirectDiagnostics{Reason: "local_network", LocalPublicIPv6: networkSnapshot.HasPublicIPv6})
-		m.localProbeConfig = cloneLocalProbeConfiguration(&probeConfiguration)
-		m.persistLocalProbeConfig(config.FNID, probeConfiguration)
-		m.setStatus(
-			model.ClientLocal,
-			"local",
-			"",
-			nil,
-		)
-		logger.Info("client connected", "state", model.ClientLocal, "path", "local",
-			"elapsed_ms", time.Since(connectionStarted).Milliseconds())
+		if err := m.establishLocal(ctx, config, networkSnapshot, probeConfiguration); err != nil {
+			return err
+		}
+		logger.Info("client connected", "state", model.ClientLocal, "path", "local", "elapsed_ms", time.Since(connectionStarted).Milliseconds())
 		return nil
 	}
-	m.localProbeConfig = nil
 	logger.Info("FN Connect discovery started")
-	discovery, err := m.discoverer.Discover(ctx, config.FNID)
+	evidence := <-discoveryResults
+	discovery, err := evidence.value, evidence.err
 	if err != nil {
 		if ctx.Err() != nil {
 			return m.fail(ctx.Err())
@@ -2165,7 +1890,7 @@ func (m *Manager) connectWithOptionalConfiguration(
 	}
 	if direct.Reason == "probing" {
 		// Bound the complete direct phase so many stale addresses cannot starve relay.
-		directContext, cancelDirect := context.WithTimeout(ctx, 20*time.Second)
+		directContext, cancelDirect := context.WithTimeout(ctx, directBudget(ctx))
 		defer cancelDirect()
 		for _, address := range candidates {
 			if directContext.Err() != nil {
@@ -2184,30 +1909,57 @@ func (m *Manager) connectWithOptionalConfiguration(
 			m.setDirectDiagnostics(direct)
 			logger.Info("direct connection attempted", "endpoint", plan.Endpoint)
 			started := time.Now()
-			status, applyErr := m.applyPlan(ctx, plan)
-			if applyErr != nil {
-				return m.fail(applyErr)
+			if m.keepCurrentPlan(ctx, plan, networkSnapshot) {
+				direct.Reason = "connected"
+				m.setDirectDiagnostics(direct)
+				return nil
 			}
-			status, handshakeErr := m.waitForHandshake(directContext, status, started)
+			if directContext.Err() != nil {
+				break
+			}
+			if err := m.replaceNetwork(directContext); err != nil {
+				if ctx.Err() != nil {
+					return ctx.Err()
+				}
+				break
+			}
+			status, applyErr := m.applyPlan(directContext, plan)
+			if applyErr != nil {
+				if ctx.Err() != nil {
+					return ctx.Err()
+				}
+				direct.LastError = model.PublicError(applyErr)
+				break
+			}
+			candidateContext, cancelCandidate := context.WithTimeout(directContext, 3*time.Second)
+			status, handshakeErr := m.waitForHandshake(candidateContext, status, started)
+			cancelCandidate()
 			if handshakeErr != nil {
 				direct.LastError = model.PublicError(model.WithOperation(handshakeErr, "direct.handshake"))
 				logger.Warn("direct connection failed; trying next path", logging.ErrorAttrs(
 					model.WithOperation(handshakeErr, "direct.handshake"))...)
-				if cleanupErr := m.privileged.Remove(ctx); cleanupErr != nil {
-					return m.fail(errors.Join(handshakeErr, cleanupErr))
-				}
+				// The next candidate/fallback owns replacement and cleanup; doing it
+				// here as well would remove the same network twice.
 				continue
 			}
-			m.bridge.Stop()
-			direct.Reason = "connected"
-			direct.LastError = nil
-			m.directRetryAfter = time.Time{}
-			m.setDirectDiagnostics(direct)
-			m.setNetworkStatus(
-				model.ClientDirect,
-				"ipv6",
-				status,
-			)
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			if err := m.commitConnection(ctx, func() {
+				m.lastPlan = &plan
+				m.lastNetworkFingerprint = networkSnapshot.Fingerprint()
+				direct.Reason = "connected"
+				direct.LastError = nil
+				m.directRetryAfter = time.Time{}
+				m.setDirectDiagnostics(direct)
+				m.setNetworkStatus(
+					model.ClientDirect,
+					"ipv6",
+					status,
+				)
+			}); err != nil {
+				return err
+			}
 			logger.Info("client connected", "state", model.ClientDirect, "path", "ipv6",
 				"interface", status.Interface, "mtu", status.MTU,
 				"elapsed_ms", time.Since(connectionStarted).Milliseconds())
@@ -2232,8 +1984,20 @@ func (m *Manager) connectWithOptionalConfiguration(
 	if err != nil {
 		return m.fail(err)
 	}
+	// A same-plan manual check must preserve a healthy relay bridge and tunnel.
+	if m.lastPlan != nil && m.lastPlan.Mode == "relay" {
+		plan := clientPlan(config.Configuration, privateKey.String(), "relay", m.lastPlan.Endpoint, allowedIPs, 1280)
+		if m.keepCurrentPlan(ctx, plan, networkSnapshot) {
+			return nil
+		}
+	}
+	relayContext, cancelRelay := context.WithTimeout(ctx, relayPhaseTimeout)
+	defer cancelRelay()
+	if err := m.replaceNetwork(relayContext); err != nil {
+		return m.fail(err)
+	}
 	logger.Info("relay path selected", "relay_url", model.SafeURL(relayURL))
-	endpoint, err := m.bridge.Start(ctx, relayURL, func() ([]Cookie, error) {
+	endpoint, err := m.bridge.Start(relayContext, relayURL, func() ([]Cookie, error) {
 		return m.store.LoadCookies(config.FNID)
 	}, func(before, after []Cookie) error {
 		return m.store.MergeCookies(config.FNID, before, after)
@@ -2255,27 +2019,36 @@ func (m *Manager) connectWithOptionalConfiguration(
 		1280,
 	)
 	started := time.Now()
-	status, err := m.applyPlan(ctx, plan)
+	status, err := m.applyPlan(relayContext, plan)
 	if err != nil {
 		m.bridge.Stop()
 		return m.fail(err)
 	}
 	if err := m.bridge.BindPeer(status.ListenPort); err != nil {
 		m.bridge.Stop()
-		cleanupErr := m.privileged.Remove(ctx)
+		cleanupErr := m.removeNetwork(ctx)
 		return m.fail(errors.Join(err, cleanupErr))
 	}
-	status, err = m.waitForHandshake(ctx, status, started)
+	status, err = m.waitForHandshake(relayContext, status, started)
 	if err != nil {
 		m.bridge.Stop()
-		cleanupErr := m.privileged.Remove(ctx)
+		cleanupErr := m.removeNetwork(ctx)
 		return m.fail(errors.Join(err, cleanupErr))
 	}
-	m.setNetworkStatus(
-		model.ClientRelay,
-		"fn-connect",
-		status,
-	)
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	if err := m.commitConnection(ctx, func() {
+		m.lastPlan = &plan
+		m.lastNetworkFingerprint = networkSnapshot.Fingerprint()
+		m.setNetworkStatus(
+			model.ClientRelay,
+			"fn-connect",
+			status,
+		)
+	}); err != nil {
+		return err
+	}
 	logger.Info("client connected", "state", model.ClientRelay, "path", "fn-connect",
 		"interface", status.Interface, "mtu", status.MTU,
 		"elapsed_ms", time.Since(connectionStarted).Milliseconds())
@@ -2410,6 +2183,9 @@ func (m *Manager) waitForHandshake(
 	status model.ClientPrivilegedStatus,
 	started time.Time,
 ) (model.ClientPrivilegedStatus, error) {
+	handshakeContext, cancelHandshake := context.WithTimeout(ctx, m.handshakeTimeout)
+	defer cancelHandshake()
+	ctx = handshakeContext
 	logger := logging.FromContext(ctx, m.logger)
 	logger.Info("WireGuard handshake waiting", "interface", status.Interface)
 	deadline := time.NewTimer(m.handshakeTimeout)
@@ -2437,7 +2213,7 @@ func (m *Manager) waitForHandshake(
 			logger.Warn("WireGuard handshake still pending", "interface", status.Interface,
 				"elapsed_ms", time.Since(started).Milliseconds())
 		case <-ticker.C:
-			next, err := m.privileged.Status(ctx)
+			next, err := m.networkStatus(ctx)
 			if err != nil {
 				return status, err
 			}
@@ -2460,9 +2236,6 @@ func (m *Manager) setNetworkStatus(
 		LastHandshake: network.LastHandshake,
 		UpdatedAt:     time.Now().UTC(),
 	}
-	// The tunnel interface was just brought up. Absorb the network-change events
-	// this triggers for a short window so it does not spawn a second reconnect.
-	m.ignoreNetworkChangesUntil = time.Now().Add(networkChangeQuietWindow)
 	m.maintenanceError = false
 	m.mu.Unlock()
 	m.statusChanges.Notify()
@@ -2517,45 +2290,6 @@ func cloneLocalProbeConfiguration(
 	cloned := *configuration
 	cloned.Endpoints = slices.Clone(configuration.Endpoints)
 	return &cloned
-}
-
-// localProbeOnSameSubnet reports whether any cached NAS LAN endpoint shares the
-// Mac's /24 IPv4 subnet. When true the Mac is almost certainly on the NAS LAN, so
-// a transient LOCAL probe miss (right after a network switch) is worth retrying
-// instead of falling back to IPv6 DIRECT/relay.
-func localProbeOnSameSubnet(snapshot *NetworkSnapshot, endpoints []string) bool {
-	var localIPv4 []netip.Addr
-	for _, prefix := range snapshot.Prefixes {
-		if prefix.Addr().Is4() {
-			localIPv4 = append(localIPv4, prefix.Addr())
-		}
-	}
-	if len(localIPv4) == 0 {
-		return false
-	}
-	for _, endpoint := range endpoints {
-		host, _, err := net.SplitHostPort(endpoint)
-		if err != nil {
-			continue
-		}
-		remote, err := netip.ParseAddr(host)
-		if err != nil || !remote.Is4() {
-			continue
-		}
-		// Compare the third octet (/24). Prefer A.B.C.0/24 equality.
-		for _, local := range localIPv4 {
-			if sameIPv4ThirdOctet(local, remote) {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-func sameIPv4ThirdOctet(left, right netip.Addr) bool {
-	l := left.As4()
-	r := right.As4()
-	return l[0] == r[0] && l[1] == r[1] && l[2] == r[2]
 }
 
 // isValidClientConfiguration reports whether a previously known client
@@ -2670,10 +2404,21 @@ func relayURLFromDiscovery(fnID string, discovery Discovery) (string, error) {
 	return parsed.String(), nil
 }
 
+// reportedConnectionError preserves the cause while marking that its failure
+// has already been logged and committed to status by an inner operation.
+type reportedConnectionError struct{ error }
+
+func (e *reportedConnectionError) Unwrap() error { return e.error }
+
 func (m *Manager) fail(err error) error {
+	var reported *reportedConnectionError
+	if errors.As(err, &reported) {
+		return err
+	}
 	typed := model.AsError(err)
 	if typed.Code == model.ErrorCanceled {
 		m.logger.Debug("client operation canceled", logging.ErrorAttrs(err)...)
+		return err
 	} else {
 		m.logger.Error("client operation failed", logging.ErrorAttrs(err)...)
 	}
@@ -2692,7 +2437,7 @@ func (m *Manager) fail(err error) error {
 		m.directPruneToIdle()
 	}
 	m.setStatus(state, "", "", typed)
-	return err
+	return &reportedConnectionError{err}
 }
 
 // directPruneToIdle clears transient probing diagnostics for terminal states so the
@@ -2831,11 +2576,6 @@ type SystemLocalProbe struct {
 	HTTPClient *http.Client
 }
 
-// localProbeTimeout bounds each candidate end-to-end attempt. Endpoints are
-// probed concurrently and fail fast on connect errors, so a LAN that is not
-// locally reachable is rejected after ~300ms instead of blocking the reconnect.
-const localProbeTimeout = 300 * time.Millisecond
-
 func (p SystemLocalProbe) Reachable(
 	ctx context.Context,
 	configuration model.LocalProbeConfiguration,
@@ -2894,7 +2634,7 @@ func (p SystemLocalProbe) Reachable(
 	results := make(chan result, len(endpoints))
 	for _, endpoint := range endpoints {
 		go func(endpoint string) {
-			ok, probeErr := probeLocalEndpoint(probeContext, p.HTTPClient, snapshot.InterfaceIndex,
+			ok, probeErr := probeLocalEndpoint(probeContext, p.HTTPClient, snapshot.interfaceForEndpoint(endpoint),
 				endpoint, body, expectedProof)
 			results <- result{ok: ok, err: probeErr}
 		}(endpoint)
@@ -2935,7 +2675,7 @@ func probeLocalEndpoint(
 	if client == nil {
 		transport = localProbeTransport(interfaceIndex)
 		client = &http.Client{
-			Timeout:   localProbeTimeout,
+			Timeout:   localEndpointTimeout,
 			Transport: transport,
 			CheckRedirect: func(
 				*http.Request,
@@ -3001,7 +2741,7 @@ func localProbeTransport(interfaceIndex int) *http.Transport {
 		address string,
 	) (net.Conn, error) {
 		dialer := net.Dialer{
-			Timeout: localProbeTimeout,
+			Timeout: localEndpointTimeout,
 			Control: func(_, _ string, raw syscall.RawConn) error {
 				var bindErr error
 				if err := raw.Control(func(fd uintptr) {
@@ -3026,9 +2766,11 @@ func (SystemLocalProbe) Snapshot() (NetworkSnapshot, error) {
 	if err != nil {
 		return NetworkSnapshot{}, err
 	}
-	return networkSnapshot(interfaces, defaultInterface, func(iface net.Interface) ([]net.Addr, error) {
+	snapshot := networkSnapshot(interfaces, defaultInterface, func(iface net.Interface) ([]net.Addr, error) {
 		return iface.Addrs()
-	}), nil
+	})
+	enrichPhysicalNetwork(&snapshot)
+	return snapshot, nil
 }
 
 func networkSnapshot(
@@ -3052,6 +2794,7 @@ func networkSnapshot(
 			snapshot.InterfaceName = networkInterface.Name
 			snapshot.InterfaceIndex = networkInterface.Index
 		}
+		link := PhysicalLink{Name: networkInterface.Name, Index: networkInterface.Index}
 		values, err := addresses(networkInterface)
 		if err != nil {
 			continue
@@ -3060,6 +2803,10 @@ func networkSnapshot(
 			prefix, err := netip.ParsePrefix(value.String())
 			if err != nil {
 				continue
+			}
+			if prefix.Addr().Is4() {
+				link.Prefixes = append(link.Prefixes, prefix.Masked())
+				link.Addresses = append(link.Addresses, prefix.Addr())
 			}
 			if primary && prefix.Addr().Is4() {
 				snapshot.Prefixes = append(snapshot.Prefixes, prefix.Masked())
@@ -3072,32 +2819,12 @@ func networkSnapshot(
 					networkInterface.Name+":"+prefix.Masked().String())
 			}
 		}
+		if len(link.Addresses) > 0 {
+			snapshot.Links = append(snapshot.Links, link)
+		}
 	}
 	slices.Sort(snapshot.IPv6Networks)
 	return snapshot
-}
-
-func defaultPhysicalInterface() (string, error) {
-	connection, err := net.Dial("udp4", "1.1.1.1:53")
-	if err != nil {
-		return "", nil
-	}
-	defer connection.Close()
-	local := connection.LocalAddr().(*net.UDPAddr).IP
-	interfaces, err := net.Interfaces()
-	if err != nil {
-		return "", err
-	}
-	for _, networkInterface := range interfaces {
-		addresses, _ := networkInterface.Addrs()
-		for _, value := range addresses {
-			prefix, parseErr := netip.ParsePrefix(value.String())
-			if parseErr == nil && prefix.Addr().String() == local.String() {
-				return networkInterface.Name, nil
-			}
-		}
-	}
-	return "", errors.New("default physical interface was not found")
 }
 
 func usablePhysicalInterface(name, defaultInterface string) bool {

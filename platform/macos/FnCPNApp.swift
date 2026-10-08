@@ -53,7 +53,7 @@ private final class IPCClient {
         guard descriptor >= 0 else { throw POSIXError(.EIO) }
         defer { Darwin.close(descriptor) }
         try setTimeout(
-            seconds: ["authorize-native", "watch-client-status", "connect", "retry"].contains(method) ? 310 : 30,
+            seconds: ["authorize-native", "watch-client-status"].contains(method) ? 310 : 30,
             on: descriptor
         )
 

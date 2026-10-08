@@ -161,3 +161,32 @@ func waitForSocket(t *testing.T, path string) {
 	}
 	t.Fatalf("socket %q was not created", path)
 }
+
+func TestServerCancelsHandlerWhenClientDisconnects(t *testing.T) {
+	socketPath := fmt.Sprintf("/tmp/fncpn-ipc-cancel-%d.sock", os.Getpid())
+	_ = os.Remove(socketPath)
+	t.Cleanup(func() { _ = os.Remove(socketPath) })
+	serverContext, stopServer := context.WithCancel(t.Context())
+	defer stopServer()
+	canceled := make(chan struct{})
+	server := Server{SocketPath: socketPath, Mode: 0o600, Handler: HandlerFunc(func(ctx context.Context, r Request) Response {
+		<-ctx.Done()
+		close(canceled)
+		return Failure(r.ID, ctx.Err())
+	})}
+	done := make(chan error, 1)
+	go func() { done <- server.Serve(serverContext) }()
+	waitForSocket(t, socketPath)
+	ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
+	defer cancel()
+	_ = (Client{SocketPath: socketPath, Timeout: time.Second}).Call(ctx, "apply", nil, nil)
+	select {
+	case <-canceled:
+	case <-time.After(time.Second):
+		t.Fatal("client cancellation did not reach privileged handler")
+	}
+	stopServer()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+}

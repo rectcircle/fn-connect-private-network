@@ -132,8 +132,9 @@ func TestManagerBackgroundRecoveryHonorsConnectionIntent(t *testing.T) {
 	if err := manager.applyWatchedConfiguration(context.Background(), changed); err != nil {
 		t.Fatal(err)
 	}
-	previous := ""
-	manager.handleNetworkChange(context.Background(), &previous, true)
+	if err := manager.runConnectionWork(context.Background(), workReconcile, nil); err != nil {
+		t.Fatal(err)
+	}
 	manager.maintainPrivileged(context.Background())
 	manager.maintainHealth(context.Background())
 	if manager.Status().State != model.ClientAuthRequired || network.removed != 0 {
@@ -142,7 +143,9 @@ func TestManagerBackgroundRecoveryHonorsConnectionIntent(t *testing.T) {
 	if err := manager.Disconnect(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	manager.handleNetworkChange(context.Background(), &previous, true)
+	if err := manager.runConnectionWork(context.Background(), workReconcile, nil); err != nil {
+		t.Fatal(err)
+	}
 	config, _ := store.Load()
 	if config.AutoConnect || manager.Status().State != model.ClientPaused {
 		t.Fatal("network event enabled automatic connection")
