@@ -83,7 +83,7 @@ func TestLocalProbeUsesPerDeviceHMACWithoutCookies(t *testing.T) {
 	expected := hmac.New(sha256.New, key)
 	_, _ = expected.Write([]byte(model.LocalProbeDomain))
 	_, _ = expected.Write(nonce)
-	if !hmac.Equal(proof, expected.Sum(nil)) {
+	if !hmac.Equal(proof, model.VersionedProbeProof(expected.Sum(nil), result.ServerVersion)) {
 		t.Fatal("probe proof does not match device key")
 	}
 

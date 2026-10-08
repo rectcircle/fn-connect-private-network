@@ -13,6 +13,7 @@ import (
 
 	"github.com/rectcircle/fn-connect-private-network/internal/logging"
 	"github.com/rectcircle/fn-connect-private-network/internal/model"
+	"github.com/rectcircle/fn-connect-private-network/internal/version"
 )
 
 const (
@@ -137,8 +138,11 @@ func (s Server) handleConnection(
 		"ipc_request_id", model.SafeRequestID(request.ID), "ipc_method", request.Method,
 	))
 	response := s.Handler.Handle(ctx, request)
+	if response.ProductVersion == "" {
+		response.ProductVersion = version.Current
+	}
 	if response.Version == 0 {
-		response.Version = model.ProtocolVersion
+		response.Version = ProtocolVersion
 	}
 	if response.ID == "" {
 		response.ID = request.ID

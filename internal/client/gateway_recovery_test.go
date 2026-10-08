@@ -16,6 +16,7 @@ import (
 
 	"github.com/coder/websocket"
 	"github.com/rectcircle/fn-connect-private-network/internal/model"
+	"github.com/rectcircle/fn-connect-private-network/internal/version"
 )
 
 func TestGatewayApplicationFailureClassification(t *testing.T) {
@@ -39,6 +40,7 @@ func TestGatewayApplicationFailureClassification(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("X-FnCPN-Version", version.Current)
 				w.Header().Set("X-Request-ID", "gateway-request")
 				w.WriteHeader(test.status)
 				_, _ = io.WriteString(w, test.body)
@@ -82,7 +84,11 @@ func TestGatewayApplicationFailureClassification(t *testing.T) {
 						t.Fatal("failure was accepted")
 					}
 					failure := model.PublicError(err)
-					if failure.Code != test.code || failure.Retryable != test.retryable ||
+					expectedCode, expectedRetry := test.code, test.retryable
+					if name == "bootstrap" && test.status == 404 && (test.code == model.ErrorUnavailable || test.code == model.ErrorNotFound) {
+						expectedCode, expectedRetry = model.ErrorServerUnavailable, false
+					}
+					if failure.Code != expectedCode || failure.Retryable != expectedRetry ||
 						failure.HTTPStatus != test.status || failure.RequestID != "gateway-request" ||
 						failure.Operation == "" {
 						t.Fatalf("failure = %#v", failure)
@@ -129,6 +135,7 @@ func TestManagerRecoversRelayAfterGatewayDowntime(t *testing.T) {
 	var attempts atomic.Int32
 	stopInitial := make(chan struct{})
 	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-FnCPN-Version", version.Current)
 		attempt := attempts.Add(1)
 		switch attempt {
 		case 2:
@@ -259,9 +266,14 @@ func TestManagerRecoversRelayAfterGatewayDowntime(t *testing.T) {
 func TestManagerRetriesConfigurationAfterGatewayDowntime(t *testing.T) {
 	var attempts atomic.Int32
 	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-FnCPN-Version", version.Current)
 		if cookie, err := r.Cookie("fnos-token"); err != nil || cookie.Value != "recovery-cookie" {
 			t.Error("configuration retry did not reuse its cookie")
 			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+		if r.URL.Path == gatewayApplicationPath+"/version" {
+			_ = json.NewEncoder(w).Encode(map[string]string{"serverVersion": version.Current})
 			return
 		}
 		if r.URL.Path != gatewayApplicationPath+"/api/v1/devices/device-1/config" ||

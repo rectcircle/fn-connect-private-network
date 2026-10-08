@@ -131,7 +131,9 @@ for state in states {
         try data.write(to: output.appendingPathComponent("Status-\(state)\(suffix).png"))
     }
 }
-for (name, size) in [("ICON.PNG", 64), ("ICON_256.PNG", 256), ("AppIcon.png", 1024)] {
+// Package icons use 512 px: verified to fix app-center blur in 0.1.52.
+// Desktop entry resources retain their actual named dimensions.
+for (name, size) in [("ICON.PNG", 512), ("ICON_256.PNG", 512), ("DesktopIcon64.png", 64), ("DesktopIcon256.png", 256), ("AppIcon.png", 1024)] {
     try png(size, draw: appIcon).write(to: output.appendingPathComponent(name))
 }
 let iconset = output.appendingPathComponent("AppIcon.iconset")

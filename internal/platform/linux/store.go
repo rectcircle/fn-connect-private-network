@@ -83,12 +83,6 @@ func (s fileServerStateStore) Load() (*persistedServerState, error) {
 	if len(data) > maxServerStateSize {
 		return nil, errors.New("server network state exceeds size limit")
 	}
-	var version struct {
-		Version int `json:"version"`
-	}
-	if err := json.Unmarshal(data, &version); err != nil {
-		return nil, fmt.Errorf("decode server network state version: %w", err)
-	}
 	var state persistedServerState
 	if err := model.DecodeStrict(data, &state); err != nil {
 		return nil, fmt.Errorf("decode server network state: %w", err)

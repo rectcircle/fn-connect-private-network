@@ -484,7 +484,7 @@ func (s *ConfigStore) LoadLocalProbeConfig(
 		return model.LocalProbeConfiguration{}, false, time.Time{}, fmt.Errorf("decode local probe configuration: %w", err)
 	}
 	if !validLocalProbeConfig(persisted.Configuration) {
-		// Silently treat a corrupt/legacy cache as absent so the caller refetches.
+		// Silently treat an invalid cache as absent so the caller refetches.
 		return model.LocalProbeConfiguration{}, false, time.Time{}, nil
 	}
 	return persisted.Configuration, true, persisted.CheckedAt, nil

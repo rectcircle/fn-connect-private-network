@@ -22,6 +22,7 @@ import (
 
 	"github.com/coder/websocket"
 	"github.com/rectcircle/fn-connect-private-network/internal/model"
+	"github.com/rectcircle/fn-connect-private-network/internal/version"
 )
 
 func TestNativeSessionLoginAndLongTokenRecovery(t *testing.T) {
@@ -188,7 +189,7 @@ func TestManagerNativeAuthorizationPersistsSessionAndRecoversBeforeConnect(t *te
 	}
 	configuration := managerClientConfiguration()
 	remote := &fakeRemoteService{
-		bootstrap:     Bootstrap{Administrator: true},
+		bootstrap:     Bootstrap{ServerVersion: version.Current, Administrator: true},
 		configuration: configuration,
 		registration: model.DeviceRegistration{
 			Device: model.Device{
@@ -286,7 +287,7 @@ func TestManagerKeepsNativeAndAdminWebSessionsSeparate(t *testing.T) {
 	}
 	configuration := managerClientConfiguration()
 	remote := &fakeRemoteService{
-		bootstrap:     Bootstrap{Administrator: true},
+		bootstrap:     Bootstrap{ServerVersion: version.Current, Administrator: true},
 		configuration: configuration,
 		registration: model.DeviceRegistration{
 			Device: model.Device{
@@ -442,7 +443,7 @@ func TestManagerWebLoginFailureDoesNotChangeNativeAuthorization(t *testing.T) {
 		}},
 		Remote: func(string, []Cookie, func([]Cookie) error) (RemoteService, error) {
 			return &fakeRemoteService{
-				bootstrap:     Bootstrap{Administrator: true},
+				bootstrap:     Bootstrap{ServerVersion: version.Current, Administrator: true},
 				configuration: configuration,
 				registration: model.DeviceRegistration{
 					Device: model.Device{

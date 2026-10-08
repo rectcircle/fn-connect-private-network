@@ -6,6 +6,7 @@
 - [PoC 架构与验证结论](docs/02-fncpn-poc-architecture-and-validation.md)
 - [错误码与全链路诊断](docs/05-error-diagnostics.md)
 - [发布验收与实机记录](docs/04-release-acceptance.md#实机验收记录)
+- [版本管理与兼容性（从 1.0.0 生效）](docs/07-versioning-and-compatibility.md)
 
 fnOS 原生 token 获取、恢复协议及 FN Connect 验证边界已收敛到
 [PoC 凭证章节](docs/02-fncpn-poc-architecture-and-validation.md#39-链路-ifn-connect-凭证与-fnos-原生会话)。
@@ -26,7 +27,7 @@ MTU 大包和文件下载的实机验证。完整 P0 发布验收尚未完成；
 - 客户端状态模型和 CLI 到 client daemon 的 Unix Socket 通讯。
 - server daemon 的 bootstrap、设备状态、离线设备删除和网络配置 API。
 - overlay 校验、最低可用地址分配、地址复用和全量重分配。
-- 服务端业务状态使用单个原子写入的 `state.json`，兼容读取旧版拆分文件。
+- 服务端业务状态使用单个原子写入的 `state.json`，拒绝开发期旧拆分文件。
 - Darwin/Linux Unix peer credential 识别和 privileged-daemon 调用者授权。
 - privileged-daemon 的 `status/apply/remove/resume` 白名单协议。
 - 客户端 WireGuard 计划校验和 UAPI 配置生成。
@@ -123,10 +124,12 @@ FPK 构建要求通过 `FNPACK` 或 `PATH` 显式提供 `fnpack`，不依赖本�
 - `fncpn-<version>-arm.fpk`：ARM64 fnOS 服务端。
 
 macOS 凭据保存在 `/var/db/fncpn/credentials/<uid>/`：root 所有，目录 `0700`、
-文件 `0600`，普通客户端通过受限特权 IPC 存取，不再调用 Keychain。
-从仍使用 Keychain 的旧测试版切换时，不迁移旧凭据，需要重新授权；
-旧 Keychain 条目不会自动读取或删除。已使用文件凭据的版本保留配置升级时不应主动
-清空身份，`0.1.13` 升至 `0.1.14` 后复用原设备和凭据重连已通过实机验证。
+文件 `0600`，普通客户端通过受限特权 IPC 存取。
+`1.0.0` 将建立正式数据基线，不迁移 `0.x` 开发期旧格式。仍使用当前格式的数据不会
+自动清空；遇到不支持的旧数据需先备份，使用旧版本正常停止服务并完成网络清理，
+再主动清除用户配置或卸载旧版本后重新安装、授权。不得直接删除运行中的网络状态文件。
+服务端旧 `settings.json`、`devices.json`、`state.transaction.json` 不再自动转换，
+应在停服并备份后由管理员移出状态目录，再初始化当前格式。
 
 macOS 卸载默认保留用户配置、日志和 root 凭据文件。需要同时清除指定用户数据时：
 
@@ -137,7 +140,7 @@ sudo /Library/PrivilegedHelperTools/cn.rectcircle.fncpn/uninstall.sh \
 
 ### 图标生成
 
-应用图标由 `scripts/generate-icons.swift` 使用 AppKit 程序绘制，macOS 构建时自动生成完整 Retina iconset 和 `AppIcon.icns`，fnOS 使用同源的 64 / 256 像素 PNG。macOS 上可运行 `swift scripts/generate-icons.swift packaging/assets` 重新生成；其他平台打包使用已提交的 PNG。
+应用图标由 `scripts/generate-icons.swift` 使用 AppKit 程序绘制，macOS 构建时自动生成完整 Retina iconset 和 `AppIcon.icns`，fnOS 包根目录的 `ICON.PNG` / `ICON_256.PNG` 使用同源的 512 像素 PNG，已在 `0.1.52` 实机确认解决应用中心图标模糊问题（官方文档规定分别为 64 / 256，本项目采用实测有效的高清资源）；桌面入口单独保留 64 / 256 像素资源，固定引用 `images/icon_256.png`。macOS 上可运行 `swift scripts/generate-icons.swift packaging/assets` 重新生成；其他平台打包使用已提交的 PNG。
 
 macOS 状态栏使用22 × 18 pt 模板图标，自动适配深浅色及菜单选中颜色。应用与状态栏图标都由 `scripts/generate-icons.swift` 中同一个 `connectionMark()` 绘制，使用一致的“内网边界、飞牛标志与接入路径”图形。应用图标采用 fnOS 默认图标风格的浅蓝底与亮蓝前景。所有状态保留内网边界和飞牛标志，以连接线最左侧的端点替换图形表达状态：圆点表示已连接，省略号表示连接中，叉号表示断开，感叹号表示异常或需要登录。局域网、IPv6 直连、中继共用已连接图标，具体连接方式由悬停提示和界面详情说明。生成脚本和生成的资源均保留在仓库中。
 
@@ -166,3 +169,18 @@ node --test internal/server/web/index.test.cjs
 脚本生成 macOS `.lproj/Localizable.strings` 和管理页内嵌词典，并检查缺失翻译和参数一致性。
 生成文件需一起提交；macOS 打包会复制两种语言资源。`go test ./...` 包含资源同步检查及
 macOS 中英文/回退运行测试；`FNCPN_LAYOUT_CHECK=1 go test ./packaging -count=1` 检查两种语言的窗口布局。
+
+## 产品版本与正式发布准备
+
+唯一产品版本源为 `internal/version/VERSION`；修改后运行
+`python3 scripts/sync-version.py` 同步 fnOS manifest 与 macOS plist 模板。
+Go CLI 默认构建也会嵌入这个版本，不再报告 `dev`。
+远程兼容性只检查 MAJOR 相同且 client MINOR 不大于 server MINOR，PATCH 不参与。
+稳定的 `/version` 入口、HTTP/relay 响应版本和带身份校验的局域网探测支持升级后重新检查。
+开发期已使用该判定器进行验证，正式兼容性承诺从 `1.0.0` 生效。
+
+普通开发构建允许重建本地产物。正式构建使用 `RELEASE=1 ./scripts/build-all.sh`，
+要求干净 checkout、当前 commit 对应 `v<version>` tag，并拒绝覆盖同名产物。
+构建生成仅包含当前发布产物的 `release-<version>.json` 和 `SHA256SUMS-<version>`。
+发布时应归档安装包、元数据、协议与数据样本，后续兼容验收使用这些历史基线。
+正式发布前仍须完成安装升级、真实网络与 fnOS 的实机验收。

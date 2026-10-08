@@ -41,15 +41,6 @@ type persistedNetworkState struct {
 	Routes           []string `json:"routes"`
 }
 
-type legacyNetworkState struct {
-	Version   int      `json:"version"`
-	PID       int      `json:"pid"`
-	Interface string   `json:"interface"`
-	Address   string   `json:"address"`
-	MTU       int      `json:"mtu"`
-	Routes    []string `json:"routes"`
-}
-
 type networkStateStore interface {
 	Load() (*persistedNetworkState, error)
 	Save(persistedNetworkState) error
@@ -88,34 +79,8 @@ func (s fileNetworkStateStore) Load() (*persistedNetworkState, error) {
 		return nil, errors.New("network state exceeds size limit")
 	}
 
-	var version struct {
-		Version int `json:"version"`
-	}
-	if err := json.Unmarshal(data, &version); err != nil {
-		return nil, fmt.Errorf("decode network state version: %w", err)
-	}
 	var state persistedNetworkState
-	if version.Version == 1 {
-		var legacy legacyNetworkState
-		if err := model.DecodeStrict(data, &legacy); err != nil {
-			return nil, fmt.Errorf("decode legacy network state: %w", err)
-		}
-		ownerToken, err := newNetworkOwnerToken()
-		if err != nil {
-			return nil, fmt.Errorf("migrate network owner token: %w", err)
-		}
-		state = persistedNetworkState{
-			Version:          networkStateVersion,
-			PID:              legacy.PID,
-			ProcessStartedAt: 1,
-			Executable:       "legacy-v1",
-			OwnerToken:       ownerToken,
-			Interface:        legacy.Interface,
-			Address:          legacy.Address,
-			MTU:              legacy.MTU,
-			Routes:           legacy.Routes,
-		}
-	} else if err := model.DecodeStrict(data, &state); err != nil {
+	if err := model.DecodeStrict(data, &state); err != nil {
 		return nil, fmt.Errorf("decode network state: %w", err)
 	}
 	if err := validatePersistedNetworkState(state); err != nil {
@@ -347,7 +312,7 @@ func routeMatches(entry *route.RouteMessage, prefix netip.Prefix, index int) boo
 		return false
 	}
 	bits := 0
-	if entry.Flags & syscall.RTF_HOST != 0 {
+	if entry.Flags&syscall.RTF_HOST != 0 {
 		bits = address.BitLen()
 	} else if len(entry.Addrs) > syscall.RTAX_NETMASK {
 		var mask net.IPMask

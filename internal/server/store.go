@@ -57,10 +57,14 @@ func openStore(dir string) (*Store, model.ServerState, error) {
 		}
 		state = document.State
 	} else {
-		state, err = readLegacyState(dir)
-		if err != nil {
-			return nil, state, err
+		for _, name := range []string{"state.transaction.json", "settings.json", "devices.json"} {
+			if _, statErr := os.Stat(filepath.Join(dir, name)); statErr == nil {
+				return nil, state, fmt.Errorf("unsupported development data %s; back up and reset before initializing", name)
+			} else if !os.IsNotExist(statErr) {
+				return nil, state, statErr
+			}
 		}
+		state = model.ServerState{Settings: model.ServerSettings{OverlayCIDR: DefaultOverlayCIDR, ListenPort: DefaultListenPort}, Devices: []model.Device{}}
 	}
 	if err := validateState(state); err != nil {
 		return nil, state, err
@@ -71,59 +75,6 @@ func openStore(dir string) (*Store, model.ServerState, error) {
 		}
 	}
 	return store, state, nil
-}
-
-// Legacy files are read only when state.json is absent; future writes use one file.
-func readLegacyState(dir string) (model.ServerState, error) {
-	data, found, err := readFile(filepath.Join(dir, "state.transaction.json"))
-	if err != nil {
-		return model.ServerState{}, err
-	}
-	if found {
-		var document stateDocument
-		if err := model.DecodeStrict(data, &document); err != nil {
-			return model.ServerState{}, fmt.Errorf("decode legacy transaction: %w", err)
-		}
-		if document.Version != 2 {
-			return model.ServerState{}, fmt.Errorf("unsupported transaction schema version %d", document.Version)
-		}
-		return document.State, nil
-	}
-	state := model.ServerState{
-		Settings: model.ServerSettings{OverlayCIDR: DefaultOverlayCIDR, ListenPort: DefaultListenPort},
-		Devices: []model.Device{},
-	}
-	if data, found, err := readFile(filepath.Join(dir, "settings.json")); err != nil {
-		return state, err
-	} else if found {
-		var document struct {
-			Version int                  `json:"version"`
-			Settings model.ServerSettings `json:"settings"`
-		}
-		if err := model.DecodeStrict(data, &document); err != nil {
-			return state, fmt.Errorf("decode settings.json: %w", err)
-		}
-		if document.Version != 2 {
-			return state, fmt.Errorf("unsupported settings schema version %d", document.Version)
-		}
-		state.Settings = document.Settings
-	}
-	if data, found, err := readFile(filepath.Join(dir, "devices.json")); err != nil {
-		return state, err
-	} else if found {
-		var document struct {
-			Version int            `json:"version"`
-			Devices []model.Device `json:"devices"`
-		}
-		if err := model.DecodeStrict(data, &document); err != nil {
-			return state, fmt.Errorf("decode devices.json: %w", err)
-		}
-		if document.Version != 1 {
-			return state, fmt.Errorf("unsupported devices schema version %d", document.Version)
-		}
-		state.Devices = document.Devices
-	}
-	return state, nil
 }
 
 // Renaming is the commit point, even when the subsequent directory sync fails.

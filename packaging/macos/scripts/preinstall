@@ -16,6 +16,13 @@ fi
 /bin/chmod -N "$HELPER_ROOT"
 /bin/chmod 0755 "$HELPER_ROOT"
 
+# Stop the running UI before replacing its daemon and app bundle.
+/bin/ps -axo uid=,pid=,command= | while read -r uid pid command; do
+  case "$command" in
+    "/Applications/FnCPN.app/Contents/MacOS/FnCPN"*) /bin/kill -TERM "$pid" 2>/dev/null || true ;;
+  esac
+done
+
 if [ -x "$TOOL" ]; then
   /bin/ps -axo uid=,pid=,command= | while read -r uid pid command; do
     case "$command" in

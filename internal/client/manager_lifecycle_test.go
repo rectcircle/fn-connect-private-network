@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/rectcircle/fn-connect-private-network/internal/model"
+	"github.com/rectcircle/fn-connect-private-network/internal/version"
 )
 
 func newRecoveryTestManager(t *testing.T, store *ConfigStore, network *fakePrivilegedNetwork, remote RemoteFactory) *Manager {
@@ -14,7 +15,7 @@ func newRecoveryTestManager(t *testing.T, store *ConfigStore, network *fakePrivi
 	if remote == nil {
 		remote = func(string, []Cookie, func([]Cookie) error) (RemoteService, error) {
 			return &fakeRemoteService{
-				bootstrap:     Bootstrap{Administrator: true},
+				bootstrap:     Bootstrap{ServerVersion: version.Current, Administrator: true},
 				configuration: managerClientConfiguration(),
 			}, nil
 		}
@@ -39,7 +40,7 @@ func TestManagerWatchDiscardsOldSessionCookiesAndConfiguration(t *testing.T) {
 			remote := func(_ string, _ []Cookie, save func([]Cookie) error) (RemoteService, error) {
 				return &fakeWatchingRemoteService{
 					fakeRemoteService: &fakeRemoteService{
-						bootstrap:     Bootstrap{Administrator: true},
+						bootstrap:     Bootstrap{ServerVersion: version.Current, Administrator: true},
 						configuration: managerClientConfiguration(),
 					},
 					watch: func(ctx context.Context, _, _ string) (ConfigurationWatchResult, error) {

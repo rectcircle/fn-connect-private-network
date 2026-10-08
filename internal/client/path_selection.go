@@ -9,6 +9,7 @@ import (
 
 	"github.com/rectcircle/fn-connect-private-network/internal/logging"
 	"github.com/rectcircle/fn-connect-private-network/internal/model"
+	"github.com/rectcircle/fn-connect-private-network/internal/version"
 )
 
 const (
@@ -40,31 +41,35 @@ func (s NetworkSnapshot) interfaceForEndpoint(endpoint string) int {
 
 // probeLocal retries unknown/transient outcomes for one bounded selection
 // window. Subnet equality is never evidence that the authenticated probe passed.
-func (m *Manager) probeLocal(ctx context.Context, cfg model.LocalProbeConfiguration, deviceID string, snapshot NetworkSnapshot) bool {
+func (m *Manager) probeLocal(ctx context.Context, cfg model.LocalProbeConfiguration, deviceID string, snapshot NetworkSnapshot) (bool, error) {
 	stage, cancel := context.WithTimeout(ctx, localSelectionTimeout)
 	defer cancel()
 	for {
 		ok, err := m.probe.Reachable(stage, cfg, deviceID, snapshot)
+		if version.IsFailure(err) {
+			return false, err
+		}
 		if stage.Err() != nil {
-			return false
+			return false, nil
 		}
 		if ok {
-			return true
+			return true, nil
 		}
 		if len(cfg.Endpoints) == 0 || err != nil && model.AsError(err).Code == model.ErrorProtocol {
-			return false
+			return false, nil
 		}
 		timer := time.NewTimer(localRetryInterval)
 		select {
 		case <-stage.Done():
 			timer.Stop()
-			return false
+			return false, nil
 		case <-timer.C:
 		}
 	}
 }
 
 type localSelection struct {
+	err           error
 	configuration model.LocalProbeConfiguration
 	endpoints     []string
 	reachable     bool
@@ -86,12 +91,16 @@ func (m *Manager) selectLocal(ctx context.Context, remote RemoteService, config 
 		cfg   model.LocalProbeConfiguration
 		ok    bool
 		fresh bool
+		err   error
 	}
 	count := 1
 	results := make(chan result, 2)
 	if cached != nil {
 		count++
-		go func() { results <- result{cfg: *cached, ok: m.probeLocal(stage, *cached, config.DeviceID, snapshot)} }()
+		go func() {
+			ok, err := m.probeLocal(stage, *cached, config.DeviceID, snapshot)
+			results <- result{cfg: *cached, ok: ok, err: err}
+		}()
 	}
 	go func() {
 		if cached != nil {
@@ -111,14 +120,18 @@ func (m *Manager) selectLocal(ctx context.Context, remote RemoteService, config 
 			if stage.Err() == nil {
 				logging.FromContext(ctx, m.logger).Warn("get local probe configuration", "error", err)
 			}
-			results <- result{}
+			results <- result{err: err}
 			return
 		}
-		results <- result{cfg: fresh, ok: m.probeLocal(stage, fresh, config.DeviceID, snapshot), fresh: true}
+		ok, err := m.probeLocal(stage, fresh, config.DeviceID, snapshot)
+		results <- result{cfg: fresh, ok: ok, err: err, fresh: true}
 	}()
 	selection := localSelection{}
 	for i := 0; i < count; i++ {
 		res := <-results
+		if version.IsFailure(res.err) {
+			selection.err = res.err
+		}
 		selection.endpoints = append(selection.endpoints, res.cfg.Endpoints...)
 		if res.fresh && len(res.cfg.Endpoints) > 0 && ctx.Err() == nil {
 			// Persist authenticated endpoint metadata even on a remote network, so
@@ -172,8 +185,12 @@ func (m *Manager) tryLocalUpgrade(ctx context.Context, config LocalConfig) bool 
 		return false
 	}
 	probe, stop := context.WithTimeout(ctx, localEndpointTimeout)
-	ok, _ := m.probe.Reachable(probe, *cached, config.DeviceID, snapshot)
+	ok, probeErr := m.probe.Reachable(probe, *cached, config.DeviceID, snapshot)
 	stop()
+	if version.IsFailure(probeErr) {
+		_ = m.fail(probeErr)
+		return true
+	}
 	if !ok || ctx.Err() != nil {
 		return false
 	}

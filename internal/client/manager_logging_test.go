@@ -115,7 +115,7 @@ func TestManagerLogsRemoteCauseWithoutChangingPublicError(t *testing.T) {
 				entry.Error != "server configuration is unavailable" {
 				t.Fatalf("unexpected error log: %+v", entry)
 			}
-			for _, part := range []string{"Get", "nas.example/app/fncpn/api/v1/bootstrap", "EOF"} {
+			for _, part := range []string{"Get", "nas.example/app/fncpn/version", "EOF"} {
 				if !strings.Contains(entry.Cause, part) {
 					t.Fatalf("cause %q omits %q", entry.Cause, part)
 				}
@@ -156,7 +156,7 @@ func TestManagerLogsTimeoutCauseWithoutChangingClassification(t *testing.T) {
 		statusChanges: notify.New(),
 	}
 	err := model.NormalizeError(
-		&url.Error{Op: "Get", URL: "https://nas.example/app/fncpn/api/v1/bootstrap", Err: context.DeadlineExceeded},
+		&url.Error{Op: "Get", URL: "https://nas.example/app/fncpn/version", Err: context.DeadlineExceeded},
 		model.ErrorUnavailable,
 		"server configuration is unavailable",
 		true,

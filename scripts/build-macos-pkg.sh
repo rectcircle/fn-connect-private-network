@@ -5,13 +5,17 @@ export COPYFILE_DISABLE=1
 export COPY_EXTENDED_ATTRIBUTES_DISABLE=1
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-VERSION="${VERSION:-0.1.47}"
-BUILD_NUMBER="${BUILD_NUMBER:-47}"
+DIST_DIR="${DIST_DIR:-${ROOT_DIR}/dist}"
+source "${ROOT_DIR}/scripts/release-version.sh"
 ARCH="$(go env GOARCH)"
+if [ "${RELEASE:-0}" = 1 ]; then
+ for artifact in "${DIST_DIR}/FnCPN-${VERSION}-${ARCH}-unsigned.pkg"; do
+  if [ -e "$artifact" ]; then echo "Refusing to replace release artifact: $artifact" >&2; exit 1; fi
+ done
+fi
 BUILD_DIR="${TMPDIR:-/tmp}/fncpn-macos-pkg-${UID}"
 PAYLOAD="${BUILD_DIR}/root"
 SCRIPTS="${BUILD_DIR}/scripts"
-DIST_DIR="${ROOT_DIR}/dist"
 TOOL_DIR="${PAYLOAD}/Library/PrivilegedHelperTools/cn.rectcircle.fncpn"
 APP_DIR="${PAYLOAD}/Applications/FnCPN.app"
 
@@ -26,9 +30,6 @@ for tool in go python3 swiftc pkgbuild pkgutil plutil codesign bsdtar lsbom mkbo
   }
 done
 
-swift "${ROOT_DIR}/scripts/generate-icons.swift" "${ROOT_DIR}/packaging/assets"
-iconutil -c icns "${ROOT_DIR}/packaging/assets/AppIcon.iconset"
-
 rm -rf "$BUILD_DIR"
 mkdir -p \
   "$TOOL_DIR" \
@@ -39,13 +40,17 @@ mkdir -p \
   "${APP_DIR}/Contents/Resources" \
   "$SCRIPTS" \
   "$DIST_DIR"
+ASSET_DIR="${BUILD_DIR}/assets"
+cp -R "${ROOT_DIR}/packaging/assets" "$ASSET_DIR"
+swift "${ROOT_DIR}/scripts/generate-icons.swift" "$ASSET_DIR"
+iconutil -c icns "${ASSET_DIR}/AppIcon.iconset"
 
 (
   cd "$ROOT_DIR"
   go test ./...
   CGO_ENABLED=1 GOOS=darwin GOARCH="$ARCH" go build \
     -trimpath \
-    -ldflags "-s -w -X main.version=${VERSION}" \
+    -ldflags "-s -w -X github.com/rectcircle/fn-connect-private-network/internal/version.Revision=${REVISION}" \
     -o "${TOOL_DIR}/fncpn" \
     ./cmd/fncpn
 )
@@ -66,8 +71,8 @@ plutil -replace CFBundleShortVersionString -string "$VERSION" \
   "${APP_DIR}/Contents/Info.plist"
 plutil -replace CFBundleVersion -string "$BUILD_NUMBER" \
   "${APP_DIR}/Contents/Info.plist"
-cp -X "${ROOT_DIR}"/packaging/assets/Status-*.png "${APP_DIR}/Contents/Resources/"
-cp -X "${ROOT_DIR}/packaging/assets/AppIcon.icns" \
+cp -X "${ASSET_DIR}"/Status-*.png "${APP_DIR}/Contents/Resources/"
+cp -X "${ASSET_DIR}/AppIcon.icns" \
   "${APP_DIR}/Contents/Resources/AppIcon.icns"
 cp -X "${ROOT_DIR}/packaging/macos/cn.rectcircle.fncpn.privileged.plist" \
   "${PAYLOAD}/Library/LaunchDaemons/"

@@ -43,7 +43,7 @@ func TestServerStateOpenFailureIsWrittenToProcessLog(t *testing.T) {
 	logLine := string(data)
 	if !strings.Contains(logLine, `"msg":"open server state"`) ||
 		!strings.Contains(logLine, `"phase":"open_state"`) ||
-		!strings.Contains(logLine, "decode settings.json") {
+		!strings.Contains(logLine, "unsupported development data settings.json") {
 		t.Fatalf("process log does not contain startup cause: %s", logLine)
 	}
 }

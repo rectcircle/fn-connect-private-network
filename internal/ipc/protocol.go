@@ -2,8 +2,10 @@ package ipc
 
 import (
 	"encoding/json"
+	"fmt"
 
 	"github.com/rectcircle/fn-connect-private-network/internal/model"
+	"github.com/rectcircle/fn-connect-private-network/internal/version"
 )
 
 const MaxFrameSize = 256 << 10
@@ -16,16 +18,17 @@ type Request struct {
 }
 
 type Response struct {
-	Version int             `json:"version"`
-	ID      string          `json:"id,omitempty"`
-	OK      bool            `json:"ok"`
-	Result  json.RawMessage `json:"result,omitempty"`
-	Error   *model.Error    `json:"error,omitempty"`
+	ProductVersion string          `json:"productVersion"`
+	Version        int             `json:"version"`
+	ID             string          `json:"id,omitempty"`
+	OK             bool            `json:"ok"`
+	Result         json.RawMessage `json:"result,omitempty"`
+	Error          *model.Error    `json:"error,omitempty"`
 }
 
 func NewRequest(id, method string, params any) (Request, error) {
 	request := Request{
-		Version: model.ProtocolVersion,
+		Version: ProtocolVersion,
 		ID:      id,
 		Method:  method,
 	}
@@ -42,9 +45,10 @@ func NewRequest(id, method string, params any) (Request, error) {
 
 func Success(id string, result any) Response {
 	response := Response{
-		Version: model.ProtocolVersion,
-		ID:      id,
-		OK:      true,
+		ProductVersion: version.Current,
+		Version:        ProtocolVersion,
+		ID:             id,
+		OK:             true,
 	}
 	if result != nil {
 		data, err := json.Marshal(result)
@@ -73,10 +77,11 @@ func Failure(id string, err error) Response {
 		failure.RequestID = model.SafeRequestID(id)
 	}
 	return Response{
-		Version: model.ProtocolVersion,
-		ID:      id,
-		OK:      false,
-		Error:   failure,
+		ProductVersion: version.Current,
+		Version:        ProtocolVersion,
+		ID:             id,
+		OK:             false,
+		Error:          failure,
 	}
 }
 
@@ -94,4 +99,14 @@ func DecodeParams[T any](request Request) (T, error) {
 		)
 	}
 	return value, nil
+}
+
+// ProtocolVersion belongs only to the local, atomically installed components.
+const ProtocolVersion = 4
+
+func validateProtocolVersion(value int) error {
+	if value != ProtocolVersion {
+		return model.NewError(model.ErrorProtocol, fmt.Sprintf("unsupported local IPC version %d", value), false)
+	}
+	return nil
 }

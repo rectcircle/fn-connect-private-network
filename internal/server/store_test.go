@@ -65,42 +65,23 @@ func TestStoreDeviceLifecycleAndOverlayChange(t *testing.T) {
 	}
 }
 
-func TestStoreSingleFileAndLegacyMigration(t *testing.T) {
-	for _, transaction := range []bool{false, true} {
-		t.Run(map[bool]string{false: "files", true: "transaction"}[transaction], func(t *testing.T) {
+func TestStoreRejectsDevelopmentDataWithoutOverwriting(t *testing.T) {
+	for _, name := range []string{"state.transaction.json", "settings.json", "devices.json"} {
+		t.Run(name, func(t *testing.T) {
 			dir := t.TempDir()
-			state := model.ServerState{
-				Settings: model.ServerSettings{OverlayCIDR: "192.168.240.0/24", ListenPort: DefaultListenPort},
-			}
-			if transaction {
-				if err := writeJSONAtomic(filepath.Join(dir, "state.transaction.json"), stateDocument{Version: 2, State: state}); err != nil {
-					t.Fatal(err)
-				}
-				if err := os.WriteFile(filepath.Join(dir, "settings.json"), []byte("{broken"), 0o600); err != nil {
-					t.Fatal(err)
-				}
-			} else {
-				if err := writeJSONAtomic(filepath.Join(dir, "settings.json"), map[string]any{
-					"version": 2, "settings": state.Settings,
-				}); err != nil {
-					t.Fatal(err)
-				}
-				if err := writeJSONAtomic(filepath.Join(dir, "devices.json"), map[string]any{
-					"version": 1, "devices": []model.Device{},
-				}); err != nil {
-					t.Fatal(err)
-				}
-			}
-			service, err := OpenService(dir, nil, nil)
-			if err != nil || service.Snapshot().Settings.OverlayCIDR != state.Settings.OverlayCIDR {
-				t.Fatalf("migration err=%v", err)
-			}
-			if _, _, err := createTestDevice(service, "Mac", testPublicKey(1)); err != nil {
+			path := filepath.Join(dir, name)
+			if err := os.WriteFile(path, []byte("old data"), 0600); err != nil {
 				t.Fatal(err)
 			}
-			reopened, err := OpenService(dir, nil, nil)
-			if err != nil || len(reopened.Snapshot().Devices) != 1 {
-				t.Fatalf("new file was not authoritative: %v", err)
+			if _, err := OpenService(dir, nil, nil); err == nil {
+				t.Fatal("accepted old data")
+			}
+			if _, err := os.Stat(filepath.Join(dir, stateFileName)); !os.IsNotExist(err) {
+				t.Fatal("initialized over old data")
+			}
+			data, _ := os.ReadFile(path)
+			if string(data) != "old data" {
+				t.Fatal("old data changed")
 			}
 		})
 	}

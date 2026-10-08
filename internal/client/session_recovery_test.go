@@ -15,6 +15,7 @@ import (
 
 	"github.com/coder/websocket"
 	"github.com/rectcircle/fn-connect-private-network/internal/model"
+	"github.com/rectcircle/fn-connect-private-network/internal/version"
 )
 
 func TestCookieUpdatesDoNotOverwriteOtherRequests(t *testing.T) {
@@ -126,6 +127,10 @@ func TestAuthenticationRetriesOnlyOnceWithRenewedCookies(t *testing.T) {
 			t.Run(transport+map[bool]string{true: "_rejected", false: "_recovered"}[alwaysReject], func(t *testing.T) {
 				var calls atomic.Int32
 				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					if transport == "api" && r.URL.Path == "/api/v1/bootstrap" {
+						_ = json.NewEncoder(w).Encode(Bootstrap{ServerVersion: version.Current, Administrator: true})
+						return
+					}
 					count := calls.Add(1)
 					if count == 1 || alwaysReject {
 						http.SetCookie(w, &http.Cookie{Name: "ost", Value: "renewed", Path: "/"})
@@ -146,7 +151,7 @@ func TestAuthenticationRetriesOnlyOnceWithRenewedCookies(t *testing.T) {
 					} else if transport == "watch" {
 						_ = json.NewEncoder(w).Encode(ConfigurationWatchResult{Cursor: "ready"})
 					} else {
-						_ = json.NewEncoder(w).Encode(Bootstrap{Administrator: true})
+						_ = json.NewEncoder(w).Encode(Bootstrap{ServerVersion: version.Current, Administrator: true})
 					}
 				}))
 				defer server.Close()

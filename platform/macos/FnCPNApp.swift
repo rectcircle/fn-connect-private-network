@@ -29,10 +29,16 @@ private func L(_ key: String, _ arguments: String...) -> String {
     return result
 }
 
-private let protocolVersion = 4
+private let ipcProtocolVersion = 4
 private let maximumFrameSize = 256 * 1024
 
 private func failureSummary(_ failure: [String: Any]) -> String {
+    if failure["code"] as? String == "VERSION_INCOMPATIBLE" {
+        let target = failure["upgradeTarget"] as? String
+        let instruction = target == "client" ? L("版本不兼容，请升级客户端。") : L("版本不兼容，请升级服务端。")
+        return instruction + " " + L("客户端 {0}，服务端 {1}", failure["clientVersion"] as? String ?? "?", failure["serverVersion"] as? String ?? "?")
+    }
+
     if failure["remoteCode"] as? String == "TWO_FACTOR_REQUIRED" {
         return L("该账号需要两步验证，当前版本暂不支持")
     }
@@ -46,6 +52,7 @@ private func failureSummary(_ failure: [String: Any]) -> String {
         "FAILED_PRECONDITION": "操作所需条件尚未满足。",
         "DEVICE_REVOKED": "设备授权已撤销，请重新登录。",
         "UNAVAILABLE": "服务暂不可用，请稍后重试。",
+        "SERVER_UNAVAILABLE": "未找到 FnCPN 服务，请在 fnOS 安装或启动 FnCPN 后重新连接。",
         "TIMEOUT": "请求超时，请重试。",
         "RESOURCE_EXHAUSTED": "资源不足，请稍后重试。",
         "DISCOVERY_FAILED": "网络地址发现失败，请检查网络。",
@@ -124,7 +131,7 @@ private final class IPCClient {
 
         let requestID = UUID().uuidString
         var request: [String: Any] = [
-            "version": protocolVersion,
+            "version": ipcProtocolVersion,
             "id": requestID,
             "method": method,
         ]
@@ -158,7 +165,11 @@ private final class IPCClient {
                 userInfo: [NSLocalizedDescriptionKey: L("客户端服务响应无效")]
             )
         }
-        guard response["version"] as? Int == protocolVersion,
+        if let appVersion = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String,
+           response["productVersion"] as? String != appVersion {
+            throw NSError(domain: "FnCPN", code: 4, userInfo: [NSLocalizedDescriptionKey: L("本地组件版本不一致，请完成更新并重新启动 FnCPN。")])
+        }
+        guard response["version"] as? Int == ipcProtocolVersion,
               response["id"] as? String == requestID,
               let ok = response["ok"] as? Bool else {
             throw invalidResponse()
@@ -350,7 +361,7 @@ private func connectionStatusIcon(_ state: String) -> NSImage {
     switch state {
     case "LOCAL", "DIRECT", "RELAY": variant = "connected"
     case "AUTHORIZING", "PROBING", "RECONNECTING": variant = "working"
-    case "ERROR", "DAEMON_UNAVAILABLE", "AUTH_REQUIRED": variant = "attention"
+    case "ERROR", "DAEMON_UNAVAILABLE", "AUTH_REQUIRED", "SERVER_UNAVAILABLE": variant = "attention"
     default: variant = "offline"
     }
     let image = Bundle.main.image(forResource: "Status-" + variant) ??
@@ -371,7 +382,7 @@ private struct ConnectionPresentation {
             "PROBING": L("正在检测网络"), "LOCAL": L("已在同一局域网"),
             "DIRECT": L("IPv6 直连"), "RELAY": L("FN Connect 中继"),
             "RECONNECTING": L("正在重新连接"), "PAUSED": L("已断开"),
-            "ERROR": L("连接失败"), "DAEMON_UNAVAILABLE": L("客户端服务不可用")
+            "SERVER_UNAVAILABLE": L("未找到 FnCPN 服务"), "ERROR": L("连接失败"), "DAEMON_UNAVAILABLE": L("客户端服务不可用")
         ][state] ?? state
     }
     var actionTitle: String { needsLogin ? L("重新登录") : connected ? L("断开连接") : L("连接") }

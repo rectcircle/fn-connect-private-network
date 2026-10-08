@@ -57,7 +57,11 @@ func TestHTTPAndWebSocketFailuresRetainReasons(t *testing.T) {
 					t.Fatalf("%s accepted HTTP %d", name, test.status)
 				}
 				failure := model.PublicError(err)
-				if failure.Code != test.code || failure.Retryable != test.retryable || failure.HTTPStatus != test.status ||
+				expectedCode := test.code
+				if name == "http" && test.status == 404 {
+					expectedCode = model.ErrorServerUnavailable
+				}
+				if failure.Code != expectedCode || failure.Retryable != test.retryable || failure.HTTPStatus != test.status ||
 					!strings.Contains(failure.Detail, test.detail) || failure.Operation == "" || failure.RequestID == "" {
 					t.Fatalf("%s failure = %+v", name, failure)
 				}

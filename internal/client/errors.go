@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/rectcircle/fn-connect-private-network/internal/model"
+	"github.com/rectcircle/fn-connect-private-network/internal/version"
 )
 
 // HTTPResponseError consumes a bounded error body for API, upgrade, and
@@ -127,7 +128,7 @@ func decodeResponse(response *http.Response, destination any) error {
 		if authErr := gatewayAuthenticationError(response, data); authErr != nil {
 			err = authErr
 		} else {
-			err = model.DecodeStrict(data, destination)
+			err = model.DecodeResponse(data, destination)
 		}
 	}
 	if err == nil {
@@ -141,4 +142,10 @@ func decodeResponse(response *http.Response, destination any) error {
 	failure.HTTPStatus = response.StatusCode
 	failure.RequestID = model.SafeRequestID(response.Header.Get("X-Request-ID"))
 	return failure
+}
+
+// isAdmissionFailure prevents stale configuration and automatic reconnect from
+// bypassing a missing server or rejected product version.
+func isAdmissionFailure(err error) bool {
+	return version.IsFailure(err) || err != nil && model.AsError(err).Code == model.ErrorServerUnavailable
 }

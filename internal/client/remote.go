@@ -14,18 +14,19 @@ import (
 	"time"
 
 	"github.com/rectcircle/fn-connect-private-network/internal/model"
+	"github.com/rectcircle/fn-connect-private-network/internal/version"
 )
 
 const gatewayApplicationPath = "/app/fncpn"
 const maxRemoteResponseSize = 256 * 1024
 
 type Bootstrap struct {
-	ProtocolVersion int                         `json:"protocolVersion"`
-	Administrator   bool                        `json:"administrator"`
-	Settings        model.ServerSettings        `json:"settings"`
-	ServerAddress   string                      `json:"serverAddress"`
-	DeviceCount     int                         `json:"deviceCount"`
-	Network         model.ServerNetworkSnapshot `json:"network"`
+	ServerVersion string                      `json:"serverVersion"`
+	Administrator bool                        `json:"administrator"`
+	Settings      model.ServerSettings        `json:"settings"`
+	ServerAddress string                      `json:"serverAddress"`
+	DeviceCount   int                         `json:"deviceCount"`
+	Network       model.ServerNetworkSnapshot `json:"network"`
 }
 
 type RemoteClient struct {
@@ -75,9 +76,38 @@ func DefaultRemoteURL(fnID string) (string, error) {
 	return "https://" + normalized + ".fnos.net" + gatewayApplicationPath, nil
 }
 
+// CheckVersion uses a stable endpoint independently of business configuration.
+func (c *RemoteClient) CheckVersion(ctx context.Context) error {
+	var identity struct {
+		ServerVersion string `json:"serverVersion"`
+	}
+	if err := c.call(ctx, http.MethodGet, "/version", nil, &identity); err != nil {
+		if failure := model.AsError(err); failure.HTTPStatus == http.StatusNotFound &&
+			(failure.Code == model.ErrorNotFound || failure.Code == model.ErrorUnavailable) {
+			e := model.PublicError(err)
+			e.Code, e.Retryable = model.ErrorServerUnavailable, false
+			e.Message = "FnCPN server endpoint is missing; install or start FnCPN on fnOS, then connect again"
+			return e
+		}
+		if model.AsError(err).Code == model.ErrorProtocol {
+			e := model.PublicError(err)
+			e.Operation = "version.check"
+			return e
+		}
+		return err
+	}
+	return version.Check(version.Current, identity.ServerVersion)
+}
+
 func (c *RemoteClient) Bootstrap(ctx context.Context) (Bootstrap, error) {
 	var result Bootstrap
+	if err := c.CheckVersion(ctx); err != nil {
+		return result, err
+	}
 	err := c.call(ctx, http.MethodGet, "/api/v1/bootstrap", nil, &result)
+	if err == nil {
+		err = version.Check(version.Current, result.ServerVersion)
+	}
 	return result, err
 }
 
@@ -227,6 +257,7 @@ func (c *RemoteClient) do(
 	if body != nil {
 		request.Header.Set("Content-Type", "application/json")
 	}
+	request.Header.Set("X-FnCPN-Client-Version", version.Current)
 	c.addCookies(request)
 	httpClient := c.httpClient
 	if minimumTimeout > 0 &&
@@ -251,6 +282,12 @@ func (c *RemoteClient) do(
 		failure := model.WithOperation(cookieErr, "credentials.save_response")
 		failure.HTTPStatus = response.StatusCode
 		return nil, failure
+	}
+	if serverVersion := response.Header.Get("X-FnCPN-Version"); serverVersion != "" {
+		if err := version.Check(version.Current, serverVersion); err != nil {
+			response.Body.Close()
+			return nil, err
+		}
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		err := HTTPResponseError(response, responseOperation(response), nil)

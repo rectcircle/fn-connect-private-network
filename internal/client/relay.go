@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -16,6 +17,7 @@ import (
 	"github.com/coder/websocket"
 	"github.com/rectcircle/fn-connect-private-network/internal/logging"
 	"github.com/rectcircle/fn-connect-private-network/internal/model"
+	"github.com/rectcircle/fn-connect-private-network/internal/version"
 )
 
 const (
@@ -397,6 +399,7 @@ func dialRelayOnce(
 	onCookies ...func([]Cookie, []Cookie) error,
 ) (*websocket.Conn, error) {
 	headers := make(http.Header)
+	headers.Set("X-FnCPN-Client-Version", version.Current)
 	originScheme := "http"
 	if target.Scheme == "wss" {
 		originScheme = "https"
@@ -439,7 +442,16 @@ func dialRelayOnce(
 	if err != nil {
 		operation := "relay.handshake " + model.SafeURL(target.String())
 		if response != nil {
-			return nil, HTTPResponseError(response, operation, err)
+			failure := HTTPResponseError(response, operation, err)
+			// Gateway login failures do not carry an application version.
+			if failure.Code != model.ErrorAuthRequired {
+				if serverVersion := response.Header.Get("X-FnCPN-Version"); serverVersion != "" {
+					if checkErr := version.Check(version.Current, serverVersion); checkErr != nil {
+						return nil, checkErr
+					}
+				}
+			}
+			return nil, failure
 		}
 		return nil, model.WithOperation(model.NormalizeError(
 			err,
@@ -447,6 +459,20 @@ func dialRelayOnce(
 			"FN Connect relay is unavailable",
 			true,
 		), operation)
+	}
+	if response != nil {
+		serverVersion := response.Header.Get("X-FnCPN-Version")
+		if serverVersion != "" || strings.HasSuffix(target.Path, "/relay/v1/wireguard") {
+			if checkErr := version.Check(version.Current, serverVersion); checkErr != nil {
+				if connection != nil {
+					connection.CloseNow()
+				}
+				if response.Body != nil {
+					response.Body.Close()
+				}
+				return nil, checkErr
+			}
+		}
 	}
 	return connection, nil
 }

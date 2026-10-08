@@ -85,7 +85,7 @@ func Run(ctx context.Context, arguments []string, environment Environment) int {
 		return 7
 	case model.ErrorAlreadyExists, model.ErrorConflict:
 		return 5
-	case model.ErrorFailedPrecondition, model.ErrorProtocol:
+	case model.ErrorFailedPrecondition, model.ErrorProtocol, model.ErrorVersionIncompatible:
 		return 8
 	case model.ErrorTimeout:
 		return 124
@@ -116,7 +116,7 @@ func runPurgeUser(arguments []string, environment Environment) error {
 		return err
 	}
 	// The root uninstall script removes this user's credential directory.
-	// This command runs as the user and never opens the old Keychain.
+	// This command removes only the invoking user's current application data.
 	if err := client.NewConfigStore(*configPath, nil).Clear(); err != nil {
 		return err
 	}

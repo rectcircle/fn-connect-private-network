@@ -7,6 +7,7 @@ import (
 	"io"
 
 	"github.com/rectcircle/fn-connect-private-network/internal/model"
+	"github.com/rectcircle/fn-connect-private-network/internal/version"
 )
 
 func ReadRequest(reader io.Reader) (_ Request, failure error) {
@@ -37,7 +38,7 @@ func ReadRequest(reader io.Reader) (_ Request, failure error) {
 			false,
 		)
 	}
-	if err := model.ValidateProtocolVersion(request.Version); err != nil {
+	if err := validateProtocolVersion(request.Version); err != nil {
 		return Request{}, err
 	}
 	return request, nil
@@ -60,7 +61,10 @@ func ReadResponse(reader io.Reader) (Response, error) {
 	if err := model.DecodeStrict(payload, &response); err != nil {
 		return Response{}, fmt.Errorf("decode IPC response: %w", err)
 	}
-	if err := model.ValidateProtocolVersion(response.Version); err != nil {
+	if response.ProductVersion != version.Current {
+		return Response{}, model.NewError(model.ErrorFailedPrecondition, "local components differ; complete installation and restart FnCPN", false)
+	}
+	if err := validateProtocolVersion(response.Version); err != nil {
 		return Response{}, err
 	}
 	if response.OK && response.Error != nil {

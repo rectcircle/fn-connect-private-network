@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/rectcircle/fn-connect-private-network/internal/model"
+	"github.com/rectcircle/fn-connect-private-network/internal/version"
 )
 
 const (
@@ -297,7 +298,8 @@ func (s *LocalProbeService) ServeHTTP(
 	_, _ = mac.Write(nonce)
 	writer.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(writer).Encode(model.LocalProbeResponse{
-		Proof: base64.RawURLEncoding.EncodeToString(mac.Sum(nil)),
+		ServerVersion: version.Current,
+		Proof:         base64.RawURLEncoding.EncodeToString(model.VersionedProbeProof(mac.Sum(nil), version.Current)),
 	}); err != nil {
 		s.store.logger.Error("write local probe response", "request_id", requestID, "error", err)
 	}

@@ -25,7 +25,7 @@ func TestMacOSLocalizationRuntime(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	helper, _, ok := strings.Cut(string(source), "private let protocolVersion")
+	helper, _, ok := strings.Cut(string(source), "private let ipcProtocolVersion")
 	if !ok {
 		t.Fatal("missing localization helper")
 	}

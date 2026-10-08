@@ -29,6 +29,7 @@ import (
 	"github.com/rectcircle/fn-connect-private-network/internal/model"
 	"github.com/rectcircle/fn-connect-private-network/internal/notify"
 	"github.com/rectcircle/fn-connect-private-network/internal/privileged"
+	"github.com/rectcircle/fn-connect-private-network/internal/version"
 	wgconfig "github.com/rectcircle/fn-connect-private-network/internal/wireguard"
 )
 
@@ -413,6 +414,9 @@ func (m *Manager) authorize(
 	}
 	bootstrap, err := remote.Bootstrap(ctx)
 	if err != nil {
+		return m.fail(err)
+	}
+	if err := version.Check(version.Current, bootstrap.ServerVersion); err != nil {
 		return m.fail(err)
 	}
 	// Non-administrator fnOS accounts may also register a device and establish a
@@ -905,7 +909,11 @@ func (m *Manager) watchConfiguration(ctx context.Context) {
 		m.watchCancel = cancel
 		m.operation.Unlock()
 
-		result, err := watcher.WatchConfiguration(watchContext, config.DeviceID, cursor)
+		var result ConfigurationWatchResult
+		err = checkRemoteVersion(watchContext, remote)
+		if err == nil {
+			result, err = watcher.WatchConfiguration(watchContext, config.DeviceID, cursor)
+		}
 
 		m.operation.Lock()
 		current, loadErr := m.store.Load()
@@ -974,7 +982,7 @@ func (m *Manager) watchConfiguration(ctx context.Context) {
 		}
 		if err != nil {
 			typed := model.AsError(err)
-			if typed.Code == model.ErrorAuthRequired || typed.Code == model.ErrorDeviceRevoked {
+			if typed.Code == model.ErrorAuthRequired || typed.Code == model.ErrorDeviceRevoked || isAdmissionFailure(err) {
 				_ = m.fail(err)
 				m.bridge.Stop()
 				m.convergeStoppedNetwork(ctx, *current, m.Status())
@@ -983,6 +991,9 @@ func (m *Manager) watchConfiguration(ctx context.Context) {
 			}
 		}
 		m.operation.Unlock()
+		if isAdmissionFailure(err) {
+			continue
+		}
 		if err == nil {
 			cursor = result.Cursor
 			retryDelay = 0
@@ -1003,7 +1014,7 @@ func (m *Manager) cancelConfigurationWatch() {
 
 func canAutoConnect(config *LocalConfig, status model.ClientStatus) bool {
 	return config != nil && config.DeviceID != "" && config.AutoConnect &&
-		status.State != model.ClientAuthRequired && status.State != model.ClientAuthorizing &&
+		status.State != model.ClientServerUnavailable && status.State != model.ClientAuthRequired && status.State != model.ClientAuthorizing &&
 		(status.State != model.ClientError || status.LastError != nil && status.LastError.Retryable)
 }
 
@@ -1219,6 +1230,10 @@ func (m *Manager) localPathStillHealthy(ctx context.Context, config *LocalConfig
 			config.DeviceID,
 			snapshot,
 		)
+		if isAdmissionFailure(probeErr) {
+			_ = m.fail(probeErr)
+			return false
+		}
 		if probeErr != nil {
 			m.logger.Warn("local path check failed", logging.ErrorAttrs(probeErr)...)
 		}
@@ -1360,6 +1375,9 @@ func (m *Manager) maintainHealth(ctx context.Context) {
 		}
 	case model.ClientLocal:
 		if !m.localPathStillHealthy(ctx, config) {
+			if isAdmissionFailure(m.Status().LastError) {
+				return
+			}
 			if ctx.Err() != nil {
 				return
 			}
@@ -1742,7 +1760,39 @@ func (m *Manager) connectWithOptionalConfiguration(
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
+	if selection.err != nil {
+		return m.fail(selection.err)
+	}
 	local := selection.reachable
+	if !local {
+		checkErr := checkRemoteVersion(ctx, remote)
+		if checkErr != nil && model.AsError(checkErr).Code == model.ErrorAuthRequired {
+			// The version endpoint sits behind fnOS authentication too. Recover
+			// an expired session before retrying admission, never skip admission.
+			recovered, recoverErr := m.recoverNativeSession(ctx, config.FNID, true)
+			if recoverErr != nil {
+				return m.fail(recoverErr)
+			}
+			if recovered {
+				cookies, err = m.store.LoadCookies(config.FNID)
+				if err != nil {
+					return m.fail(err)
+				}
+				remote, err = m.remote(config.FNID, cookies, func(updated []Cookie) error {
+					mergeErr := m.store.MergeCookies(config.FNID, cookies, updated)
+					cookies = slices.Clone(updated)
+					return mergeErr
+				})
+				if err != nil {
+					return m.fail(err)
+				}
+				checkErr = checkRemoteVersion(ctx, remote)
+			}
+		}
+		if checkErr != nil {
+			return m.fail(checkErr)
+		}
+	}
 	probeConfiguration := selection.configuration
 	observedEndpoints := selection.endpoints
 	logger.Info("local probe completed", "reachable", local)
@@ -1806,6 +1856,9 @@ func (m *Manager) connectWithOptionalConfiguration(
 				// The gateway is unreachable (timeout/network). Reuse any usable
 				// local configuration so a manual retry on the NAS LAN still comes
 				// up even when the public gateway is slow or down.
+				if isAdmissionFailure(err) {
+					return m.fail(err)
+				}
 				if isValidClientConfiguration(config.Configuration) {
 					logger.Warn("using known local configuration after gateway fetch failed",
 						"error", err, "address", config.Configuration.ClientAddress)
@@ -2416,6 +2469,17 @@ func (m *Manager) fail(err error) error {
 		return err
 	}
 	typed := model.AsError(err)
+	if isAdmissionFailure(err) {
+		m.cancelConfigurationWatch()
+		m.bridge.Stop()
+		cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if cleanupErr := m.removeNetwork(cleanup); cleanupErr != nil {
+			typed = model.PublicError(err)
+			typed.Detail += "; network cleanup failed: " + model.ErrorDetail(cleanupErr)
+		}
+		m.directPruneToIdle()
+	}
 	if typed.Code == model.ErrorCanceled {
 		m.logger.Debug("client operation canceled", logging.ErrorAttrs(err)...)
 		return err
@@ -2430,6 +2494,8 @@ func (m *Manager) fail(err error) error {
 		state = model.ClientAuthRequired
 		// A terminal auth state must not keep stale "probing" diagnostics.
 		m.directPruneToIdle()
+	case typed.Code == model.ErrorServerUnavailable:
+		state = model.ClientServerUnavailable
 	case typed.Retryable:
 		state = model.ClientReconnecting
 	case typed.Code == model.ErrorPermissionDenied:
@@ -2650,6 +2716,9 @@ func (p SystemLocalProbe) Reachable(
 				cancel()
 				return true, nil
 			}
+			if isAdmissionFailure(res.err) {
+				return false, res.err
+			}
 			if res.err != nil {
 				failures = append(failures, res.err)
 			}
@@ -2724,10 +2793,10 @@ func probeLocalEndpoint(
 		return false, readErr
 	}
 	var probe model.LocalProbeResponse
-	decodeErr := model.DecodeStrict(data, &probe)
+	decodeErr := model.DecodeResponse(data, &probe)
 	proof, proofErr := base64.RawURLEncoding.DecodeString(probe.Proof)
-	if decodeErr == nil && proofErr == nil && hmac.Equal(proof, expectedProof) {
-		return true, nil
+	if decodeErr == nil && proofErr == nil && hmac.Equal(proof, model.VersionedProbeProof(expectedProof, probe.ServerVersion)) {
+		return version.Check(version.Current, probe.ServerVersion) == nil, version.Check(version.Current, probe.ServerVersion)
 	}
 	return false, model.NewError(model.ErrorProtocol, "local probe returned an invalid identity proof", false)
 }
@@ -2847,4 +2916,15 @@ func isVirtualInterface(name string) bool {
 
 func isPublicIPv6Address(address netip.Addr) bool {
 	return wgconfig.IsPublicIPv6(address)
+}
+
+func checkRemoteVersion(ctx context.Context, remote RemoteService) error {
+	if checker, ok := remote.(interface{ CheckVersion(context.Context) error }); ok {
+		return checker.CheckVersion(ctx)
+	}
+	bootstrap, err := remote.Bootstrap(ctx)
+	if err != nil {
+		return err
+	}
+	return version.Check(version.Current, bootstrap.ServerVersion)
 }

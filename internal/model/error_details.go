@@ -104,6 +104,9 @@ func FormatError(err error) string {
 		return ""
 	}
 	text := string(value.Code) + ": " + value.Message
+	if value.Code == ErrorVersionIncompatible {
+		text += fmt.Sprintf(" (client %s, server %s; upgrade %s)", value.ClientVersion, value.ServerVersion, value.UpgradeTarget)
+	}
 	if value.Operation != "" {
 		text += " [" + value.Operation + "]"
 	}
@@ -138,9 +141,9 @@ func WithOperation(err error, operation string) *Error {
 
 func IsErrorCode(code ErrorCode) bool {
 	switch code {
-	case ErrorInvalidArgument, ErrorAuthRequired, ErrorPermissionDenied, ErrorNotFound,
+	case ErrorServerUnavailable, ErrorInvalidArgument, ErrorAuthRequired, ErrorPermissionDenied, ErrorNotFound,
 		ErrorAlreadyExists, ErrorFailedPrecondition, ErrorDeviceRevoked, ErrorUnavailable,
-		ErrorConflict, ErrorTimeout, ErrorCanceled, ErrorInternal, ErrorProtocol,
+		ErrorConflict, ErrorTimeout, ErrorCanceled, ErrorInternal, ErrorProtocol, ErrorVersionIncompatible,
 		ErrorResourceExhausted, ErrorDiscoveryFailed:
 		return true
 	default:

@@ -5,9 +5,8 @@ import (
 	"os"
 
 	"github.com/rectcircle/fn-connect-private-network/internal/command"
+	"github.com/rectcircle/fn-connect-private-network/internal/version"
 )
-
-var version = "dev"
 
 func main() {
 	ctx, cancel := command.SignalContext(context.Background())
@@ -16,6 +15,6 @@ func main() {
 		Stdin:   os.Stdin,
 		Stdout:  os.Stdout,
 		Stderr:  os.Stderr,
-		Version: version,
+		Version: version.Current,
 	}))
 }

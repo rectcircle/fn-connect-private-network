@@ -15,6 +15,7 @@ import (
 	"github.com/rectcircle/fn-connect-private-network/internal/ipc"
 	"github.com/rectcircle/fn-connect-private-network/internal/logging"
 	"github.com/rectcircle/fn-connect-private-network/internal/model"
+	"github.com/rectcircle/fn-connect-private-network/internal/version"
 )
 
 func TestAuthorizationAndConnectionInfoMilestones(t *testing.T) {
@@ -30,7 +31,7 @@ func TestAuthorizationAndConnectionInfoMilestones(t *testing.T) {
 			}
 			configuration := managerClientConfiguration()
 			remote := &fakeRemoteService{
-				bootstrap: Bootstrap{Administrator: true},
+				bootstrap: Bootstrap{ServerVersion: version.Current, Administrator: true},
 				registration: model.DeviceRegistration{
 					Device: model.Device{
 						ID: configuration.DeviceID, OverlayAddress: configuration.ClientAddress, Enabled: true,

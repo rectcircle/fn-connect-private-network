@@ -189,8 +189,7 @@ func (systemDeviceManager) Remove(
 		)
 	}
 	expectedAlias := "fncpn:" + ownerToken
-	legacyOwned := ownerToken == "legacy-v1" && link.Attrs().Alias == ""
-	if link.Attrs().Alias != expectedAlias && !legacyOwned {
+	if link.Attrs().Alias != expectedAlias {
 		return model.NewError(
 			model.ErrorConflict,
 			fmt.Sprintf("refusing to delete unowned interface %q", interfaceName),

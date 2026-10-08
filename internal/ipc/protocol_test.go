@@ -72,20 +72,20 @@ func TestRequestAndResponseRoundTrip(t *testing.T) {
 func TestReadResponseRejectsInvalidEnvelope(t *testing.T) {
 	tests := []Response{
 		{
-			Version: model.ProtocolVersion,
+			Version: ProtocolVersion,
 			ID:      "request",
 			OK:      true,
 			Error:   model.NewError(model.ErrorInternal, "bad", false),
 		},
 		{
-			Version: model.ProtocolVersion,
+			Version: ProtocolVersion,
 			ID:      "request",
 			OK:      false,
 			Result:  []byte(`{}`),
 			Error:   model.NewError(model.ErrorInternal, "bad", false),
 		},
 		{
-			Version: model.ProtocolVersion,
+			Version: ProtocolVersion,
 			ID:      "request",
 			OK:      false,
 		},
@@ -97,6 +97,20 @@ func TestReadResponseRejectsInvalidEnvelope(t *testing.T) {
 		}
 		if _, err := ReadResponse(&buffer); err == nil {
 			t.Fatalf("invalid response accepted: %+v", response)
+		}
+	}
+}
+
+func TestReadResponseRejectsDifferentLocalProduct(t *testing.T) {
+	for _, product := range []string{"", "99.0.0"} {
+		response := Success("id", nil)
+		response.ProductVersion = product
+		var buffer bytes.Buffer
+		if err := WriteResponse(&buffer, response); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := ReadResponse(&buffer); err == nil {
+			t.Fatalf("accepted local product %q", product)
 		}
 	}
 }

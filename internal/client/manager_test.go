@@ -20,6 +20,7 @@ import (
 	"github.com/rectcircle/fn-connect-private-network/internal/ipc"
 	"github.com/rectcircle/fn-connect-private-network/internal/model"
 	"github.com/rectcircle/fn-connect-private-network/internal/privileged"
+	"github.com/rectcircle/fn-connect-private-network/internal/version"
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 )
 
@@ -30,7 +31,7 @@ func TestManagerAuthorizesAndConnectsThroughRelay(t *testing.T) {
 	)
 	configuration := managerClientConfiguration()
 	remote := &fakeRemoteService{
-		bootstrap: Bootstrap{
+		bootstrap: Bootstrap{ServerVersion: version.Current,
 			Administrator: true,
 			Network: model.ServerNetworkSnapshot{
 				Fresh: true,
@@ -217,7 +218,7 @@ func TestManagerTriesNextDirectAddressAfterHandshakeTimeout(t *testing.T) {
 func TestManagerReauthorizationReusesDevice(t *testing.T) {
 	store := configuredManagerStore(t)
 	remote := &fakeRemoteService{
-		bootstrap:     Bootstrap{Administrator: true},
+		bootstrap:     Bootstrap{ServerVersion: version.Current, Administrator: true},
 		configuration: managerClientConfiguration(),
 	}
 	manager, err := NewManager(ManagerOptions{
@@ -1122,7 +1123,8 @@ func TestSystemLocalProbeUsesDeviceHMACWithoutCookies(t *testing.T) {
 			_, _ = mac.Write([]byte(model.LocalProbeDomain))
 			_, _ = mac.Write(nonce)
 			responseBody, err := json.Marshal(model.LocalProbeResponse{
-				Proof: base64.RawURLEncoding.EncodeToString(mac.Sum(nil)),
+				ServerVersion: version.Current,
+				Proof:         base64.RawURLEncoding.EncodeToString(model.VersionedProbeProof(mac.Sum(nil), version.Current)),
 			})
 			if err != nil {
 				t.Fatalf("encode response: %v", err)
@@ -1280,7 +1282,11 @@ func (s *fakeWatchingRemoteService) WatchConfiguration(
 }
 
 func (s *fakeRemoteService) Bootstrap(context.Context) (Bootstrap, error) {
-	return s.bootstrap, s.err
+	value := s.bootstrap
+	if value.ServerVersion == "" {
+		value.ServerVersion = version.Current
+	}
+	return value, s.err
 }
 
 func (s *fakeRemoteService) RegisterDevice(
@@ -1419,4 +1425,12 @@ func (p fakeLocalProbe) Snapshot() (NetworkSnapshot, error) {
 		Addresses:      p.addresses,
 		HasPublicIPv6:  len(p.addresses) > 0,
 	}, p.err
+}
+
+func (s *fakeRemoteService) CheckVersion(context.Context) error {
+	server := s.bootstrap.ServerVersion
+	if server == "" {
+		server = version.Current
+	}
+	return version.Check(version.Current, server)
 }

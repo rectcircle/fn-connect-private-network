@@ -2,7 +2,7 @@
   ".url": {
     "fncpn.main": {
       "title": "FnCPN",
-      "icon": "images/icon_{0}.png",
+      "icon": "images/icon_256.png",
       "type": "iframe",
       "protocol": "",
       "gatewayPrefix": "/app/fncpn",

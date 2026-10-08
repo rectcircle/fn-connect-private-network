@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"net"
 	"os"
@@ -14,40 +13,44 @@ import (
 )
 
 const (
-	ProtocolVersion  = 4
 	LocalProbeDomain = "fncpn-local-probe-v1\x00"
 )
 
 type ErrorCode string
 
 const (
-	ErrorInvalidArgument    ErrorCode = "INVALID_ARGUMENT"
-	ErrorAuthRequired       ErrorCode = "AUTH_REQUIRED"
-	ErrorPermissionDenied   ErrorCode = "PERMISSION_DENIED"
-	ErrorNotFound           ErrorCode = "NOT_FOUND"
-	ErrorAlreadyExists      ErrorCode = "ALREADY_EXISTS"
-	ErrorFailedPrecondition ErrorCode = "FAILED_PRECONDITION"
-	ErrorDeviceRevoked      ErrorCode = "DEVICE_REVOKED"
-	ErrorUnavailable        ErrorCode = "UNAVAILABLE"
-	ErrorConflict           ErrorCode = "CONFLICT"
-	ErrorTimeout            ErrorCode = "TIMEOUT"
-	ErrorCanceled           ErrorCode = "CANCELED"
-	ErrorInternal           ErrorCode = "INTERNAL"
-	ErrorProtocol           ErrorCode = "PROTOCOL_ERROR"
-	ErrorResourceExhausted  ErrorCode = "RESOURCE_EXHAUSTED"
-	ErrorDiscoveryFailed    ErrorCode = "DISCOVERY_FAILED"
+	ErrorInvalidArgument     ErrorCode = "INVALID_ARGUMENT"
+	ErrorAuthRequired        ErrorCode = "AUTH_REQUIRED"
+	ErrorPermissionDenied    ErrorCode = "PERMISSION_DENIED"
+	ErrorNotFound            ErrorCode = "NOT_FOUND"
+	ErrorAlreadyExists       ErrorCode = "ALREADY_EXISTS"
+	ErrorFailedPrecondition  ErrorCode = "FAILED_PRECONDITION"
+	ErrorDeviceRevoked       ErrorCode = "DEVICE_REVOKED"
+	ErrorUnavailable         ErrorCode = "UNAVAILABLE"
+	ErrorConflict            ErrorCode = "CONFLICT"
+	ErrorTimeout             ErrorCode = "TIMEOUT"
+	ErrorCanceled            ErrorCode = "CANCELED"
+	ErrorInternal            ErrorCode = "INTERNAL"
+	ErrorProtocol            ErrorCode = "PROTOCOL_ERROR"
+	ErrorServerUnavailable   ErrorCode = "SERVER_UNAVAILABLE"
+	ErrorVersionIncompatible ErrorCode = "VERSION_INCOMPATIBLE"
+	ErrorResourceExhausted   ErrorCode = "RESOURCE_EXHAUSTED"
+	ErrorDiscoveryFailed     ErrorCode = "DISCOVERY_FAILED"
 )
 
 type Error struct {
-	Code       ErrorCode `json:"code"`
-	Message    string    `json:"message"`
-	Retryable  bool      `json:"retryable"`
-	Operation  string    `json:"operation,omitempty"`
-	Detail     string    `json:"detail,omitempty"`
-	HTTPStatus int       `json:"httpStatus,omitempty"`
-	RemoteCode string    `json:"remoteCode,omitempty"`
-	RequestID  string    `json:"requestId,omitempty"`
-	Cause      error     `json:"-"`
+	ClientVersion string    `json:"clientVersion,omitempty"`
+	ServerVersion string    `json:"serverVersion,omitempty"`
+	UpgradeTarget string    `json:"upgradeTarget,omitempty"`
+	Code          ErrorCode `json:"code"`
+	Message       string    `json:"message"`
+	Retryable     bool      `json:"retryable"`
+	Operation     string    `json:"operation,omitempty"`
+	Detail        string    `json:"detail,omitempty"`
+	HTTPStatus    int       `json:"httpStatus,omitempty"`
+	RemoteCode    string    `json:"remoteCode,omitempty"`
+	RequestID     string    `json:"requestId,omitempty"`
+	Cause         error     `json:"-"`
 }
 
 func (e *Error) Error() string {
@@ -134,16 +137,17 @@ func PublicError(err error) *Error {
 type ClientState string
 
 const (
-	ClientUnconfigured ClientState = "UNCONFIGURED"
-	ClientAuthorizing  ClientState = "AUTHORIZING"
-	ClientProbing      ClientState = "PROBING"
-	ClientLocal        ClientState = "LOCAL"
-	ClientDirect       ClientState = "DIRECT"
-	ClientRelay        ClientState = "RELAY"
-	ClientReconnecting ClientState = "RECONNECTING"
-	ClientAuthRequired ClientState = "AUTH_REQUIRED"
-	ClientPaused       ClientState = "PAUSED"
-	ClientError        ClientState = "ERROR"
+	ClientUnconfigured      ClientState = "UNCONFIGURED"
+	ClientAuthorizing       ClientState = "AUTHORIZING"
+	ClientProbing           ClientState = "PROBING"
+	ClientLocal             ClientState = "LOCAL"
+	ClientDirect            ClientState = "DIRECT"
+	ClientRelay             ClientState = "RELAY"
+	ClientReconnecting      ClientState = "RECONNECTING"
+	ClientAuthRequired      ClientState = "AUTH_REQUIRED"
+	ClientPaused            ClientState = "PAUSED"
+	ClientServerUnavailable ClientState = "SERVER_UNAVAILABLE"
+	ClientError             ClientState = "ERROR"
 )
 
 type ClientStatus struct {
@@ -225,7 +229,8 @@ type LocalProbeRequest struct {
 }
 
 type LocalProbeResponse struct {
-	Proof string `json:"proof"`
+	ServerVersion string `json:"serverVersion"`
+	Proof         string `json:"proof"`
 }
 
 type ServerSettings struct {
@@ -336,13 +341,15 @@ func DecodeStrict(data []byte, destination any) error {
 	return nil
 }
 
-func ValidateProtocolVersion(version int) error {
-	if version != ProtocolVersion {
-		return NewError(
-			ErrorProtocol,
-			fmt.Sprintf("unsupported protocol version %d", version),
-			false,
-		)
+// DecodeResponse permits additive fields but still rejects trailing JSON values.
+func DecodeResponse(data []byte, destination any) error {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	if err := decoder.Decode(destination); err != nil {
+		return err
+	}
+	var extra any
+	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
+		return errors.New("multiple JSON values")
 	}
 	return nil
 }

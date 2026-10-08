@@ -13,6 +13,7 @@ import (
 	"github.com/rectcircle/fn-connect-private-network/internal/logging"
 	"github.com/rectcircle/fn-connect-private-network/internal/model"
 	"github.com/rectcircle/fn-connect-private-network/internal/notify"
+	"github.com/rectcircle/fn-connect-private-network/internal/version"
 )
 
 const (
@@ -27,11 +28,11 @@ type serverSnapshot struct {
 }
 
 type adminSnapshot struct {
-	ProtocolVersion int                         `json:"protocolVersion"`
-	Settings        model.ServerSettings        `json:"settings"`
-	ServerAddress   string                      `json:"serverAddress"`
-	Devices         []adminDevice               `json:"devices"`
-	Network         model.ServerNetworkSnapshot `json:"network"`
+	ServerVersion string                      `json:"serverVersion"`
+	Settings      model.ServerSettings        `json:"settings"`
+	ServerAddress string                      `json:"serverAddress"`
+	Devices       []adminDevice               `json:"devices"`
+	Network       model.ServerNetworkSnapshot `json:"network"`
 }
 
 type HTTPServer struct {
@@ -46,6 +47,9 @@ func NewHTTPHandler(service *Service, probe *LocalProbeService) *HTTPServer {
 		probe:   probe,
 	}
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /version", server.authenticated(false, func(w http.ResponseWriter, r *http.Request) {
+		server.writeJSON(w, http.StatusOK, map[string]string{"serverVersion": version.Current})
+	}))
 	mux.HandleFunc("GET /", serveIndex)
 	mux.HandleFunc(
 		"GET /api/v1/bootstrap",
@@ -94,9 +98,17 @@ func (s *HTTPServer) ServeHTTP(writer http.ResponseWriter, request *http.Request
 		return
 	}
 	writer.Header().Set("X-Request-ID", requestID)
+	writer.Header().Set("X-FnCPN-Version", version.Current)
+	writer.Header().Set("Cache-Control", "no-store")
 	request = request.WithContext(logging.WithLogger(request.Context(),
 		s.logger.With("http_request_id", requestID)))
 	tracked := &errorResponseWriter{ResponseWriter: writer}
+	if clientVersion := request.Header.Get("X-FnCPN-Client-Version"); clientVersion != "" && request.URL.Path != "/version" && request.URL.Path != "/app/fncpn/version" {
+		if err := version.Check(clientVersion, version.Current); err != nil {
+			s.writeError(tracked, request, err)
+			return
+		}
+	}
 	s.handler.ServeHTTP(tracked, request)
 	if tracked.status >= 400 && !tracked.logged {
 		failure := model.NewError(model.ErrorProtocol, http.StatusText(tracked.status), false)
@@ -136,7 +148,7 @@ func (s *HTTPServer) bootstrap(writer http.ResponseWriter, request *http.Request
 		return
 	}
 	response := map[string]any{
-		"protocolVersion": model.ProtocolVersion,
+		"serverVersion": version.Current,
 		"administrator": strings.EqualFold(
 			request.Header.Get("X-Trim-Isadmin"),
 			"true",
@@ -180,11 +192,11 @@ func (s *HTTPServer) adminSnapshot(
 			return nil, err
 		}
 		return adminSnapshot{
-			ProtocolVersion: model.ProtocolVersion,
-			Settings:        view.state.Settings,
-			ServerAddress:   serverAddress,
-			Devices:         deviceViews(view, time.Now()),
-			Network:         view.network,
+			ServerVersion: version.Current,
+			Settings:      view.state.Settings,
+			ServerAddress: serverAddress,
+			Devices:       deviceViews(view, time.Now()),
+			Network:       view.network,
 		}, nil
 	}
 	if request.URL.Query().Get("watch") != "1" {

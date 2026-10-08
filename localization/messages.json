@@ -137,5 +137,11 @@
   "客户端服务响应无效": "Invalid daemon response",
   "授权请求无效": "Invalid authorization request",
   "连接状态": "Connection",
-  "权限不足，无法完成操作。": "You do not have permission to perform this operation."
+  "权限不足，无法完成操作。": "You do not have permission to perform this operation.",
+  "版本不兼容，请升级客户端。": "Versions are incompatible. Update the client.",
+  "版本不兼容，请升级服务端。": "Versions are incompatible. Update the server.",
+  "客户端 {0}，服务端 {1}": "Client {0}, server {1}",
+  "本地组件版本不一致，请完成更新并重新启动 FnCPN。": "Local component versions differ. Complete the update and restart FnCPN.",
+  "未找到 FnCPN 服务": "FnCPN server not found",
+  "未找到 FnCPN 服务，请在 fnOS 安装或启动 FnCPN 后重新连接。": "FnCPN server was not found. Install or start FnCPN on fnOS, then connect again."
 }

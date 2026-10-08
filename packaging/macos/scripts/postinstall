@@ -42,16 +42,4 @@ if [ "$count" -ge 50 ]; then
   exit 1
 fi
 
-CONSOLE_UID="$(/usr/bin/stat -f '%u' /dev/console 2>/dev/null || true)"
-if [ -n "$CONSOLE_UID" ] && [ "$CONSOLE_UID" -ge 500 ]; then
-  # The client LaunchAgent is user-managed and installed into the user's
-  # ~/Library/LaunchAgents by the app on first launch. Remove any stale
-  # system-level agent left by an older installation.
-  /bin/launchctl bootout \
-    "gui/${CONSOLE_UID}/cn.rectcircle.fncpn.client" 2>/dev/null || true
-  /bin/launchctl bootout \
-    "gui/${CONSOLE_UID}/com.rectcircle.fncpn.client" 2>/dev/null || true
-  /bin/rm -f "/Library/LaunchAgents/com.rectcircle.fncpn.client.plist"
-fi
-
 exit 0
