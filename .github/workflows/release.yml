@@ -26,7 +26,6 @@ jobs:
       ARCH: arm64
       RELEASE: "1"
       DIST_DIR: ${{ github.workspace }}/dist
-      FNPACK: ${{ runner.temp }}/fnpack
       GH_TOKEN: ${{ github.token }}
       RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
       MAKE_PUBLIC: ${{ inputs.publish || false }}
@@ -46,7 +45,8 @@ jobs:
           test "$(uname -m)" = arm64
           test "$RELEASE_TAG" = "v$(cat internal/version/VERSION)"
           test "$(xcodebuild -version | head -1)" = "Xcode 16.4"
-          ./scripts/install-fnpack.sh "$FNPACK"
+          echo "FNPACK=$RUNNER_TEMP/fnpack" >> "$GITHUB_ENV"
+          ./scripts/install-fnpack.sh "$RUNNER_TEMP/fnpack"
       - name: Validate
         run: ./scripts/check-release.sh
       - name: Build candidate
