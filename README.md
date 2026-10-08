@@ -15,7 +15,7 @@
 
 RC 安装包见 [GitHub Releases](https://github.com/rectcircle/fn-connect-private-network/releases)。
 
-Homebrew RC 安装（Apple Silicon，发布完成并更新 Cask 后可用）：
+Homebrew RC 安装（Apple Silicon）：
 
 ```bash
 brew tap rectcircle/fn-connect-private-network https://github.com/rectcircle/fn-connect-private-network
