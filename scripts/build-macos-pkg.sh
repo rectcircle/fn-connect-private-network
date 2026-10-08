@@ -28,7 +28,7 @@ if [ "$(uname -s)" != "Darwin" ]; then
   echo "macOS package must be built on macOS" >&2
   exit 1
 fi
-for tool in go python3 swiftc pkgbuild pkgutil plutil codesign bsdtar lsbom mkbom gzip iconutil; do
+for tool in go python3 swiftc pkgbuild pkgutil plutil codesign bsdtar lsbom mkbom gzip iconutil otool; do
   command -v "$tool" >/dev/null || {
     echo "missing build dependency: $tool" >&2
     exit 1
@@ -60,6 +60,7 @@ iconutil -c icns "${ASSET_DIR}/AppIcon.iconset"
 )
 
 swiftc \
+  -target "${ARCH}-apple-macos${MACOSX_DEPLOYMENT_TARGET}" \
   -O \
   -parse-as-library \
   -framework AppKit \
@@ -68,6 +69,12 @@ swiftc \
   -framework WebKit \
   "${ROOT_DIR}/platform/macos/FnCPNApp.swift" \
   -o "${APP_DIR}/Contents/MacOS/FnCPN"
+
+minos="$(otool -l "${APP_DIR}/Contents/MacOS/FnCPN" | awk '/minos/{print $2; exit}')"
+if [ "$minos" != "$MACOSX_DEPLOYMENT_TARGET" ]; then
+  echo "Swift binary minimum macOS $minos differs from deployment target $MACOSX_DEPLOYMENT_TARGET" >&2
+  exit 1
+fi
 
 cp -R "${ROOT_DIR}/packaging/macos/en.lproj" "${ROOT_DIR}/packaging/macos/zh-Hans.lproj" "${APP_DIR}/Contents/Resources/"
 cp "${ROOT_DIR}/LICENSE" "${ROOT_DIR}/THIRD_PARTY_NOTICES.md" "${APP_DIR}/Contents/Resources/"
