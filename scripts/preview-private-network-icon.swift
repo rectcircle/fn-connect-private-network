@@ -3,41 +3,33 @@
 import AppKit
 let blue = NSColor(srgbRed: 0, green: 0.4, blue: 1, alpha: 1)
 let pale = NSColor(srgbRed: 224.0/255, green: 237.0/255, blue: 1, alpha: 1)
-// Preserve the original fnOS artwork; remove only its pale tile to obtain a tintable mark.
-let scriptURL = URL(fileURLWithPath: #filePath).standardizedFileURL
-let sourceURL = scriptURL.deletingLastPathComponent().deletingLastPathComponent()
-    .appendingPathComponent("packaging/assets/fnos-original.png")
-let original = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 256, pixelsHigh: 256,
-    bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
-    colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!
-NSGraphicsContext.saveGraphicsState()
-NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: original)
-NSImage(contentsOf: sourceURL)!.draw(in: NSRect(x: 0, y: 0, width: 256, height: 256))
-NSGraphicsContext.restoreGraphicsState()
-func originalLogo(_ color: NSColor) -> NSImage {
-    let mask = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: original.pixelsWide, pixelsHigh: original.pixelsHigh,
-        bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
-        colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!
-    let tint = color.usingColorSpace(.deviceRGB)!
-    let src = original.bitmapData!, dst = mask.bitmapData!
-    for y in 0..<256 {
-        for x in 0..<256 {
-            let i = y * original.bytesPerRow + x * 4
-            let j = y * mask.bytesPerRow + x * 4
-            let sourceAlpha = CGFloat(src[i+3]) / 255
-            let red = sourceAlpha > 0 ? CGFloat(src[i]) / (255 * sourceAlpha) : 1
-            let alpha = sourceAlpha * max(0, min(1, (224.0/255 - red) / (224.0/255)))
-            dst[j] = UInt8(tint.redComponent * alpha * 255)
-            dst[j+1] = UInt8(tint.greenComponent * alpha * 255)
-            dst[j+2] = UInt8(tint.blueComponent * alpha * 255)
-            dst[j+3] = UInt8(alpha * 255)
-        }
-    }
-    let image = NSImage(size: NSSize(width: 256, height: 256)); image.addRepresentation(mask)
+// Project-owned storage cylinder; no third-party logo artwork is used.
+func storageLogo(_ color: NSColor) -> NSImage {
+    let image = NSImage(size: NSSize(width: 256, height: 256))
+    image.lockFocus()
+    color.setStroke()
+    let body = NSBezierPath()
+    body.move(to: NSPoint(x: 42, y: 190))
+    body.line(to: NSPoint(x: 42, y: 66))
+    body.curve(to: NSPoint(x: 214, y: 66), controlPoint1: NSPoint(x: 42, y: 20), controlPoint2: NSPoint(x: 214, y: 20))
+    body.line(to: NSPoint(x: 214, y: 190))
+    body.lineWidth = 18
+    body.lineCapStyle = .round
+    body.stroke()
+    let top = NSBezierPath(ovalIn: NSRect(x: 42, y: 158, width: 172, height: 64))
+    top.lineWidth = 18
+    top.stroke()
+    let middle = NSBezierPath()
+    middle.move(to: NSPoint(x: 42, y: 126))
+    middle.curve(to: NSPoint(x: 214, y: 126), controlPoint1: NSPoint(x: 42, y: 80), controlPoint2: NSPoint(x: 214, y: 80))
+    middle.lineWidth = 14
+    middle.stroke()
+    image.unlockFocus()
     return image
 }
-let blueLogo = originalLogo(blue)
-let blackLogo = originalLogo(.black)
+let blueLogo = storageLogo(blue)
+let blackLogo = storageLogo(.black)
+
 func polygon(_ points: [(CGFloat, CGFloat)]) {
     let p = NSBezierPath(); p.move(to: NSPoint(x: points[0].0, y: points[0].1))
     for (x,y) in points.dropFirst() { p.line(to: NSPoint(x: x, y: y)) }
@@ -76,7 +68,7 @@ func mark(_ concept: Int, background: NSColor) {
     NSBezierPath(roundedRect: NSRect(x: 5, y: 30, width: 10, height: 10), xRadius: 3, yRadius: 3).fill()
     let logo = background == pale ? blueLogo : blackLogo
     logo.draw(in: NSRect(x: 39, y: 33, width: 34, height: 34),
-        from: NSRect(x: 40, y: 25, width: 176, height: 176), operation: .sourceOver, fraction: 1)
+        from: NSRect(x: 24, y: 20, width: 208, height: 220), operation: .sourceOver, fraction: 1)
 }
 func placedMark(_ concept: Int, x: CGFloat, y: CGFloat, size: CGFloat, color: NSColor) {
     NSGraphicsContext.saveGraphicsState()
@@ -104,7 +96,7 @@ NSBezierPath(roundedRect: NSRect(x: 80, y: 140, width: 300, height: 300), xRadiu
 placedMark(0, x: 92, y: 152, size: 276, color: blue)
 text("应用图标", x: 188, y: 100, size: 18, color: .darkGray)
 text("收紧构图，重心回到中心", x: 460, y: 447, size: 21, bold: true)
-text("矩形与飞牛标志整体向左下调整", x: 460, y: 408, size: 19, color: .darkGray)
+text("内网边界与存储圆柱", x: 460, y: 408, size: 19, color: .darkGray)
 text("外部端点抬高，缩短折线，保持边框间距", x: 460, y: 374, size: 19, color: .darkGray)
 text("状态栏 · 放大 2 倍", x: 460, y: 309, size: 18, bold: true)
 let menuBackground = NSColor(srgbRed: 0.94, green: 0.95, blue: 0.97, alpha: 1)

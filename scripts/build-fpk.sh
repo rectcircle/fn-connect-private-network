@@ -4,7 +4,8 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PACKAGE_SOURCE="${ROOT_DIR}/packaging/fnos"
-BUILD_DIR="${TMPDIR:-/tmp}/fncpn-fpk-${UID}"
+BUILD_DIR="$(mktemp -d "${TMPDIR:-/tmp}/fncpn-fpk.XXXXXX")"
+trap 'rm -rf "$BUILD_DIR"' EXIT
 DIST_DIR="${DIST_DIR:-${ROOT_DIR}/dist}"
 source "${ROOT_DIR}/scripts/release-version.sh"
 if [ "${RELEASE:-0}" = 1 ]; then
@@ -33,6 +34,7 @@ build_target() {
     rm -rf "$stage"
     mkdir -p "$stage/app/server" "$stage/app/ui/images" "$DIST_DIR"
     cp -R "${PACKAGE_SOURCE}/." "$stage/"
+    cp "${ROOT_DIR}/LICENSE" "${ROOT_DIR}/THIRD_PARTY_NOTICES.md" "$stage/app/"
     cp "${ASSET_DIR}/ICON.PNG" "$stage/ICON.PNG"
     cp "${ASSET_DIR}/ICON_256.PNG" "$stage/ICON_256.PNG"
     cp "${ASSET_DIR}/DesktopIcon64.png" "$stage/app/ui/images/icon_64.png"
@@ -63,7 +65,6 @@ build_target() {
 }
 
 FNPACK_BIN="$(resolve_fnpack)"
-rm -rf "$BUILD_DIR"
 mkdir -p "$BUILD_DIR" "$DIST_DIR"
 ASSET_DIR="${BUILD_DIR}/assets"
 cp -R "${ROOT_DIR}/packaging/assets" "$ASSET_DIR"

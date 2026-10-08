@@ -2,7 +2,7 @@
 
 从 Mac 连接 fnOS NAS 和已启用的家庭局域网。客户端自动选择局域网直达、IPv6 直连或 FN Connect 中继，无需手动配置密钥与路由。
 
-当前为 `0.1.55` 测试版本，尚未完成正式发布验收。中继基础访问、LAN 转发和部分恢复场景已有实机记录；网络与配置已获用户实机确认，常规安装与多次覆盖升级已验证；卸载及故障注入专项未执行，详见 [验收状态](docs/release-acceptance.md)。
+当前为 `1.0.0-rc.1` 发布候选版，尚未完成正式发布验收。中继基础访问、LAN 转发和部分恢复场景已有实机记录；网络与配置已获用户实机确认，常规安装与多次覆盖升级已验证；卸载及故障注入专项未执行，详见 [验收状态](docs/release-acceptance.md)。
 
 ## 使用条件
 
@@ -11,7 +11,20 @@
 - 有效的 fnOS 用户账号。普通用户可以连接，安装应用与管理网络设置需要管理员。
 - 当前原生登录不支持 fnOS 双重认证（2FA）。
 
-当前 macOS 安装包未做 Developer ID 签名和公证。FN Connect 中继速度取决于上游服务和网络条件。
+当前 macOS App 与 helper 使用 ad-hoc 签名；PKG 未签名、未公证，安装时可能需要在系统设置中明确批准。FN Connect 中继速度取决于上游服务和网络条件。
+
+RC 安装包见 [GitHub Releases](https://github.com/rectcircle/fn-connect-private-network/releases)。
+
+Homebrew RC 安装（Apple Silicon，发布完成并更新 Cask 后可用）：
+
+```bash
+brew tap rectcircle/fn-connect-private-network https://github.com/rectcircle/fn-connect-private-network
+brew install --cask rectcircle/fn-connect-private-network/fncpn-rc
+# 更新 RC：
+brew upgrade --cask rectcircle/fn-connect-private-network/fncpn-rc
+```
+
+稳定版与 RC 使用同一系统安装位置，不应同时安装；正式版发布后再提供稳定版 Cask。
 
 ## 安装与首次连接
 
@@ -76,4 +89,4 @@ sudo /Library/PrivilegedHelperTools/cn.rectcircle.fncpn/uninstall.sh \
 
 ## 项目资料与许可证
 
-开发、协议研究、设计与发布资料见 [文档索引](docs/README.md)。源码采用 [MIT 许可证](LICENSE)；第三方依赖及飞牛原始标志等素材的权利归各自权利人，MIT 授权不代表获得其商标授权。
+开发、协议研究、设计与发布资料见 [文档索引](docs/README.md)。源码采用 [MIT 许可证](LICENSE)；第三方依赖许可证见 [第三方声明](THIRD_PARTY_NOTICES.md)。fnOS 与 FN Connect 商标归各自权利人，本项目与其无隶属或背书关系。

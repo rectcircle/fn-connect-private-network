@@ -71,10 +71,10 @@ func TestMacOSPackageArchiveOwnership(t *testing.T) {
 			command.Env = append(os.Environ(),
 				"COPYFILE_DISABLE=1", "COPY_EXTENDED_ATTRIBUTES_DISABLE=1",
 				"BUILD_DIR="+directory, "PAYLOAD="+payload, "SCRIPTS="+scripts,
-				"DIST_DIR="+dist, "VERSION=0.0.0", "ARCH=fixture",
+				"DIST_DIR="+dist, "VERSION=1.0.0-rc.1", "PACKAGE_VERSION=1.0.0", "ARCH=fixture",
 			)
 			output, err := command.CombinedOutput()
-			pkg := filepath.Join(dist, "FnCPN-0.0.0-fixture-unsigned.pkg")
+			pkg := filepath.Join(dist, "FnCPN-1.0.0-rc.1-fixture-unsigned.pkg")
 			if test.failure != "" {
 				if err == nil || !bytes.Contains(output, []byte(test.failure)) {
 					t.Fatalf("bad ownership was not rejected: %v\n%s", err, output)
@@ -97,6 +97,10 @@ func TestMacOSPackageArchiveOwnership(t *testing.T) {
 			}
 			expanded := filepath.Join(directory, "verify")
 			packageCommand(t, "pkgutil", "--expand", pkg, expanded)
+			info, err := os.ReadFile(filepath.Join(expanded, "PackageInfo"))
+			if err != nil || !bytes.Contains(info, []byte(`version="1.0.0"`)) {
+				t.Fatalf("PKG must use numeric core version: %s, %v", info, err)
+			}
 			bom := packageCommand(t, "lsbom", filepath.Join(expanded, "Bom"))
 			for _, line := range strings.Split(strings.TrimSpace(string(bom)), "\n") {
 				fields := strings.Split(line, "\t")

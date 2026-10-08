@@ -15,41 +15,32 @@ func png(_ size: Int, width: Int? = nil, draw: (CGFloat) -> Void) -> Data {
 }
 let blue = NSColor(srgbRed: 0, green: 0.4, blue: 1, alpha: 1)
 let pale = NSColor(srgbRed: 224.0/255, green: 237.0/255, blue: 1, alpha: 1)
-// Preserve the original fnOS artwork; remove only its pale tile to obtain a tintable mark.
-let scriptURL = URL(fileURLWithPath: #filePath).standardizedFileURL
-let sourceURL = scriptURL.deletingLastPathComponent().deletingLastPathComponent()
-    .appendingPathComponent("packaging/assets/fnos-original.png")
-let original = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 256, pixelsHigh: 256,
-    bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
-    colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!
-NSGraphicsContext.saveGraphicsState()
-NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: original)
-NSImage(contentsOf: sourceURL)!.draw(in: NSRect(x: 0, y: 0, width: 256, height: 256))
-NSGraphicsContext.restoreGraphicsState()
-func originalLogo(_ color: NSColor) -> NSImage {
-    let mask = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: original.pixelsWide, pixelsHigh: original.pixelsHigh,
-        bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
-        colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!
-    let tint = color.usingColorSpace(.deviceRGB)!
-    let src = original.bitmapData!, dst = mask.bitmapData!
-    for y in 0..<256 {
-        for x in 0..<256 {
-            let i = y * original.bytesPerRow + x * 4
-            let j = y * mask.bytesPerRow + x * 4
-            let sourceAlpha = CGFloat(src[i+3]) / 255
-            let red = sourceAlpha > 0 ? CGFloat(src[i]) / (255 * sourceAlpha) : 1
-            let alpha = sourceAlpha * max(0, min(1, (224.0/255 - red) / (224.0/255)))
-            dst[j] = UInt8(tint.redComponent * alpha * 255)
-            dst[j+1] = UInt8(tint.greenComponent * alpha * 255)
-            dst[j+2] = UInt8(tint.blueComponent * alpha * 255)
-            dst[j+3] = UInt8(alpha * 255)
-        }
-    }
-    let image = NSImage(size: NSSize(width: 256, height: 256)); image.addRepresentation(mask)
+// Project-owned storage cylinder; no third-party logo artwork is used.
+func storageLogo(_ color: NSColor) -> NSImage {
+    let image = NSImage(size: NSSize(width: 256, height: 256))
+    image.lockFocus()
+    color.setStroke()
+    let body = NSBezierPath()
+    body.move(to: NSPoint(x: 42, y: 190))
+    body.line(to: NSPoint(x: 42, y: 66))
+    body.curve(to: NSPoint(x: 214, y: 66), controlPoint1: NSPoint(x: 42, y: 20), controlPoint2: NSPoint(x: 214, y: 20))
+    body.line(to: NSPoint(x: 214, y: 190))
+    body.lineWidth = 18
+    body.lineCapStyle = .round
+    body.stroke()
+    let top = NSBezierPath(ovalIn: NSRect(x: 42, y: 158, width: 172, height: 64))
+    top.lineWidth = 18
+    top.stroke()
+    let middle = NSBezierPath()
+    middle.move(to: NSPoint(x: 42, y: 126))
+    middle.curve(to: NSPoint(x: 214, y: 126), controlPoint1: NSPoint(x: 42, y: 80), controlPoint2: NSPoint(x: 214, y: 80))
+    middle.lineWidth = 14
+    middle.stroke()
+    image.unlockFocus()
     return image
 }
-let blueLogo = originalLogo(blue)
-let blackLogo = originalLogo(.black)
+let blueLogo = storageLogo(blue)
+let blackLogo = storageLogo(.black)
 // Optical balance: center the LAN vertically and keep the external route compact.
 func connectionMark(_ color: NSColor, drawEndpoint: Bool = true, strokeWidth: CGFloat = 5) {
     let boundary = NSBezierPath()
@@ -66,8 +57,8 @@ func connectionMark(_ color: NSColor, drawEndpoint: Bool = true, strokeWidth: CG
     boundary.lineWidth = strokeWidth; boundary.lineCapStyle = .round; boundary.stroke()
     // Short orthogonal route enters the middle of the left-side opening.
     let route = NSBezierPath()
-    route.move(to: NSPoint(x: drawEndpoint ? 10 : 13, y: 35))
-    route.line(to: NSPoint(x: 13, y: 35))
+    route.move(to: NSPoint(x: drawEndpoint ? 10 : 15, y: 35))
+    route.line(to: NSPoint(x: drawEndpoint ? 13 : 15, y: 35))
     route.curve(to: NSPoint(x: 18, y: 40), controlPoint1: NSPoint(x: 16, y: 35), controlPoint2: NSPoint(x: 18, y: 37))
     route.line(to: NSPoint(x: 18, y: 45))
     route.curve(to: NSPoint(x: 23, y: 50), controlPoint1: NSPoint(x: 18, y: 48), controlPoint2: NSPoint(x: 20, y: 50))
@@ -76,9 +67,29 @@ func connectionMark(_ color: NSColor, drawEndpoint: Bool = true, strokeWidth: CG
     if drawEndpoint {
         NSBezierPath(roundedRect: NSRect(x: 5, y: 30, width: 10, height: 10), xRadius: 3, yRadius: 3).fill()
     }
-    let logo = color == blue ? blueLogo : blackLogo
-    logo.draw(in: NSRect(x: 39, y: 33, width: 34, height: 34),
-        from: NSRect(x: 40, y: 25, width: 176, height: 176), operation: .sourceOver, fraction: 1)
+    if strokeWidth > 5 {
+        // Menu-bar artwork stays vector-based and shares the boundary stroke.
+        let cylinder = NSBezierPath()
+        cylinder.move(to: NSPoint(x: 43, y: 61))
+        cylinder.line(to: NSPoint(x: 43, y: 38))
+        cylinder.curve(to: NSPoint(x: 71, y: 38), controlPoint1: NSPoint(x: 43, y: 32), controlPoint2: NSPoint(x: 71, y: 32))
+        cylinder.line(to: NSPoint(x: 71, y: 61))
+        cylinder.lineWidth = strokeWidth
+        cylinder.lineCapStyle = .round
+        cylinder.stroke()
+        let top = NSBezierPath(ovalIn: NSRect(x: 43, y: 57, width: 28, height: 8))
+        top.lineWidth = strokeWidth
+        top.stroke()
+        let middle = NSBezierPath()
+        middle.move(to: NSPoint(x: 43, y: 49))
+        middle.curve(to: NSPoint(x: 71, y: 49), controlPoint1: NSPoint(x: 43, y: 43), controlPoint2: NSPoint(x: 71, y: 43))
+        middle.lineWidth = strokeWidth
+        middle.stroke()
+    } else {
+        let logo = color == blue ? blueLogo : blackLogo
+        logo.draw(in: NSRect(x: 39, y: 33, width: 34, height: 34),
+            from: NSRect(x: 24, y: 20, width: 208, height: 220), operation: .sourceOver, fraction: 1)
+    }
 }
 func appIcon(_ s: CGFloat) {
     let transform = NSAffineTransform()
@@ -105,7 +116,7 @@ for state in states {
             connectionMark(.black, drawEndpoint: false, strokeWidth: 6.25)
             NSGraphicsContext.restoreGraphicsState()
             // Replace the external endpoint with the state, leaving the LAN untouched.
-            // The route starts at x=4.32, leaving the state symbol clear.
+            // The route starts at x=4.8, leaving the state symbol clear.
             let center = NSPoint(x: 2, y: 5.4)
             switch state {
             case "connected":
@@ -118,8 +129,8 @@ for state in states {
                 cross.line(to: NSPoint(x: center.x+1.3, y: center.y-1.3))
                 cross.lineWidth = 1.2; cross.lineCapStyle = .round; cross.stroke()
             case "working":
-                for offset in [CGFloat(-1.3), CGFloat(0), CGFloat(1.3)] {
-                    NSBezierPath(ovalIn: NSRect(x: center.x+offset-0.45, y: center.y-0.45, width: 0.9, height: 0.9)).fill()
+                for offset in [CGFloat(-1.5), CGFloat(0), CGFloat(1.5)] {
+                    NSBezierPath(ovalIn: NSRect(x: center.x+0.2+offset-0.65, y: center.y-0.65, width: 1.3, height: 1.3)).fill()
                 }
             case "attention":
                 NSBezierPath(roundedRect: NSRect(x: center.x-0.6, y: center.y-0.1, width: 1.2, height: 2.7), xRadius: 0.6, yRadius: 0.6).fill()

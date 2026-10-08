@@ -4,3 +4,5 @@
 /tmp/
 /.trae/documents/
 /fncpn
+
+__pycache__/

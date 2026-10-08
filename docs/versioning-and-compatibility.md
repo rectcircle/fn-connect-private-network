@@ -24,7 +24,14 @@
 
 每次正式发布应提供对应版本的 client 与 server 产物；用户可以分别安装、升级两端。
 同一次发布使用相同编号，不要求用户安装的两端编号相同。
-Git tag 使用 `vMAJOR.MINOR.PATCH`。已发布版本及其产物不可覆盖；修改产物必须发布新版本。
+Git tag 使用 `vMAJOR.MINOR.PATCH`，发布候选版使用 `vMAJOR.MINOR.PATCH-rc.N`（N 为不带前导零的非负整数）。
+未公开的草稿可修改 commit、重建、替换资产及重试失败上传；公开的 RC 与正式版本及其产物不可覆盖。
+公开 RC 的修复递增 RC 编号，正式版本的兼容修复递增 PATCH。RC 不自动获得正式兼容性保证。
+当前支持纯数字正式版和 `-rc.N` 后缀；不支持其他预发布后缀或 build metadata。
+远程准入仅使用核心 MAJOR/MINOR，不比较 RC 编号，不新增准入条件。
+macOS 的 `CFBundleShortVersionString` 与 PKG 版本使用核心数字版本；`FnCPNProductVersion`、CLI、
+fnOS manifest 和发布文件名保留完整 RC 版本。App 展示与本地组件一致性校验使用完整产品版本，
+`CFBundleVersion` 使用递增构建号。RC 到正式版仍需重新构建和验收正式元数据，不能仅给 RC 包改名。
 macOS build number、Git commit 等用于构建追溯，不参与远程兼容性判定。
 
 ## 2. 唯一的远程版本准入规则

@@ -20,7 +20,7 @@ var Revision = "unknown"
 // Current is embedded from the same source read by the packaging scripts.
 var Current = func() string { b, _ := source.ReadFile("VERSION"); return strings.TrimSpace(string(b)) }()
 
-var pattern = regexp.MustCompile(`^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$`)
+var pattern = regexp.MustCompile(`^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-rc\.(0|[1-9][0-9]*))?$`)
 
 type Number struct{ Major, Minor, Patch uint64 }
 

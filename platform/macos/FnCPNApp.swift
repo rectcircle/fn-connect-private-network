@@ -166,7 +166,7 @@ private final class IPCClient {
                 userInfo: [NSLocalizedDescriptionKey: L("客户端服务响应无效")]
             )
         }
-        if let appVersion = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String,
+        if let appVersion = Bundle.main.object(forInfoDictionaryKey: "FnCPNProductVersion") as? String,
            response["productVersion"] as? String != appVersion {
             throw NSError(domain: "FnCPN", code: 4, userInfo: [NSLocalizedDescriptionKey: L("本地组件版本不一致，请完成更新并重新启动 FnCPN。")])
         }
@@ -574,7 +574,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         titleRow.orientation = .horizontal
         titleRow.alignment = .firstBaseline
         titleRow.spacing = 8
-        if let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String,
+        if let version = Bundle.main.object(forInfoDictionaryKey: "FnCPNProductVersion") as? String,
            !version.isEmpty {
             let versionLabel = NSTextField(labelWithString: "v\(version)")
             versionLabel.font = .systemFont(ofSize: 13)

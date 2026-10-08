@@ -9,7 +9,9 @@ import (
 
 func TestCompatibility(t *testing.T) {
 	for _, tc := range []struct{ client, server, target string }{
-		{"1.2.3", "1.2.0", ""}, {"1.2.0", "1.9.0", ""}, {"1.9.0", "1.2.99", "server"},
+		{"1.2.3", "1.2.0", ""}, {"1.0.0-rc.1", "1.0.0-rc.2", ""},
+		{"1.0.0", "1.0.0-rc.1", ""}, {"1.1.0-rc.2", "1.0.99", "server"},
+		{"1.0.0-rc.1", "2.0.0-rc.1", "client"}, {"1.2.0", "1.9.0", ""}, {"1.9.0", "1.2.99", "server"},
 		{"1.9.0", "2.0.0", "client"}, {"2.0.0", "1.9.99", "server"}, {"1.0.0", "1.0.999", ""},
 	} {
 		t.Run(tc.client+"_"+tc.server, func(t *testing.T) {
@@ -28,7 +30,7 @@ func TestCompatibility(t *testing.T) {
 	}
 }
 func TestInvalidVersionsNeverPass(t *testing.T) {
-	for _, v := range []string{"", "dev", "v1.0.0", "1.0", "01.0.0", "1.0.0-rc.1", "1.0.0+build.1", "1.0.18446744073709551616"} {
+	for _, v := range []string{"", "dev", "v1.0.0", "1.0", "01.0.0", "1.0.0+build.1", "1.0.0-rc.01", "1.0.0-rc", "1.0.0-rc.-1", "1.0.18446744073709551616"} {
 		for _, err := range []error{Check(v, "1.0.0"), Check("1.0.0", v)} {
 			if !IsFailure(err) || model.AsError(err).Retryable {
 				t.Fatalf("version %q passed", v)

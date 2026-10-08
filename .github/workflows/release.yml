@@ -1,0 +1,83 @@
+name: Release candidate
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag
+        required: true
+        type: string
+      publish:
+        description: Make the verified draft public
+        default: false
+        type: boolean
+permissions:
+  contents: write
+concurrency:
+  group: release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+jobs:
+  release:
+    runs-on: macos-15
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
+      MACOSX_DEPLOYMENT_TARGET: "13.0"
+      ARCH: arm64
+      RELEASE: "1"
+      DIST_DIR: ${{ github.workspace }}/dist
+      FNPACK: ${{ runner.temp }}/fnpack
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+      MAKE_PUBLIC: ${{ inputs.publish || false }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+          fetch-depth: 0
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.27.1"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22.14.0"
+      - name: Verify tag and toolchain
+        run: |
+          test "$(uname -m)" = arm64
+          test "$RELEASE_TAG" = "v$(cat internal/version/VERSION)"
+          test "$(xcodebuild -version | head -1)" = "Xcode 16.4"
+          ./scripts/install-fnpack.sh "$FNPACK"
+      - name: Validate
+        run: ./scripts/check-release.sh
+      - name: Build candidate
+        if: ${{ !inputs.publish }}
+        run: ./scripts/build-all.sh
+      - name: Download existing candidate for publication
+        if: inputs.publish
+        run: |
+          mkdir -p "$DIST_DIR"
+          gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --dir "$DIST_DIR"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: candidate-${{ inputs.tag || github.ref_name }}
+          path: dist/
+          if-no-files-found: error
+      - name: Upload and verify release
+        run: |
+          if [ "$MAKE_PUBLIC" = true ]; then
+            python3 scripts/publish-release.py "$DIST_DIR" --publish
+          else
+            python3 scripts/publish-release.py "$DIST_DIR"
+          fi
+      - name: Update public release cask
+        if: inputs.publish
+        run: |
+          VERSION="$(cat internal/version/VERSION)"
+          git fetch origin main
+          git checkout -B cask-update origin/main
+          python3 scripts/update-cask.py "$VERSION"
+          git add Casks/
+          if ! git diff --cached --quiet; then
+            git -c user.name=github-actions[bot] -c user.email=41898282+github-actions[bot]@users.noreply.github.com commit -m "chore(homebrew): publish ${VERSION}"
+            git push origin HEAD:main
+          fi

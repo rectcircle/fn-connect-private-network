@@ -273,4 +273,4 @@ NAS 内核支持无关的 XFRM/IPsec。
 - 安装、停服、卸载与 journal 恢复机制已完成代码核对；packaging、Darwin/Linux 网络引擎及 privileged 服务测试通过。macOS 卸载补充退出 App，并明确默认保留用户日志、删除特权日志。
 - 卸载/purge、SIGKILL、无控制台用户安装及最终候选包全新安装专项未执行；代码核对及测试替身不记为这些专项实机通过。
 - 权限负向场景暂缓；平台扩展验证暂缓，等待 issue 反馈。两者不作为本次发布阻塞项，也不标为已验证。
-- macOS 分发采用 ad-hoc 签名，PKG 未做 Developer ID Installer 签名及公证；第三方许可证与素材核对另行完成。
+- macOS 分发采用 ad-hoc 签名，PKG 未做 Developer ID Installer 签名及公证；RC 打包已包含依赖许可证声明，并使用自行绘制的存储圆柱替换飞牛标志。

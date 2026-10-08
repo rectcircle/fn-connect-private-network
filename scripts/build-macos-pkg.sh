@@ -1,19 +1,24 @@
 #!/usr/bin/env bash
 
 set -euo pipefail
+export MACOSX_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET:-13.0}"
 export COPYFILE_DISABLE=1
 export COPY_EXTENDED_ATTRIBUTES_DISABLE=1
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DIST_DIR="${DIST_DIR:-${ROOT_DIR}/dist}"
 source "${ROOT_DIR}/scripts/release-version.sh"
-ARCH="$(go env GOARCH)"
+ARCH="${ARCH:-arm64}"
+if [ "$ARCH" != arm64 ] || [ "$(uname -m)" != arm64 ]; then
+  echo "The macOS release requires an Apple Silicon build host and arm64 target" >&2; exit 1
+fi
 if [ "${RELEASE:-0}" = 1 ]; then
  for artifact in "${DIST_DIR}/FnCPN-${VERSION}-${ARCH}-unsigned.pkg"; do
   if [ -e "$artifact" ]; then echo "Refusing to replace release artifact: $artifact" >&2; exit 1; fi
  done
 fi
-BUILD_DIR="${TMPDIR:-/tmp}/fncpn-macos-pkg-${UID}"
+BUILD_DIR="$(mktemp -d "${TMPDIR:-/tmp}/fncpn-macos-pkg.XXXXXX")"
+trap 'rm -rf "$BUILD_DIR"' EXIT
 PAYLOAD="${BUILD_DIR}/root"
 SCRIPTS="${BUILD_DIR}/scripts"
 TOOL_DIR="${PAYLOAD}/Library/PrivilegedHelperTools/cn.rectcircle.fncpn"
@@ -30,7 +35,6 @@ for tool in go python3 swiftc pkgbuild pkgutil plutil codesign bsdtar lsbom mkbo
   }
 done
 
-rm -rf "$BUILD_DIR"
 mkdir -p \
   "$TOOL_DIR" \
   "${PAYLOAD}/Library/LaunchDaemons" \
@@ -66,8 +70,9 @@ swiftc \
   -o "${APP_DIR}/Contents/MacOS/FnCPN"
 
 cp -R "${ROOT_DIR}/packaging/macos/en.lproj" "${ROOT_DIR}/packaging/macos/zh-Hans.lproj" "${APP_DIR}/Contents/Resources/"
+cp "${ROOT_DIR}/LICENSE" "${ROOT_DIR}/THIRD_PARTY_NOTICES.md" "${APP_DIR}/Contents/Resources/"
 cp -X "${ROOT_DIR}/packaging/macos/Info.plist" "${APP_DIR}/Contents/"
-plutil -replace CFBundleShortVersionString -string "$VERSION" \
+plutil -replace FnCPNProductVersion -string "$VERSION" \
   "${APP_DIR}/Contents/Info.plist"
 plutil -replace CFBundleVersion -string "$BUILD_NUMBER" \
   "${APP_DIR}/Contents/Info.plist"
@@ -98,6 +103,8 @@ chmod 0644 \
 
 codesign --force --sign - "${TOOL_DIR}/fncpn"
 codesign --force --sign - "${APP_DIR}"
+codesign --verify --strict "${TOOL_DIR}/fncpn"
+codesign --verify --deep --strict "${APP_DIR}"
 find "$PAYLOAD" -name '._*' -delete
 if find "$PAYLOAD" -name '._*' -print -quit | grep -q .; then
   echo "AppleDouble file remains in package payload" >&2
@@ -117,7 +124,7 @@ pkgbuild \
   --root "$PAYLOAD" \
   --scripts "$SCRIPTS" \
   --identifier cn.rectcircle.fncpn \
-  --version "$VERSION" \
+  --version "$PACKAGE_VERSION" \
   --install-location / \
   --ownership preserve \
   --filter '(^|/)\._[^/]*$' \
