@@ -1,186 +1,79 @@
 # FN Connect Private Network
 
-正式实现依据：
+从 Mac 连接 fnOS NAS 和已启用的家庭局域网。客户端自动选择局域网直达、IPv6 直连或 FN Connect 中继，无需手动配置密钥与路由。
 
-- [产品需求与技术架构](docs/03-fncpn-product-requirements.md)
-- [PoC 架构与验证结论](docs/02-fncpn-poc-architecture-and-validation.md)
-- [错误码与全链路诊断](docs/05-error-diagnostics.md)
-- [发布验收与实机记录](docs/04-release-acceptance.md#实机验收记录)
-- [版本管理与兼容性（从 1.0.0 生效）](docs/07-versioning-and-compatibility.md)
+当前为 `0.1.52` 测试版本，尚未完成正式发布验收。中继基础访问、LAN 转发和部分恢复场景已有实机记录；最新版完整网络切换、LOCAL / DIRECT、多设备和卸载验收仍待完成，详见 [验收状态](docs/release-acceptance.md)。
 
-fnOS 原生 token 获取、恢复协议及 FN Connect 验证边界已收敛到
-[PoC 凭证章节](docs/02-fncpn-poc-architecture-and-validation.md#39-链路-ifn-connect-凭证与-fnos-原生会话)。
+## 使用条件
 
-本仓库仅包含正式实现。PoC 源码在本地 `tmp/demo/` 留存，不纳入版本控制；
-相关结论见上方 PoC 架构与验证文档。
+- Apple Silicon Mac，macOS 13 或更新版本。
+- fnOS NAS，已启用 FN Connect；服务端提供 x86_64 和 ARM64 安装包，ARM 实机验收尚未完成。
+- 有效的 fnOS 用户账号。普通用户可以连接，安装应用与管理网络设置需要管理员。
+- 当前原生登录不支持 fnOS 双重认证（2FA）。
 
-## 当前状态
+当前 macOS 安装包未做 Developer ID 签名和公证。FN Connect 中继速度取决于上游服务和网络条件。
 
-当前为 P0 初版实现。截至 2026-10-02，已完成一轮 RELAY 基础访问、LAN 转发、
-断开清理、升级保留凭据/暂停意图、服务端停启恢复、Mac 重启自动连接，以及设备清理、
-MTU 大包和文件下载的实机验证。完整 P0 发布验收尚未完成；版本、证据类型和剩余范围
-见 [实机验收记录](docs/04-release-acceptance.md#实机验收记录)。已实现：
+## 安装与首次连接
 
-- Go `1.27` 模块，module 为 `github.com/rectcircle/fn-connect-private-network`。
-- 单一 `fncpn` Go 二进制和多子命令进程模型。
-- 版本化 framed JSON IPC。
-- 客户端状态模型和 CLI 到 client daemon 的 Unix Socket 通讯。
-- server daemon 的 bootstrap、设备状态、离线设备删除和网络配置 API。
-- overlay 校验、最低可用地址分配、地址复用和全量重分配。
-- 服务端业务状态使用单个原子写入的 `state.json`，拒绝开发期旧拆分文件。
-- Darwin/Linux Unix peer credential 识别和 privileged-daemon 调用者授权。
-- privileged-daemon 的 `status/apply/remove/resume` 白名单协议。
-- 客户端 WireGuard 计划校验和 UAPI 配置生成。
-- macOS 进程内 `wireguard-go` runtime，不启动外部子进程。
-- macOS 通过固定 `/sbin/ifconfig` 和 `/sbin/route` 配置接口与路由。
-- 客户端网络 apply、remove 和 resume 的事务回滚。
-- macOS root 网络状态原子持久化、启动恢复和退出清理。
-- fnOS 内核 WireGuard、IPv4 forwarding、专属 nftables 规则和服务端密钥。
-- server daemon 统一串行提交并发布配置/网络快照，root 按完整 Plan 声明式收敛。
-- 幂等设备注册、配置长轮询同步和受限二进制 WebSocket relay。
-- macOS root 私有文件保存私钥、fnOS 原生会话与 Cookie jar，按系统 peer UID 隔离；
-  密码不持久化。
-- FN Connect 地址发现、局域网优先、IPv6 直连、WSS fallback 和冲突路由。
-- 网络变化事件、relay 自动重连和遵循用户连接意图的统一后台恢复。
-- macOS App/PKG 与 fnOS 管理页面/FPK。
+安装包按版本命名：
 
-尚需验证 LOCAL、公网 IPv6 DIRECT、多路径/网络切换、睡眠唤醒、网段冲突、
-多客户端并发、配置变更与故障回滚、fnOS 2FA、最新版卸载及安全负向场景。
-单次下载正常不代表吞吐、文件哈希或长期稳定性验收已完成。
+| 设备 | 安装包 |
+| --- | --- |
+| Apple Silicon Mac | `FnCPN-<version>-arm64-unsigned.pkg` |
+| x86_64 fnOS | `fncpn-<version>-x86.fpk` |
+| ARM64 fnOS | `fncpn-<version>-arm.fpk` |
 
-macOS 接口和路由写入不依赖 CGO；正式 macOS 包为
-SCDynamicStore 网络与控制台用户监听启用 CGO。
+1. 在 fnOS 应用中心安装对应的 FPK，打开 FnCPN，确认服务状态正常。
+2. 在 Mac 安装 PKG，打开「FnCPN」。
+3. 输入 FN Connect ID、fnOS 用户名和密码，完成登录。密码不会持久化保存。
+4. 等待客户端自动注册设备并连接，在详情中查看 NAS 地址和当前连接方式。
 
-## Package 结构
+默认私有网络为 `10.253.203.0/24`，NAS 地址为 `10.253.203.1`。管理员修改网段后，以界面显示为准。首次安装若提示网段或端口冲突，请在 fnOS 管理页修改配置并重试。
 
-```text
-cmd/fncpn/          单一命令入口
-internal/model/     跨边界数据契约
-internal/client/    客户端业务
-internal/server/    服务端业务
-internal/ipc/       本地通讯协议
-internal/privileged/特权操作入口
-internal/wireguard/ WireGuard 计划和配置
-internal/platform/  系统能力适配
-internal/command/   子命令解析与进程组装
-```
+## 日常使用
 
-package 按业务职责命名，不设置 `core`、`common` 或 `utils` 中间层。
+- **局域网直达**：使用 NAS 的局域网地址访问。
+- **IPv6 直连 / FN Connect 中继**：使用详情中的 NAS 私有网络地址，或已启用的远端 LAN 地址访问。
+- **断开**：暂停自动连接；再次点击连接后恢复。网络变化和重启不会取消用户的暂停意图。
+- **重新登录**：会话无法自动恢复时，重新输入密码；保留有效设备身份和配置。
+- **退出登录**：断开并清除登录凭据，保留设备身份。
+- **忘记此服务端**：清除本机配置、密钥和凭据，之后需要重新设置。
 
-## 本地运行
+本地与远端 LAN 网段重叠时，不添加冲突的 LAN 路由，仅保留 NAS 私有网络地址访问，并显示提示。管理页的「删除离线设备」用于清理记录，不代表安全撤销账号或设备的访问权限。
+
+客户端和 fnOS 管理页支持简体中文与英文，跟随系统或浏览器首选语言；修改语言后重启 App 或刷新页面。
+
+## 连接失败时
+
+先检查 FN Connect 是否可用、NAS 上 FnCPN 是否运行，再查看客户端错误提示。需要登录时重新登录；权限不足时检查账号权限；版本不兼容时按提示升级对应端。可使用客户端的诊断功能获取脱敏信息，排障方法见 [诊断指南](docs/diagnostics.md)。
+
+安装后也可通过终端查询和控制连接：
 
 ```bash
-go run ./cmd/fncpn version
-```
-
-需要在本机长期使用 CLI 时安装到 `$GOBIN`：
-
-```bash
-go install ./cmd/fncpn
-```
-
-## 测试
-
-```bash
-go test -race ./...
-go vet ./...
-node --test internal/server/web/index.test.cjs
-```
-
-## 命令
-
-```text
-fncpn version
-fncpn status [--json]
-fncpn authorize <fn-id>
+fncpn status
 fncpn connect
 fncpn disconnect
 fncpn retry
-fncpn logout
-fncpn forget --yes
-fncpn diagnose [--json]
-fncpn client daemon
-fncpn client privileged-daemon
-fncpn server daemon --socket PATH --state-dir PATH [--log-file PATH]
-fncpn server privileged-daemon
+fncpn diagnose --json
 ```
 
-## 构建安装包
+## 更新与卸载
+
+更新前查看 [变更记录](CHANGELOG.md)。正式兼容性承诺从 `1.0.0` 开始：两端 MAJOR 必须相同，客户端 MINOR 不能高于服务端，PATCH 不影响连接准入。`0.x` 测试版不承诺历史数据迁移；不支持的旧格式需先停止服务、清理网络并备份，再主动处理，更新不会自动清空用户数据。
+
+fnOS 通过应用中心停止或卸载 FnCPN。Mac 可运行随包安装的卸载脚本，默认保留用户配置、日志和凭据：
 
 ```bash
-./scripts/build-all.sh
-./scripts/build-macos-pkg.sh
-./scripts/build-fpk.sh
+sudo /Library/PrivilegedHelperTools/cn.rectcircle.fncpn/uninstall.sh
 ```
 
-产物统一写入 `dist/`，打包中间文件使用系统临时目录。
-
-FPK 构建要求通过 `FNPACK` 或 `PATH` 显式提供 `fnpack`，不依赖本地 PoC 文件。
-首次初始化默认使用 `10.253.203.0/24` 和 `54789/UDP`；冲突时
-服务端保持管理页面可用，由管理员修改后重试。
-
-- `FnCPN-<version>-arm64-unsigned.pkg`：Apple Silicon macOS 客户端。
-- `fncpn-<version>-x86.fpk`：x86_64 fnOS 服务端。
-- `fncpn-<version>-arm.fpk`：ARM64 fnOS 服务端。
-
-macOS 凭据保存在 `/var/db/fncpn/credentials/<uid>/`：root 所有，目录 `0700`、
-文件 `0600`，普通客户端通过受限特权 IPC 存取。
-`1.0.0` 将建立正式数据基线，不迁移 `0.x` 开发期旧格式。仍使用当前格式的数据不会
-自动清空；遇到不支持的旧数据需先备份，使用旧版本正常停止服务并完成网络清理，
-再主动清除用户配置或卸载旧版本后重新安装、授权。不得直接删除运行中的网络状态文件。
-服务端旧 `settings.json`、`devices.json`、`state.transaction.json` 不再自动转换，
-应在停服并备份后由管理员移出状态目录，再初始化当前格式。
-
-macOS 卸载默认保留用户配置、日志和 root 凭据文件。需要同时清除指定用户数据时：
+如需同时删除当前用户的数据（无法撤销），使用：
 
 ```bash
 sudo /Library/PrivilegedHelperTools/cn.rectcircle.fncpn/uninstall.sh \
   --purge-user-data "$(id -u)"
 ```
 
-### 图标生成
+## 项目资料与许可证
 
-应用图标由 `scripts/generate-icons.swift` 使用 AppKit 程序绘制，macOS 构建时自动生成完整 Retina iconset 和 `AppIcon.icns`，fnOS 包根目录的 `ICON.PNG` / `ICON_256.PNG` 使用同源的 512 像素 PNG，已在 `0.1.52` 实机确认解决应用中心图标模糊问题（官方文档规定分别为 64 / 256，本项目采用实测有效的高清资源）；桌面入口单独保留 64 / 256 像素资源，固定引用 `images/icon_256.png`。macOS 上可运行 `swift scripts/generate-icons.swift packaging/assets` 重新生成；其他平台打包使用已提交的 PNG。
-
-macOS 状态栏使用22 × 18 pt 模板图标，自动适配深浅色及菜单选中颜色。应用与状态栏图标都由 `scripts/generate-icons.swift` 中同一个 `connectionMark()` 绘制，使用一致的“内网边界、飞牛标志与接入路径”图形。应用图标采用 fnOS 默认图标风格的浅蓝底与亮蓝前景。所有状态保留内网边界和飞牛标志，以连接线最左侧的端点替换图形表达状态：圆点表示已连接，省略号表示连接中，叉号表示断开，感叹号表示异常或需要登录。局域网、IPv6 直连、中继共用已连接图标，具体连接方式由悬停提示和界面详情说明。生成脚本和生成的资源均保留在仓库中。
-
-正式图标采用圆角矩形表示内网边界，内部复用 `packaging/assets/fnos-original.png` 中的飞牛原始标志，外部连接采用圆角水平 / 垂直折线，并通过边框预留的入口进入内网。原始标志素材与绘图脚本一同保留，重新生成时无需联网。
-
-## 中英文界面
-
-macOS 客户端与 fnOS 管理页支持简体中文和英文：首选语言为中文时使用简体中文，
-其他语言使用英文。macOS 使用系统/应用首选语言，修改后重新启动应用；网页使用
-浏览器首选语言，修改后刷新页面。管理页同步设置 HTML 语言标记，并按界面语言格式化
-握手时间和流量数字。系统网络权限说明也提供中英文资源。
-
-用户提示按稳定错误码翻译；原始错误消息、请求 ID 和诊断详情保留用于排障。
-CLI、协议字段和后台日志继续使用英文。fnOS 安装包描述同时提供中英文。
-
-开发与测试需要 Python 3（仅使用标准库，无新增运行时依赖）。
-统一文案源为 `localization/messages.json`：键使用中文源文案，英文值为对应翻译；
-动态参数使用 `{0}`、`{1}`，不要拼接需要翻译的句子。更新后运行：
-
-```bash
-python3 scripts/sync-localizations.py
-python3 scripts/sync-localizations.py --check
-node --test internal/server/web/index.test.cjs
-```
-
-脚本生成 macOS `.lproj/Localizable.strings` 和管理页内嵌词典，并检查缺失翻译和参数一致性。
-生成文件需一起提交；macOS 打包会复制两种语言资源。`go test ./...` 包含资源同步检查及
-macOS 中英文/回退运行测试；`FNCPN_LAYOUT_CHECK=1 go test ./packaging -count=1` 检查两种语言的窗口布局。
-
-## 产品版本与正式发布准备
-
-唯一产品版本源为 `internal/version/VERSION`；修改后运行
-`python3 scripts/sync-version.py` 同步 fnOS manifest 与 macOS plist 模板。
-Go CLI 默认构建也会嵌入这个版本，不再报告 `dev`。
-远程兼容性只检查 MAJOR 相同且 client MINOR 不大于 server MINOR，PATCH 不参与。
-稳定的 `/version` 入口、HTTP/relay 响应版本和带身份校验的局域网探测支持升级后重新检查。
-开发期已使用该判定器进行验证，正式兼容性承诺从 `1.0.0` 生效。
-
-普通开发构建允许重建本地产物。正式构建使用 `RELEASE=1 ./scripts/build-all.sh`，
-要求干净 checkout、当前 commit 对应 `v<version>` tag，并拒绝覆盖同名产物。
-构建生成仅包含当前发布产物的 `release-<version>.json` 和 `SHA256SUMS-<version>`。
-发布时应归档安装包、元数据、协议与数据样本，后续兼容验收使用这些历史基线。
-正式发布前仍须完成安装升级、真实网络与 fnOS 的实机验收。
+开发、协议研究、设计与发布资料见 [文档索引](docs/README.md)。源码采用 [MIT 许可证](LICENSE)；第三方依赖及飞牛原始标志等素材的权利归各自权利人，MIT 授权不代表获得其商标授权。

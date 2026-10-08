@@ -3,7 +3,7 @@
 ## 版本与兼容性
 
 开发、评审、测试和发布涉及版本、client/server 通信、本地 IPC、持久化数据或打包时，
-必须阅读并遵守 [版本管理与兼容性](docs/07-versioning-and-compatibility.md)。
+必须阅读并遵守 [版本管理与兼容性](docs/versioning-and-compatibility.md)。
 该契约从 **1.0.0** 正式版开始生效，不追溯保证 `0.x` 测试版本兼容；
 面向 `1.0.0` 的实现必须落实契约，不能仅提升版本号。
 
