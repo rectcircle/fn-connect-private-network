@@ -4,7 +4,8 @@ const path = require('node:path');
 const test = require('node:test');
 const vm = require('node:vm');
 
-const rawScript = fs.readFileSync(path.join(__dirname, 'index.html'), 'utf8')
+const sourceHTML = fs.readFileSync(path.join(__dirname, 'index.html'), 'utf8');
+const rawScript = sourceHTML
   .match(/<script>([\s\S]*?)<\/script>/)[1];
 // The page auto-boots after the layout is available; tests drive it manually.
 const script = rawScript.replace('boot();', '');
@@ -15,7 +16,7 @@ const sample = {
   devices: []
 };
 
-function page(fetch) {
+function page(fetch, language = 'zh-CN') {
   const nodes = new Map();
   const node = () => ({
     value: '', textContent: '', dataset: {}, disabled: false, listeners: {}, children: [],
@@ -31,6 +32,7 @@ function page(fetch) {
     append(...items) { this.children.push(...items); },
     replaceChildren(...items) { this.children = items; },
     setAttribute(name, value) { this.attributes[name] = value; },
+    getAttribute(name) { return this.attributes[name]; },
     addEventListener(name, handler) { this.listeners[name] = handler; },
     querySelectorAll() { return ['overlayInput', 'portInput', 'lanInput', 'submit'].map(get); }
   });
@@ -40,13 +42,23 @@ function page(fetch) {
     }
     return nodes.get(id);
   };
+  const staticNodes = [...sourceHTML.split('<script>')[0].matchAll(/<[^>]+data-i18n[^>]*>/g)].map(([tag]) => {
+    const item = node();
+    for (const [, name, value] of tag.matchAll(/(data-i18n(?:-[a-z-]+)?)="([^"]*)"/g)) {
+      item.attributes[name] = value;
+      if (name === 'data-i18n') item.dataset.i18n = value;
+    }
+    return item;
+  });
   const document = {
     getElementById: get, hidden: true, activeElement: null, addEventListener() {},
-    createElement: node
+    createElement: node, documentElement: {},
+    querySelectorAll(selector) { return staticNodes.filter(item => selector.slice(1, -1) in item.attributes); }
   };
   const context = vm.createContext({
     location: {pathname: '/app/fncpn'},
     document, URLSearchParams, AbortController, setTimeout, fetch,
+    navigator: {languages: [language]},
     confirm: () => { throw new Error('native confirm must not be used'); }
   });
   vm.runInContext(script, context);
@@ -327,4 +339,50 @@ test('non-admin caller sees a friendly notice instead of a snapshot permission e
   assert.equal(bootstrapCalls, 1);
   assert.equal(ui.get('mainPanel').hidden, true);
   assert.equal(ui.get('accessDenied').hidden, false);
+});
+
+for (const [locale, expected] of [['zh-CN', '运行中'], ['zh-TW', '运行中'], ['en-US', 'Running'], ['de-DE', 'Running']]) {
+  test(`UI language selection: ${locale}`, () => {
+    const ui = page(undefined, locale);
+    assert.equal(ui.get('statusText').textContent, expected);
+    ui.evaluate('localizeDocument()');
+    assert.equal(ui.evaluate('document.documentElement.lang'), locale.startsWith('zh') ? 'zh-CN' : 'en');
+    const staticText = ui.evaluate("Array.from(document.querySelectorAll('[data-i18n]'), node => node.textContent).join('|')");
+    assert.match(staticText, locale.startsWith('zh') ? /权限不足/ : /Access denied/);
+    if (!locale.startsWith('zh')) assert.doesNotMatch(staticText, /[\u4e00-\u9fff]/);
+    const portLabel = ui.evaluate("document.querySelectorAll('[data-i18n-aria-label]')[0].getAttribute('aria-label')");
+    assert.equal(portLabel, locale.startsWith('zh') ? 'UDP 监听端口' : 'UDP listening port');
+  });
+}
+
+test('English device actions, confirmation and parameter substitution preserve user data', async () => {
+  const ui = page(undefined, 'en');
+  const device = {id: 'd', name: '设备 {1} <img>', overlayAddress: '10.253.203.2/32', enabled: true, connectionState: 'disconnected'};
+  ui.render({...sample, devices: [device]});
+  assert.equal(ui.remove(0).title, 'Delete device');
+  assert.equal(ui.remove(0).attributes['aria-label'], 'Delete 设备 {1} <img> (10.253.203.2/32)');
+  const pending = ui.remove(0).listeners.click();
+  assert.equal(ui.get('confirmationTitle').textContent, 'Delete device');
+  assert.match(ui.get('confirmationMessage').textContent, /Delete device “设备 \{1\} <img>”/);
+  await ui.reply(false);
+  await pending;
+  assert.equal(ui.evaluate("t('missing-key')"), 'missing-key');
+});
+
+test('errors have localized summaries, stable 2FA classification and original diagnostics', () => {
+  for (const language of ['zh-CN', 'en']) {
+    const ui = page(undefined, language);
+    const result = ui.evaluate("describeFailure({code: 'TIMEOUT', message: 'remote timed out', requestId: 'request-123'})");
+    assert.match(result, language === 'en' ? /The request timed out/ : /请求超时/);
+    assert.match(result, /remote timed out/);
+    assert.match(result, /request-123/);
+    assert.match(ui.evaluate("describeFailure({code: 'FAILED_PRECONDITION', remoteCode: 'TWO_FACTOR_REQUIRED', message: 'arbitrary server text'})"),
+      language === 'en' ? /two-factor authentication/ : /两步验证/);
+  }
+});
+
+test('byte counts use the selected language format', () => {
+  const ui = page(undefined, 'en-US');
+  assert.equal(ui.evaluate('formatBytes(1536)'), '1.5 KiB');
+  assert.equal(ui.evaluate('formatBytes(1048576)'), '1.0 MiB');
 });

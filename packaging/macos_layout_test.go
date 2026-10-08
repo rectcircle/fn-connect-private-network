@@ -26,21 +26,34 @@ func TestMacOSAuthorizationLayout(t *testing.T) {
 	// Execute the real view construction in an offscreen window. Do not launch
 	// the application lifecycle, open IPC connections, or access installed state.
 	program := strings.Replace(string(source), "@main\n", "", 1) + macOSLayoutHarness
-	directory := t.TempDir()
+	directory := filepath.Join(t.TempDir(), "LayoutCheck.app", "Contents", "MacOS")
 	if os.Getenv("FNCPN_LAYOUT_PREVIEW") == "1" {
 		directory = filepath.Join(os.TempDir(), "FnCPNUICheck.app", "Contents", "MacOS")
-		if err := os.MkdirAll(directory, 0o700); err != nil {
-			t.Fatal(err)
+	}
+	if err := os.MkdirAll(directory, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	resources := filepath.Join(directory, "..", "Resources")
+	for _, language := range []string{"en", "zh-Hans"} {
+		if os.Getenv("FNCPN_LAYOUT_PREVIEW") == "1" {
+			if err := os.RemoveAll(filepath.Join(resources, language+".lproj")); err != nil {
+				t.Fatal(err)
+			}
 		}
-		plist := `<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict>
-<key>CFBundleIdentifier</key><string>cn.rectcircle.fncpn.uicheck</string>
-<key>CFBundleExecutable</key><string>LayoutCheck</string>
-<key>CFBundleName</key><string>FnCPN UI Check</string>
-</dict></plist>`
-		if err := os.WriteFile(filepath.Join(directory, "..", "Info.plist"), []byte(plist), 0o600); err != nil {
+		if err := os.CopyFS(filepath.Join(resources, language+".lproj"), os.DirFS(filepath.Join("macos", language+".lproj"))); err != nil {
 			t.Fatal(err)
 		}
 	}
+	plist := `<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict>
+<key>CFBundleIdentifier</key><string>cn.rectcircle.fncpn.layoutcheck</string>
+<key>CFBundleExecutable</key><string>LayoutCheck</string>
+<key>CFBundleDevelopmentRegion</key><string>en</string>
+<key>CFBundleLocalizations</key><array><string>en</string><string>zh-Hans</string></array>
+</dict></plist>`
+	if err := os.WriteFile(filepath.Join(directory, "..", "Info.plist"), []byte(plist), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
 	sourcePath := filepath.Join(directory, "LayoutCheck.swift")
 	if err := os.WriteFile(sourcePath, []byte(program), 0o600); err != nil {
 		t.Fatal(err)
@@ -53,10 +66,12 @@ func TestMacOSAuthorizationLayout(t *testing.T) {
 	if output, err := compile.CombinedOutput(); err != nil {
 		t.Fatalf("compile layout check: %v\n%s", err, output)
 	}
-	output, err := exec.CommandContext(ctx, binary).CombinedOutput()
-	t.Logf("AppKit layout:\n%s", output)
-	if err != nil {
-		t.Fatalf("layout check: %v", err)
+	for _, language := range []string{"en", "zh-Hans"} {
+		output, err := exec.CommandContext(ctx, binary, "-AppleLanguages", "("+language+")").CombinedOutput()
+		t.Logf("AppKit layout (%s):\n%s", language, output)
+		if err != nil {
+			t.Fatalf("layout check (%s): %v", language, err)
+		}
 	}
 }
 
@@ -83,6 +98,8 @@ extension AppDelegate {
             check(!view.isHiddenOrHasHiddenAncestor && content.bounds.contains(rect) &&
                   rect.width > 10 && rect.height > 10, "visible \(view): \(rect)")
         }
+        // Layout checks must not request notification authorization.
+        privilegedStartPrompted = true
         withExtendedLifetime(testWindow) {
             render()
             content.layoutSubtreeIfNeeded()
@@ -93,7 +110,7 @@ extension AppDelegate {
             check(detailsView.isHidden, "first launch must show native login")
             check(fnIDField.nextKeyView === usernameField &&
                   usernameField.nextKeyView === passwordField, "login tab order")
-            for size in [NSSize(width: 560, height: 620), NSSize(width: 800, height: 800)] {
+            for size in [NSSize(width: 680, height: 620), NSSize(width: 800, height: 800)] {
                 testWindow.setContentSize(size)
                 for state in ["DIRECT", "RELAY", "AUTH_REQUIRED", "PAUSED", "RECONNECTING", "ERROR"] {
                     let failure: [String: Any] = [
@@ -113,9 +130,15 @@ extension AppDelegate {
                         checkVisible(view)
                     }
                     checkVisible(errorValue.enclosingScrollView!)
+                    checkVisible(quitButton)
+                    let toolsRect = changeButton.superview!.convert(changeButton.superview!.bounds, to: content)
+                    let quitRect = quitButton.convert(quitButton.bounds, to: content)
+                    check(toolsRect.maxX + 8 <= quitRect.minX, "footer tools overlap quit")
+                    check(setupButton.bounds.width >= setupButton.intrinsicContentSize.width, "login button title clipped")
+                    check(primaryButton.bounds.width >= primaryButton.intrinsicContentSize.width, "action title clipped")
                     check(errorValue.string.count > 500, "long diagnostics must not be truncated")
-                    check(primaryButton.title == (state == "AUTH_REQUIRED" ? "重新登录" :
-                        ["DIRECT", "RELAY"].contains(state) ? "断开连接" : "连接"), "contextual action")
+                    check(primaryButton.title == (state == "AUTH_REQUIRED" ? L("重新登录") :
+                        ["DIRECT", "RELAY"].contains(state) ? L("断开连接") : L("连接")), "contextual action")
                     check(!content.hasAmbiguousLayout, "root layout ambiguity")
                     print("PASS: \(state), \(size)")
                 }
@@ -168,7 +191,7 @@ extension AppDelegate {
                     ]],
                     "privilegedAvailable": true
                 ])
-                testWindow.setContentSize(NSSize(width: 560, height: 620))
+                testWindow.setContentSize(NSSize(width: 680, height: 620))
                 testWindow.title = "FnCPN UI Check"
                 testWindow.center()
                 testWindow.makeKeyAndOrderFront(nil)

@@ -140,44 +140,44 @@
       stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
       <rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>
     </svg>
-    <h1>权限不足</h1>
-    <p>该页面仅管理员可以访问。请使用管理员账号登录后重试。</p>
+    <h1 data-i18n="权限不足">权限不足</h1>
+    <p data-i18n="该页面仅管理员可以访问。请使用管理员账号登录后重试。">该页面仅管理员可以访问。请使用管理员账号登录后重试。</p>
   </div>
   <main id="mainPanel">
     <header>
       <h1>FnCPN</h1>
-      <div class="status" id="status"><span class="dot"></span><span id="statusText">正在读取</span></div>
+      <div class="status" id="status"><span class="dot"></span><span id="statusText" data-i18n="正在读取">正在读取</span></div>
     </header>
     <div class="summary">
-      <div class="metric"><div class="label">接口</div><div class="value" id="interface">-</div></div>
+      <div class="metric"><div class="label" data-i18n="接口">接口</div><div class="value" id="interface">-</div></div>
       <div class="metric"><div class="label">Overlay</div><div class="value" id="overlay">-</div></div>
-      <div class="metric"><div class="label">监听端口</div><div class="value" id="port">-</div></div>
-      <div class="metric"><div class="label">设备</div><div class="value" id="count">0</div></div>
+      <div class="metric"><div class="label" data-i18n="监听端口">监听端口</div><div class="value" id="port">-</div></div>
+      <div class="metric"><div class="label" data-i18n="设备">设备</div><div class="value" id="count">0</div></div>
     </div>
     <div class="error" id="statusError" role="alert"></div>
     <section>
       <div class="section-head">
-        <h2>网络</h2>
-        <span class="label" id="networkState">正在读取</span>
+        <h2 data-i18n="网络">网络</h2>
+        <span class="label" id="networkState" data-i18n="正在读取">正在读取</span>
       </div>
       <form class="network-form" id="networkForm">
         <input id="overlayInput" aria-label="Overlay CIDR" placeholder="10.253.203.0/24" required>
-        <input id="portInput" aria-label="UDP 监听端口" type="number" min="1" max="65535" required>
+        <input id="portInput" aria-label="UDP 监听端口" data-i18n-aria-label="UDP 监听端口" type="number" min="1" max="65535" required>
         <input id="lanInput" aria-label="LAN CIDRs" placeholder="192.168.1.0/24">
-        <button class="primary" type="submit">应用网段</button>
+        <button class="primary" type="submit" data-i18n="应用网段">应用网段</button>
       </form>
       <div class="error" id="networkError"></div>
     </section>
     <section>
       <div class="section-head">
-        <h2>设备</h2>
-        <button type="button" id="refresh" title="刷新">刷新</button>
+        <h2 data-i18n="设备">设备</h2>
+        <button type="button" id="refresh" title="刷新" data-i18n-title="刷新" data-i18n="刷新">刷新</button>
       </div>
       <table>
-        <thead><tr><th>名称</th><th>地址</th><th>启用</th><th>连接</th><th>流量</th><th>最近握手</th><th class="device-actions">操作</th></tr></thead>
+        <thead><tr><th data-i18n="名称">名称</th><th data-i18n="地址">地址</th><th data-i18n="启用">启用</th><th data-i18n="连接状态">连接状态</th><th data-i18n="流量">流量</th><th data-i18n="最近握手">最近握手</th><th class="device-actions" data-i18n="操作">操作</th></tr></thead>
         <tbody id="devices"></tbody>
       </table>
-      <div class="empty" id="empty">暂无设备</div>
+      <div class="empty" id="empty" data-i18n="暂无设备">暂无设备</div>
       <div class="error" id="deviceError" role="alert"></div>
     </section>
   </main>
@@ -185,11 +185,171 @@
     <h2 id="confirmationTitle"></h2>
     <p class="confirmation-message" id="confirmationMessage"></p>
     <div class="confirmation-actions">
-      <button type="button" id="confirmationCancel">取消</button>
+      <button type="button" id="confirmationCancel" data-i18n="取消">取消</button>
       <button type="button" id="confirmationAccept"></button>
     </div>
   </dialog>
   <script>
+    // Generated from localization/messages.json by scripts/sync-localizations.py.
+    const english = {
+  "需要重新登录": "Sign in required",
+  "尚未连接": "Not connected",
+  "正在登录": "Signing in",
+  "正在检测网络": "Checking network",
+  "已在同一局域网": "On the same local network",
+  "IPv6 直连": "IPv6 direct",
+  "FN Connect 中继": "FN Connect relay",
+  "正在重新连接": "Reconnecting",
+  "已断开": "Disconnected",
+  "连接失败": "Connection failed",
+  "客户端服务不可用": "Client service unavailable",
+  "重新登录": "Sign in again",
+  "断开连接": "Disconnect",
+  "连接": "Connect",
+  "已建立 UDP 直连": "UDP direct connection established",
+  "同一局域网，无需隧道": "Same local network; no tunnel needed",
+  "本机网络不支持 IPv6": "This network does not support IPv6",
+  "NAS 未提供可用的公网 IPv6": "NAS has no available public IPv6 address",
+  "NAS 已禁用公网 IPv6 访问": "Public IPv6 access is disabled on the NAS",
+  "UDP 握手未通过，已回退中继": "UDP handshake failed; using relay",
+  "地址发现失败，已使用中继": "Address discovery failed; using relay",
+  "等待下一次直连检测": "Waiting for the next direct connection check",
+  "正在检测": "Checking",
+  "尚未检测": "Not checked",
+  "用户名或密码无效，请重试": "Invalid username or password. Try again.",
+  "登录已失效，请重新输入密码": "Your session has expired. Enter your password again.",
+  "该账号权限不足，无法完成授权": "This account does not have permission to authorize.",
+  "暂时无法连接 fnOS，请检查网络后重试": "Cannot connect to fnOS. Check your network and try again.",
+  "该账号需要两步验证，当前版本暂不支持": "This account requires two-factor authentication, which is not supported yet.",
+  "登录 fnOS": "Sign in to fnOS",
+  "例如 home-nas": "For example, home-nas",
+  "fnOS 用户名": "fnOS username",
+  "用户名": "Username",
+  "fnOS 密码": "fnOS password",
+  "密码": "Password",
+  "登录并连接": "Sign in and connect",
+  "返回连接详情": "Back to connection details",
+  "在浏览器中打开 NAS 管理页面": "Open NAS administration in your browser",
+  "连接路径": "Connection path",
+  "隧道地址": "Tunnel address",
+  "网络接口": "Network interface",
+  "最近握手": "Last handshake",
+  "特权服务": "Privileged service",
+  "IPv6 检测": "IPv6 check",
+  "重新检测": "Check again",
+  "诊断详情": "Diagnostics",
+  "更换 NAS": "Change NAS",
+  "管理后台": "Administration",
+  "在浏览器中打开管理后台": "Open administration in your browser",
+  "复制诊断信息": "Copy diagnostics",
+  "打开日志": "Open logs",
+  "刷新状态": "Refresh status",
+  "退出": "Quit",
+  "停止连接并退出": "Disconnect and quit",
+  "FnCPN：尚未连接": "FnCPN: Not connected",
+  "打开 FnCPN": "Open FnCPN",
+  "开机自启": "Start at login",
+  "无法设置开机自启": "Cannot change start at login",
+  "管理后台登录已过期": "Administration session expired",
+  "管理后台暂不可用": "Administration unavailable",
+  "请重新登录 FnCPN。当前隧道连接不受影响。": "Sign in to FnCPN again. Your tunnel connection is unaffected.",
+  "取消": "Cancel",
+  "FnCPN 管理后台": "FnCPN Administration",
+  "FnCPN 特权服务不可用": "FnCPN privileged service unavailable",
+  "连接可能需要特权服务，请确认已安装或重新授权。": "The connection may require the privileged service. Check its installation or authorize again.",
+  "请在系统设置中允许 FnCPN 访问本地网络，然后重试。": "Allow FnCPN to access the local network in System Settings, then try again.",
+  "FN Connect ID 格式不正确": "Invalid FN Connect ID",
+  "请输入 fnOS 用户名": "Enter your fnOS username",
+  "请输入 fnOS 密码": "Enter your fnOS password",
+  "局域网": "Local network",
+  "不可用": "Unavailable",
+  "降级": "Degraded",
+  "活动": "Active",
+  "就绪": "Ready",
+  "管理后台仅对 fnOS 管理员账号开放": "Administration is available only to fnOS administrators",
+  "IPv6 候选 {0}，已尝试 {1}": "IPv6 candidates: {0}; attempted: {1}",
+  "本地与 NAS 网段重叠，仅保留隧道内 NAS 路由": "Local and NAS subnets overlap; only the NAS route inside the tunnel is retained",
+  "无异常": "No issues",
+  "FnCPN：": "FnCPN: ",
+  "权限不足": "Access denied",
+  "该页面仅管理员可以访问。请使用管理员账号登录后重试。": "Only administrators can access this page. Sign in with an administrator account and try again.",
+  "正在读取": "Loading",
+  "接口": "Interface",
+  "监听端口": "Listening port",
+  "设备": "Devices",
+  "网络": "Network",
+  "UDP 监听端口": "UDP listening port",
+  "应用网段": "Apply network",
+  "刷新": "Refresh",
+  "名称": "Name",
+  "地址": "Address",
+  "启用": "Enabled",
+  "流量": "Traffic",
+  "操作": "Actions",
+  "暂无设备": "No devices",
+  "读取失败": "Failed to load",
+  "运行中": "Running",
+  "已读取": "Loaded",
+  "已启用": "Enabled",
+  "已停用": "Disabled",
+  "删除中": "Deleting",
+  "在线": "Online",
+  "离线": "Offline",
+  "状态未知": "Unknown",
+  "正在删除": "Deleting",
+  "设备在线，不能删除": "Online devices cannot be deleted",
+  "删除设备": "Delete device",
+  "状态未知，不能删除": "Cannot delete a device with unknown status",
+  "删除 {0} ({1})": "Delete {0} ({1})",
+  "删除设备“{0}”（{1}）？此操作会移除该设备的注册记录和隧道配置。": "Delete device “{0}” ({1})? This removes its registration and tunnel configuration.",
+  "删除": "Delete",
+  "无法打开确认框：{0}": "Cannot open confirmation dialog: {0}",
+  "设备已不存在，已取消删除。": "The device no longer exists. Deletion canceled.",
+  "设备已上线，已取消删除。": "The device is now online. Deletion canceled.",
+  "设备状态不可确认，已取消删除。": "The device status is unknown. Deletion canceled.",
+  "修改 Overlay": "Change Overlay",
+  "修改 Overlay 会重新分配全部设备地址并中断现有连接。继续吗？": "Changing the Overlay reassigns all device addresses and interrupts existing connections. Continue?",
+  "正在应用": "Applying",
+  "已应用": "Applied",
+  "应用失败": "Failed to apply",
+  "请求参数无效，请检查输入。": "Invalid request. Check your input.",
+  "请重新登录后重试。": "Sign in again and retry.",
+  "操作所需条件尚未满足。": "The requirements for this operation are not met.",
+  "设备授权已撤销，请重新登录。": "Device access was revoked. Sign in again.",
+  "目标不存在，请刷新后重试。": "The requested item was not found. Refresh and retry.",
+  "配置冲突，请刷新后重试。": "Configuration conflict. Refresh and retry.",
+  "请求超时，请重试。": "The request timed out. Try again.",
+  "服务暂不可用，请稍后重试。": "Service unavailable. Try again later.",
+  "资源不足，请稍后重试。": "Insufficient resources. Try again later.",
+  "网络地址发现失败，请检查网络。": "Address discovery failed. Check your network.",
+  "响应格式无效，请重试。": "Invalid response. Try again.",
+  "操作已取消。": "Operation canceled.",
+  "操作失败，请重试或查看诊断详情。": "Operation failed. Retry or review the diagnostics.",
+  "无法连接服务，请检查网络后重试。": "Cannot reach the service. Check your network and retry.",
+  "详细信息": "Details",
+  "客户端服务响应无效": "Invalid daemon response",
+  "授权请求无效": "Invalid authorization request",
+  "连接状态": "Connection",
+  "权限不足，无法完成操作。": "You do not have permission to perform this operation."
+};
+    const language = (globalThis.navigator?.languages?.[0] || globalThis.navigator?.language || 'en')
+      .toLowerCase().startsWith('zh') ? 'zh-CN' : 'en';
+    function t(key, ...args) {
+      const template = language === 'zh-CN' ? key : (english[key] ?? key);
+      return template.replace(/\{(\d+)\}/g, (token, index) => args[index] === undefined ? token : String(args[index]));
+    }
+    function localizeDocument() {
+      document.documentElement.lang = language;
+      document.querySelectorAll('[data-i18n]').forEach(node => {
+        node.textContent = t(node.dataset.i18n);
+      });
+      for (const attribute of ['title', 'aria-label']) {
+        document.querySelectorAll(`[data-i18n-${attribute}]`).forEach(node => {
+          node.setAttribute(attribute, t(node.getAttribute(`data-i18n-${attribute}`)));
+        });
+      }
+    }
+
     const root = location.pathname.startsWith('/app/fncpn') ? '/app/fncpn' : '';
     const byId = id => document.getElementById(id);
     let currentOverlay = '';
@@ -266,7 +426,27 @@
     });
     function describeFailure(error) {
       if (!error) return '';
-      return [
+      const keys = {
+  "INVALID_ARGUMENT": "请求参数无效，请检查输入。",
+  "AUTH_REQUIRED": "请重新登录后重试。",
+  "PERMISSION_DENIED": "权限不足，无法完成操作。",
+  "NOT_FOUND": "目标不存在，请刷新后重试。",
+  "ALREADY_EXISTS": "配置冲突，请刷新后重试。",
+  "CONFLICT": "配置冲突，请刷新后重试。",
+  "FAILED_PRECONDITION": "操作所需条件尚未满足。",
+  "DEVICE_REVOKED": "设备授权已撤销，请重新登录。",
+  "UNAVAILABLE": "服务暂不可用，请稍后重试。",
+  "TIMEOUT": "请求超时，请重试。",
+  "RESOURCE_EXHAUSTED": "资源不足，请稍后重试。",
+  "DISCOVERY_FAILED": "网络地址发现失败，请检查网络。",
+  "PROTOCOL_ERROR": "响应格式无效，请重试。",
+  "CANCELED": "操作已取消。",
+  "INTERNAL": "操作失败，请重试或查看诊断详情。"
+};
+      const summary = t(error.remoteCode === 'TWO_FACTOR_REQUIRED'
+        ? '该账号需要两步验证，当前版本暂不支持'
+        : (keys[error.code] || '操作失败，请重试或查看诊断详情。'));
+      return summary + ' ' + t('详细信息') + ': ' + [
         error.code, error.message, error.operation && `[${error.operation}]`,
         error.httpStatus && `HTTP ${error.httpStatus}`,
         error.remoteCode && `remote ${error.remoteCode}`,
@@ -281,7 +461,7 @@
       }
       if (response.status === 204) return null;
       try { return await response.json(); } catch (_) {
-        throw new Error(`PROTOCOL_ERROR: HTTP ${response.status}: invalid JSON response`);
+        throw new Error(describeFailure({code: 'PROTOCOL_ERROR', httpStatus: response.status, message: 'invalid JSON response'}));
       }
     }
     async function api(path, options = {}) {
@@ -301,7 +481,7 @@
       );
       const result = await responseValue(response);
       if (signal?.aborted || epoch !== snapshotEpoch) return null;
-      if (!result.cursor) throw new Error('PROTOCOL_ERROR: invalid watch cursor');
+      if (!result.cursor) throw new Error(describeFailure({code: 'PROTOCOL_ERROR', message: 'invalid watch cursor'}));
       snapshotCursor = result.cursor;
       return result.changed ? result.snapshot : null;
     }
@@ -314,13 +494,13 @@
       } catch (error) {
         if (epoch !== snapshotEpoch) return;
         markDevicesUnavailable();
-        byId('deviceError').textContent = error.message;
+        byId('deviceError').textContent = error.name === 'TypeError' ? t('无法连接服务，请检查网络后重试。') + ' ' + error.message : error.message;
       }
     }
     function markDevicesUnavailable() {
       devicesFresh = false;
       byId('status').dataset.active = 'false';
-      byId('statusText').textContent = '读取失败';
+      byId('statusText').textContent = t('读取失败');
       renderDevices(currentDevices);
     }
     function showAccessDenied() {
@@ -338,12 +518,12 @@
         const active = Boolean(snapshot.network?.fresh && snapshot.network?.network?.active &&
           !snapshot.network?.network?.degraded);
         byId('status').dataset.active = String(active);
-        byId('statusText').textContent = active ? '运行中' : '不可用';
+        byId('statusText').textContent = active ? t('运行中') : t('不可用');
         byId('interface').textContent = snapshot.network?.network?.interface || '-';
         byId('overlay').textContent = snapshot.settings.overlayCIDR;
         if (!formInitialized) {
           fillNetworkForm(snapshot.settings);
-          byId('networkState').textContent = '已读取';
+          byId('networkState').textContent = t('已读取');
         }
         byId('port').textContent = snapshot.settings.listenPort;
         currentOverlay = snapshot.settings.overlayCIDR;
@@ -369,7 +549,7 @@
         } catch (error) {
           if (error.name === 'AbortError' || controller.signal.aborted) return;
           markDevicesUnavailable();
-          byId('statusError').textContent = error.message;
+          byId('statusError').textContent = error.name === 'TypeError' ? t('无法连接服务，请检查网络后重试。') + ' ' + error.message : error.message;
           await new Promise(resolve => setTimeout(resolve, 1000));
         }
       }
@@ -385,18 +565,18 @@
         code.textContent = device.overlayAddress;
         address.append(code);
         const state = document.createElement('td');
-        state.textContent = device.enabled ? '已启用' : '已停用';
+        state.textContent = device.enabled ? t('已启用') : t('已停用');
         const connection = document.createElement('td');
         const connectionState = devicesFresh ? device.connectionState : 'unknown';
         connection.className = 'connection';
         connection.dataset.state = connectionState;
-        connection.textContent = deletingDeviceId === device.id ? '删除中' :
-          ({connected: '在线', disconnected: '离线', unknown: '状态未知'}[connectionState] || '状态未知');
+        connection.textContent = deletingDeviceId === device.id ? t('删除中') :
+          ({connected: t('在线'), disconnected: t('离线'), unknown: t('状态未知')}[connectionState] || t('状态未知'));
         const traffic = document.createElement('td');
         traffic.textContent = `${formatBytes(device.receiveBytes)} / ${formatBytes(device.transmitBytes)}`;
         const handshake = document.createElement('td');
         handshake.textContent = device.lastHandshake
-          ? new Date(device.lastHandshake).toLocaleString()
+          ? new Date(device.lastHandshake).toLocaleString(language)
           : '-';
         const actions = document.createElement('td');
         actions.className = 'device-actions';
@@ -405,9 +585,9 @@
         remove.className = 'delete-device';
         remove.innerHTML = deleteIcon;
         remove.disabled = deletingDeviceId !== null || connectionState !== 'disconnected';
-        remove.title = deletingDeviceId === device.id ? '正在删除' :
-          ({connected: '设备在线，不能删除', disconnected: '删除设备', unknown: '状态未知，不能删除'}[connectionState] || '状态未知，不能删除');
-        remove.setAttribute('aria-label', `删除 ${device.name} (${device.overlayAddress})`);
+        remove.title = deletingDeviceId === device.id ? t('正在删除') :
+          ({connected: t('设备在线，不能删除'), disconnected: t('删除设备'), unknown: t('状态未知，不能删除')}[connectionState] || t('状态未知，不能删除'));
+        remove.setAttribute('aria-label', t('删除 {0} ({1})', device.name, device.overlayAddress));
         remove.setAttribute('aria-busy', String(deletingDeviceId === device.id));
         remove.addEventListener('click', () => deleteDevice(device.id));
         actions.append(remove);
@@ -420,16 +600,16 @@
       if (!device || !devicesFresh || device.connectionState !== 'disconnected' || deletingDeviceId !== null) return;
       byId('deviceError').textContent = '';
       try {
-        if (!await requestConfirmation('删除设备',
-          `删除设备“${device.name}”（${device.overlayAddress}）？此操作会移除该设备的注册记录和隧道配置。`, '删除')) return;
+        if (!await requestConfirmation(t('删除设备'),
+          t('删除设备“{0}”（{1}）？此操作会移除该设备的注册记录和隧道配置。', device.name, device.overlayAddress), t('删除'))) return;
       } catch (error) {
-        byId('deviceError').textContent = `无法打开确认框：${error.message}`;
+        byId('deviceError').textContent = t('无法打开确认框：{0}', error.message);
         return;
       }
       const current = currentDevices.find(item => item.id === id);
       if (!current || !devicesFresh || current.connectionState !== 'disconnected' || deletingDeviceId !== null) {
-        byId('deviceError').textContent = !current ? '设备已不存在，已取消删除。' :
-          current.connectionState === 'connected' ? '设备已上线，已取消删除。' : '设备状态不可确认，已取消删除。';
+        byId('deviceError').textContent = !current ? t('设备已不存在，已取消删除。') :
+          current.connectionState === 'connected' ? t('设备已上线，已取消删除。') : t('设备状态不可确认，已取消删除。');
         return;
       }
       deletingDeviceId = id;
@@ -456,9 +636,9 @@
       }
     }
     function formatBytes(value = 0) {
-      if (value < 1024) return `${value} B`;
-      if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KiB`;
-      return `${(value / 1024 / 1024).toFixed(1)} MiB`;
+      if (value < 1024) return `${new Intl.NumberFormat(language).format(value)} B`;
+      if (value < 1024 * 1024) return `${new Intl.NumberFormat(language, {minimumFractionDigits: 1, maximumFractionDigits: 1}).format(value / 1024)} KiB`;
+      return `${new Intl.NumberFormat(language, {minimumFractionDigits: 1, maximumFractionDigits: 1}).format(value / 1024 / 1024)} MiB`;
     }
     byId('networkForm').addEventListener('submit', async event => {
       event.preventDefault();
@@ -467,10 +647,10 @@
       const controls = byId('networkForm').querySelectorAll('input, button');
       try {
         if (overlayCIDR !== currentOverlay &&
-            !await requestConfirmation('修改 Overlay',
-              '修改 Overlay 会重新分配全部设备地址并中断现有连接。继续吗？', '应用网段')) return;
+            !await requestConfirmation(t('修改 Overlay'),
+              t('修改 Overlay 会重新分配全部设备地址并中断现有连接。继续吗？'), t('应用网段'))) return;
         controls.forEach(control => { control.disabled = true; });
-        byId('networkState').textContent = '正在应用';
+        byId('networkState').textContent = t('正在应用');
         const state = await api('/api/v1/admin/networks', {
           method: 'PUT',
           body: JSON.stringify({
@@ -481,11 +661,11 @@
         });
         fillNetworkForm(state.settings);
         currentOverlay = state.settings.overlayCIDR;
-        byId('networkState').textContent = '已应用';
+        byId('networkState').textContent = t('已应用');
         await refresh();
       } catch (error) {
-        byId('networkState').textContent = '应用失败';
-        byId('networkError').textContent = error.message;
+        byId('networkState').textContent = t('应用失败');
+        byId('networkError').textContent = error.name === 'TypeError' ? t('无法连接服务，请检查网络后重试。') + ' ' + error.message : error.message;
       } finally {
         controls.forEach(control => { control.disabled = false; });
       }
@@ -502,6 +682,7 @@
     // Identify the caller up front so non-admin users see a friendly notice
     // instead of a raw API permission error from /api/v1/admin/snapshot.
     async function boot() {
+      localizeDocument();
       try {
         const response = await fetch(root + '/api/v1/bootstrap');
         const body = await response.json().catch(() => null);

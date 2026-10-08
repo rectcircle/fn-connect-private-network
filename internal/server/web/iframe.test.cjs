@@ -6,7 +6,7 @@ const test = require('node:test');
 
 test('confirmation works in an iframe without allow-modals or allow-forms', {
   skip: !process.env.PLAYWRIGHT_MODULE,
-  timeout: 30000
+  timeout: 60000
 }, async t => {
   const {chromium} = require(process.env.PLAYWRIGHT_MODULE);
   const html = fs.readFileSync(path.join(__dirname, 'index.html'));
@@ -88,10 +88,10 @@ test('confirmation works in an iframe without allow-modals or allow-forms', {
     appURL = `http://127.0.0.1:${application.address().port}`;
     await new Promise(resolve => parent.listen(0, '127.0.0.1', resolve));
     browser = await chromium.launch({channel: process.env.PLAYWRIGHT_CHANNEL || 'chrome', headless: true});
-    for (const width of [1280, 375, 320]) {
+    for (const locale of ['zh-CN', 'en-US']) for (const width of [1280, 375, 320]) {
       reset();
       const page = await browser.newPage({
-        viewport: {width, height: 800}, locale: 'zh-CN', colorScheme: width === 320 ? 'dark' : 'light'
+        viewport: {width, height: 800}, locale, colorScheme: width === 320 ? 'dark' : 'light'
       });
       page.on('console', message => { messages.push(message.text()); });
       page.on('pageerror', error => { messages.push(error.message); });
@@ -100,6 +100,7 @@ test('confirmation works in an iframe without allow-modals or allow-forms', {
       const frame = page.frameLocator('#app');
       const remove = frame.locator('.delete-device').first();
       await remove.waitFor();
+      assert.equal(await frame.locator('html').getAttribute('lang'), locale === 'zh-CN' ? 'zh-CN' : 'en');
       assert.equal(await remove.isEnabled(), true);
       assert.equal(await frame.locator('.delete-device').nth(1).isDisabled(), true);
       await remove.click();
@@ -113,7 +114,7 @@ test('confirmation works in an iframe without allow-modals or allow-forms', {
       });
       assert.ok(bounds.left >= 0 && bounds.right <= bounds.width && bounds.top >= 0 && bounds.bottom <= bounds.height, JSON.stringify(bounds));
       if (process.env.FNCPN_SCREENSHOT_DIR) {
-        await page.screenshot({path: path.join(process.env.FNCPN_SCREENSHOT_DIR, `iframe-confirm-${width}.png`)});
+        await page.screenshot({path: path.join(process.env.FNCPN_SCREENSHOT_DIR, `iframe-confirm-${locale}-${width}.png`)});
       }
       await frame.locator('#confirmationCancel').click();
       await frame.locator('#confirmation').waitFor({state: 'hidden'});
@@ -130,7 +131,7 @@ test('confirmation works in an iframe without allow-modals or allow-forms', {
 
       // The existing network form requires form permission; modals stay forbidden.
       await page.goto(`http://127.0.0.1:${parent.address().port}/forms`);
-      await frame.locator('#networkState').filter({hasText: '已读取'}).waitFor();
+      await frame.locator('#networkState').filter({hasText: locale === 'zh-CN' ? '已读取' : 'Loaded'}).waitFor();
       await frame.locator('#overlayInput').fill('10.200.0.0/24');
       await frame.locator('#networkForm button').click();
       await frame.locator('#confirmation').waitFor({state: 'visible'});
@@ -139,13 +140,13 @@ test('confirmation works in an iframe without allow-modals or allow-forms', {
       assert.equal(updates, 0);
       await frame.locator('#networkForm button').click();
       await frame.locator('#confirmationAccept').click();
-      await frame.locator('#networkState').filter({hasText: '已应用'}).waitFor();
+      await frame.locator('#networkState').filter({hasText: locale === 'zh-CN' ? '已应用' : 'Applied'}).waitFor();
       assert.equal(updates, 1);
       await page.close();
-      t.diagnostic(`PASS ${width}px: iframe confirmation, cancel, Escape, delete, overlay confirmation`);
+      t.diagnostic(`PASS ${locale} ${width}px: iframe confirmation, cancel, Escape, delete, overlay confirmation`);
     }
     reset();
-    const changingPage = await browser.newPage();
+    const changingPage = await browser.newPage({locale: 'zh-CN'});
     await changingPage.goto(`http://127.0.0.1:${parent.address().port}`);
     const changingFrame = changingPage.frameLocator('#app');
     await changingFrame.locator('.delete-device').first().click();

@@ -4,8 +4,57 @@ import ServiceManagement
 import UserNotifications
 import WebKit
 
+// Source-language keys live in the en/zh-Hans .lproj catalogs. Unsupported
+// primary languages use English; Chinese variants use Simplified Chinese.
+private let uiLanguage = (Locale.preferredLanguages.first ?? "en")
+    .lowercased().hasPrefix("zh") ? "zh-Hans" : "en"
+private let localizationBundle: Bundle = {
+    guard let path = Bundle.main.path(forResource: uiLanguage, ofType: "lproj"),
+          let bundle = Bundle(path: path) else { return Bundle.main }
+    return bundle
+}()
+
+private func L(_ key: String, _ arguments: String...) -> String {
+    let template = localizationBundle.localizedString(forKey: key, value: key, table: nil)
+    // Replace tokens in the template only, never inside user-supplied arguments.
+    let tokens = try! NSRegularExpression(pattern: #"\{([0-9]+)\}"#)
+    let source = template as NSString
+    var result = template
+    for match in tokens.matches(in: template, range: NSRange(location: 0, length: source.length)).reversed() {
+        let index = Int(source.substring(with: match.range(at: 1)))!
+        if arguments.indices.contains(index), let range = Range(match.range, in: result) {
+            result.replaceSubrange(range, with: arguments[index])
+        }
+    }
+    return result
+}
+
 private let protocolVersion = 4
 private let maximumFrameSize = 256 * 1024
+
+private func failureSummary(_ failure: [String: Any]) -> String {
+    if failure["remoteCode"] as? String == "TWO_FACTOR_REQUIRED" {
+        return L("该账号需要两步验证，当前版本暂不支持")
+    }
+    let keys = [
+        "INVALID_ARGUMENT": "请求参数无效，请检查输入。",
+        "AUTH_REQUIRED": "请重新登录后重试。",
+        "PERMISSION_DENIED": "权限不足，无法完成操作。",
+        "NOT_FOUND": "目标不存在，请刷新后重试。",
+        "ALREADY_EXISTS": "配置冲突，请刷新后重试。",
+        "CONFLICT": "配置冲突，请刷新后重试。",
+        "FAILED_PRECONDITION": "操作所需条件尚未满足。",
+        "DEVICE_REVOKED": "设备授权已撤销，请重新登录。",
+        "UNAVAILABLE": "服务暂不可用，请稍后重试。",
+        "TIMEOUT": "请求超时，请重试。",
+        "RESOURCE_EXHAUSTED": "资源不足，请稍后重试。",
+        "DISCOVERY_FAILED": "网络地址发现失败，请检查网络。",
+        "PROTOCOL_ERROR": "响应格式无效，请重试。",
+        "CANCELED": "操作已取消。",
+        "INTERNAL": "操作失败，请重试或查看诊断详情。"
+    ]
+    return L(keys[failure["code"] as? String ?? ""] ?? "操作失败，请重试或查看诊断详情。")
+}
 
 private func describeFailure(_ failure: [String: Any]?) -> String {
     guard let failure else { return "" }
@@ -16,7 +65,7 @@ private func describeFailure(_ failure: [String: Any]?) -> String {
     if let code = failure["remoteCode"] as? String { parts.append("remote \(code)") }
     if let detail = failure["detail"] as? String { parts.append(detail) }
     if let id = failure["requestId"] as? String { parts.append("request \(id)") }
-    return parts.joined(separator: ": ")
+    return failureSummary(failure) + "\n" + L("详细信息") + ": " + parts.joined(separator: ": ")
 }
 
 private func normalizeFNID(_ input: String) -> String? {
@@ -96,7 +145,7 @@ private final class IPCClient {
             throw NSError(
                 domain: "FnCPN",
                 code: 1,
-                userInfo: [NSLocalizedDescriptionKey: "Invalid daemon response"]
+                userInfo: [NSLocalizedDescriptionKey: L("客户端服务响应无效")]
             )
         }
         let responseData = try readExactly(Int(responseLength), from: descriptor)
@@ -106,7 +155,7 @@ private final class IPCClient {
             throw NSError(
                 domain: "FnCPN",
                 code: 2,
-                userInfo: [NSLocalizedDescriptionKey: "Invalid daemon response"]
+                userInfo: [NSLocalizedDescriptionKey: L("客户端服务响应无效")]
             )
         }
         guard response["version"] as? Int == protocolVersion,
@@ -187,7 +236,7 @@ private final class IPCClient {
         NSError(
             domain: "FnCPN",
             code: 2,
-            userInfo: [NSLocalizedDescriptionKey: "Invalid daemon response"]
+            userInfo: [NSLocalizedDescriptionKey: L("客户端服务响应无效")]
         )
     }
 
@@ -316,16 +365,16 @@ private struct ConnectionPresentation {
     let needsLogin: Bool
     var connected: Bool { ["LOCAL", "DIRECT", "RELAY"].contains(state) }
     var title: String {
-        if needsLogin { return "需要重新登录" }
+        if needsLogin { return L("需要重新登录") }
         return [
-            "UNCONFIGURED": "尚未连接", "AUTHORIZING": "正在登录",
-            "PROBING": "正在检测网络", "LOCAL": "已在同一局域网",
-            "DIRECT": "IPv6 直连", "RELAY": "FN Connect 中继",
-            "RECONNECTING": "正在重新连接", "PAUSED": "已断开",
-            "ERROR": "连接失败", "DAEMON_UNAVAILABLE": "客户端服务不可用"
+            "UNCONFIGURED": L("尚未连接"), "AUTHORIZING": L("正在登录"),
+            "PROBING": L("正在检测网络"), "LOCAL": L("已在同一局域网"),
+            "DIRECT": L("IPv6 直连"), "RELAY": L("FN Connect 中继"),
+            "RECONNECTING": L("正在重新连接"), "PAUSED": L("已断开"),
+            "ERROR": L("连接失败"), "DAEMON_UNAVAILABLE": L("客户端服务不可用")
         ][state] ?? state
     }
-    var actionTitle: String { needsLogin ? "重新登录" : connected ? "断开连接" : "连接" }
+    var actionTitle: String { needsLogin ? L("重新登录") : connected ? L("断开连接") : L("连接") }
     var actionSymbol: String { needsLogin ? "person.badge.key" : connected ? "stop.fill" : "bolt.fill" }
 
     init(_ status: [String: Any]) {
@@ -342,16 +391,16 @@ private struct ConnectionPresentation {
 
 private func directSummary(_ direct: [String: Any]) -> String {
     switch direct["reason"] as? String ?? "" {
-    case "connected": return "已建立 UDP 直连"
-    case "local_network": return "同一局域网，无需隧道"
-    case "no_local_ipv6": return "本机网络不支持 IPv6"
-    case "no_server_ipv6": return "NAS 未提供可用的公网 IPv6"
-    case "server_disabled": return "NAS 已禁用公网 IPv6 访问"
-    case "handshake_failed": return "UDP 握手未通过，已回退中继"
-    case "discovery_failed": return "地址发现失败，已使用中继"
-    case "cooldown": return "等待下一次直连检测"
-    case "probing", "checking": return "正在检测"
-    default: return "尚未检测"
+    case "connected": return L("已建立 UDP 直连")
+    case "local_network": return L("同一局域网，无需隧道")
+    case "no_local_ipv6": return L("本机网络不支持 IPv6")
+    case "no_server_ipv6": return L("NAS 未提供可用的公网 IPv6")
+    case "server_disabled": return L("NAS 已禁用公网 IPv6 访问")
+    case "handshake_failed": return L("UDP 握手未通过，已回退中继")
+    case "discovery_failed": return L("地址发现失败，已使用中继")
+    case "cooldown": return L("等待下一次直连检测")
+    case "probing", "checking": return L("正在检测")
+    default: return L("尚未检测")
     }
 }
 
@@ -361,16 +410,15 @@ private func loginFailureMessage(_ failure: [String: Any]?) -> String {
     case "AUTH_REQUIRED":
         let operation = failure["operation"] as? String ?? ""
         return operation.contains("native_session.authenticate")
-            ? "用户名或密码无效，请重试"
-            : "登录已失效，请重新输入密码"
+            ? L("用户名或密码无效，请重试")
+            : L("登录已失效，请重新输入密码")
     case "PERMISSION_DENIED":
-        return "该账号权限不足，无法完成授权"
+        return L("该账号权限不足，无法完成授权")
     case "UNAVAILABLE", "TIMEOUT":
-        return "暂时无法连接 fnOS，请检查网络后重试"
+        return L("暂时无法连接 fnOS，请检查网络后重试")
     case "FAILED_PRECONDITION":
-        let message = failure["message"] as? String ?? ""
-        return message.contains("two-factor")
-            ? "该账号需要两步验证，当前版本暂不支持"
+        return failure["remoteCode"] as? String == "TWO_FACTOR_REQUIRED"
+            ? L("该账号需要两步验证，当前版本暂不支持")
             : describeFailure(failure)
     default:
         return describeFailure(failure)
@@ -388,7 +436,7 @@ private final class HandCursorButton: NSButton {
 private final class AppDelegate: NSObject, NSApplicationDelegate {
     private let ipc = IPCClient()
     private let launchAgent = LaunchAgentManager()
-    private let statusValue = NSTextField(labelWithString: "尚未连接")
+    private let statusValue = NSTextField(labelWithString: L("尚未连接"))
     private let serverValue = NSTextField(labelWithString: "")
     private let pathValue = NSTextField(labelWithString: "-")
     private let addressValue = NSTextField(labelWithString: "-")
@@ -396,7 +444,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
     private let interfaceValue = NSTextField(labelWithString: "-")
     private let handshakeValue = NSTextField(labelWithString: "-")
     private let rootValue = NSTextField(labelWithString: "-")
-    private let directValue = NSTextField(wrappingLabelWithString: "尚未检测")
+    private let directValue = NSTextField(wrappingLabelWithString: L("尚未检测"))
     private let errorValue = NSTextView()
     private let setupError = NSTextField(wrappingLabelWithString: "")
     private let fnIDField = NSTextField()
@@ -463,7 +511,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
             backing: .buffered, defer: false
         )
         window.title = "FnCPN"
-        window.contentMinSize = NSSize(width: 560, height: 440)
+        window.contentMinSize = NSSize(width: 680, height: 440)
         window.isReleasedWhenClosed = false
         window.contentView = content
         fnIDField.nextKeyView = usernameField
@@ -505,7 +553,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func makeContent() -> NSView {
-        let content = NSView(frame: NSRect(x: 0, y: 0, width: 560, height: 520))
+        let content = NSView(frame: NSRect(x: 0, y: 0, width: 680, height: 520))
         let title = NSTextField(labelWithString: "FnCPN")
         title.font = .systemFont(ofSize: 24, weight: .semibold)
         // A gray, body-sized version string shown right after the title.
@@ -533,18 +581,18 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         setupView.orientation = .vertical
         setupView.alignment = .leading
         setupView.spacing = 18
-        let setupTitle = NSTextField(labelWithString: "登录 fnOS")
+        let setupTitle = NSTextField(labelWithString: L("登录 fnOS"))
         setupTitle.font = .systemFont(ofSize: 18, weight: .medium)
         setupView.addArrangedSubview(setupTitle)
-        configureLoginField(fnIDField, placeholder: "例如 home-nas", label: "FN Connect ID")
-        configureLoginField(usernameField, placeholder: "fnOS 用户名", label: "用户名")
-        configureLoginField(passwordField, placeholder: "fnOS 密码", label: "密码")
+        configureLoginField(fnIDField, placeholder: L("例如 home-nas"), label: "FN Connect ID")
+        configureLoginField(usernameField, placeholder: L("fnOS 用户名"), label: L("用户名"))
+        configureLoginField(passwordField, placeholder: L("fnOS 密码"), label: L("密码"))
         passwordField.target = self
         passwordField.action = #selector(submitLogin)
         let loginForm = NSGridView(views: [
             loginRow("FN Connect ID", fnIDField),
-            loginRow("用户名", usernameField),
-            loginRow("密码", passwordField)
+            loginRow(L("用户名"), usernameField),
+            loginRow(L("密码"), passwordField)
         ])
         loginForm.column(at: 0).width = 104
         loginForm.column(at: 1).width = 320
@@ -554,12 +602,12 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         fnIDField.nextKeyView = usernameField
         usernameField.nextKeyView = passwordField
         fill(loginForm, in: setupView)
-        setupButton = button("登录并连接", symbol: "arrow.right", action: #selector(submitLogin))
-        setupButton.widthAnchor.constraint(equalToConstant: 132).isActive = true
+        setupButton = button(L("登录并连接"), symbol: "arrow.right", action: #selector(submitLogin))
+        setupButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 132).isActive = true
         setupView.addArrangedSubview(setupButton)
         setupError.textColor = .systemRed
         fill(setupError, in: setupView)
-        returnButton = button("返回连接详情", symbol: "arrow.left", action: #selector(returnToDetails))
+        returnButton = button(L("返回连接详情"), symbol: "arrow.left", action: #selector(returnToDetails))
         setupView.addArrangedSubview(returnButton)
 
         detailsView.orientation = .vertical
@@ -571,7 +619,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         fill(serverValue, in: detailsView)
         statusValue.font = .systemFont(ofSize: 20, weight: .medium)
         fill(statusValue, in: detailsView)
-        browserButton = iconButton("arrow.up.right.square", action: #selector(openNASInBrowser), help: "在浏览器中打开 NAS 管理页面")
+        browserButton = iconButton("arrow.up.right.square", action: #selector(openNASInBrowser), help: L("在浏览器中打开 NAS 管理页面"))
 
         // Keep the value cell's height equal to the text label so the NAS IP row
         // stays exactly as tall as every other row (avoids the vertical mismatch
@@ -596,9 +644,9 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         ])
 
         let grid = NSGridView(views: [
-            row("连接路径", pathValue), row("隧道地址", addressValue),
-            row("网络接口", interfaceValue), row("最近握手", handshakeValue),
-            row("特权服务", rootValue), row("IPv6 检测", directValue),
+            row(L("连接路径"), pathValue), row(L("隧道地址"), addressValue),
+            row(L("网络接口"), interfaceValue), row(L("最近握手"), handshakeValue),
+            row(L("特权服务"), rootValue), row(L("IPv6 检测"), directValue),
             [nasLabel("NAS IP"), nasContainer]
         ])
         grid.column(at: 0).width = 84
@@ -614,12 +662,12 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         nasValue.isSelectable = true
         nasValue.lineBreakMode = .byTruncatingMiddle
         nasValue.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        primaryButton = button("连接", symbol: "bolt.fill", action: #selector(primaryAction))
-        primaryButton.widthAnchor.constraint(equalToConstant: 126).isActive = true
-        loginButton = button("重新登录", symbol: "person.badge.key", action: #selector(relogin))
-        retryButton = button("重新检测", symbol: "arrow.clockwise", action: #selector(retryConnection))
+        primaryButton = button(L("连接"), symbol: "bolt.fill", action: #selector(primaryAction))
+        primaryButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 126).isActive = true
+        loginButton = button(L("重新登录"), symbol: "person.badge.key", action: #selector(relogin))
+        retryButton = button(L("重新检测"), symbol: "arrow.clockwise", action: #selector(retryConnection))
         detailsView.addArrangedSubview(horizontal([primaryButton, loginButton, retryButton]))
-        let errorLabel = NSTextField(labelWithString: "诊断详情")
+        let errorLabel = NSTextField(labelWithString: L("诊断详情"))
         errorLabel.textColor = .secondaryLabelColor
         detailsView.addArrangedSubview(errorLabel)
         let scroll = NSScrollView()
@@ -633,7 +681,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         errorValue.isHorizontallyResizable = false
         errorValue.autoresizingMask = [.width]
         errorValue.textContainer?.widthTracksTextView = true
-        errorValue.setAccessibilityLabel("诊断详情")
+        errorValue.setAccessibilityLabel(L("诊断详情"))
         scroll.documentView = errorValue
         scroll.translatesAutoresizingMaskIntoConstraints = false
         scroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 80).isActive = true
@@ -654,19 +702,19 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
             pane.setContentHuggingPriority(.required, for: .vertical)
             pane.setContentCompressionResistancePriority(.required, for: .vertical)
         }
-        changeButton = button("更换 NAS", symbol: "arrow.left.arrow.right", action: #selector(changeServer))
-        adminButton = button("管理后台", symbol: "globe", action: #selector(openAdmin), help: "在浏览器中打开管理后台")
+        changeButton = button(L("更换 NAS"), symbol: "arrow.left.arrow.right", action: #selector(changeServer))
+        adminButton = button(L("管理后台"), symbol: "globe", action: #selector(openAdmin), help: L("在浏览器中打开管理后台"))
         progress.style = .spinning
         progress.controlSize = .small
         progress.isDisplayedWhenStopped = false
         let tools = horizontal([
             changeButton, adminButton, progress,
-            button("", symbol: "doc.on.doc", action: #selector(copyDiagnostics), help: "复制诊断信息"),
-            button("", symbol: "folder", action: #selector(openLogs), help: "打开日志"),
-            button("", symbol: "arrow.clockwise", action: #selector(refresh), help: "刷新状态")
+            button("", symbol: "doc.on.doc", action: #selector(copyDiagnostics), help: L("复制诊断信息")),
+            button("", symbol: "folder", action: #selector(openLogs), help: L("打开日志")),
+            button("", symbol: "arrow.clockwise", action: #selector(refresh), help: L("刷新状态"))
         ])
         tools.translatesAutoresizingMaskIntoConstraints = false
-        quitButton = button("退出", symbol: "power", action: #selector(quit), help: "停止连接并退出")
+        quitButton = button(L("退出"), symbol: "power", action: #selector(quit), help: L("停止连接并退出"))
         quitButton.translatesAutoresizingMaskIntoConstraints = false
 
         // Stack the body and the tools row together and center the whole block
@@ -687,11 +735,11 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
             container.centerYAnchor.constraint(equalTo: content.centerYAnchor),
             container.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 28),
             container.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -28),
-            footer.trailingAnchor.constraint(equalTo: tools.trailingAnchor),
             footer.heightAnchor.constraint(equalTo: tools.heightAnchor),
             footer.widthAnchor.constraint(equalTo: container.widthAnchor),
             tools.leadingAnchor.constraint(equalTo: footer.leadingAnchor),
             tools.centerYAnchor.constraint(equalTo: footer.centerYAnchor),
+            tools.trailingAnchor.constraint(lessThanOrEqualTo: quitButton.leadingAnchor, constant: -12),
             quitButton.trailingAnchor.constraint(equalTo: footer.trailingAnchor),
             quitButton.centerYAnchor.constraint(equalTo: footer.centerYAnchor)
         ])
@@ -827,24 +875,24 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
     private func configureStatusItem() {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         item.button?.image = connectionStatusIcon("UNCONFIGURED")
-        item.button?.setAccessibilityLabel("FnCPN：尚未连接")
+        item.button?.setAccessibilityLabel(L("FnCPN：尚未连接"))
         let menu = NSMenu()
-        menu.addItem(withTitle: "打开 FnCPN", action: #selector(showWindow), keyEquivalent: "")
+        menu.addItem(withTitle: L("打开 FnCPN"), action: #selector(showWindow), keyEquivalent: "")
         menu.addItem(.separator())
-        menuAction = menu.addItem(withTitle: "连接", action: #selector(statusBarAction), keyEquivalent: "")
+        menuAction = menu.addItem(withTitle: L("连接"), action: #selector(statusBarAction), keyEquivalent: "")
         // The item title becomes "重新登录" exactly when menuAction also shows
         // "重新登录" (i.e. the session needs re-authentication). The dedicated
         // relogin item is hidden in that case so the menu does not show two
         // duplicate "重新登录" entries; it stays visible while connected so the
         // user can switch accounts.
-        reloginMenuItem = menu.addItem(withTitle: "重新登录", action: #selector(relogin), keyEquivalent: "")
+        reloginMenuItem = menu.addItem(withTitle: L("重新登录"), action: #selector(relogin), keyEquivalent: "")
         menu.addItem(.separator())
         autoStartItem = menu.addItem(
             withTitle: "", action: #selector(toggleAutoStart), keyEquivalent: ""
         )
         refreshAutoStartItem()
         menu.addItem(.separator())
-        menu.addItem(withTitle: "退出", action: #selector(quit), keyEquivalent: "q")
+        menu.addItem(withTitle: L("退出"), action: #selector(quit), keyEquivalent: "q")
         menu.autoenablesItems = false
         for entry in menu.items { entry.target = self }
         item.menu = menu
@@ -856,7 +904,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         // what shows up in System Settings > General > Login Items and lets the
         // app launch at login (running in the background with its status bar).
         let enabled = SMAppService.mainApp.status == .enabled
-        autoStartItem?.title = "开机自启"
+        autoStartItem?.title = L("开机自启")
         autoStartItem?.state = enabled ? .on : .off
     }
 
@@ -870,7 +918,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         } catch {
             let alert = NSAlert()
-            alert.messageText = "无法设置开机自启"
+            alert.messageText = L("无法设置开机自启")
             alert.informativeText = error.localizedDescription
             alert.alertStyle = .warning
             alert.runModal()
@@ -924,13 +972,13 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
                 } else {
                     let alert = NSAlert()
                     alert.messageText = requiresLogin ?
-                        "管理后台登录已过期" : "管理后台暂不可用"
+                        L("管理后台登录已过期") : L("管理后台暂不可用")
                     alert.informativeText = requiresLogin ?
-                        "请重新登录 FnCPN。当前隧道连接不受影响。" : failureMessage
+                        L("请重新登录 FnCPN。当前隧道连接不受影响。") : failureMessage
                     alert.alertStyle = .warning
                     if requiresLogin {
-                        alert.addButton(withTitle: "重新登录")
-                        alert.addButton(withTitle: "取消")
+                        alert.addButton(withTitle: L("重新登录"))
+                        alert.addButton(withTitle: L("取消"))
                         if alert.runModal() == .alertFirstButtonReturn {
                             self.relogin()
                         }
@@ -952,7 +1000,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
                 styleMask: [.titled, .closable, .miniaturizable, .resizable],
                 backing: .buffered, defer: false
             )
-            window.title = "FnCPN 管理后台"
+            window.title = L("FnCPN 管理后台")
             window.contentMinSize = NSSize(width: 640, height: 480)
             window.isReleasedWhenClosed = false
             window.center()
@@ -992,8 +1040,8 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         center.requestAuthorization(options: [.alert, .sound]) { granted, _ in
             guard granted else { return }
             let content = UNMutableNotificationContent()
-            content.title = "FnCPN 特权服务不可用"
-            content.body = "连接可能需要特权服务，请确认已安装或重新授权。"
+            content.title = L("FnCPN 特权服务不可用")
+            content.body = L("连接可能需要特权服务，请确认已安装或重新授权。")
             content.sound = .default
             let request = UNNotificationRequest(
                 identifier: "fncpn.privileged.unavailable",
@@ -1032,24 +1080,24 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         // runs its LOCAL LAN probe, otherwise that probe can be silently
         // blocked by the privacy system.
         guard ensureLocalNetworkAccess() else {
-            setupError.stringValue = "请在系统设置中允许 FnCPN 访问本地网络，然后重试。"
+            setupError.stringValue = L("请在系统设置中允许 FnCPN 访问本地网络，然后重试。")
             window?.makeFirstResponder(fnIDField)
             return
         }
         guard let fnID = normalizeFNID(fnIDField.stringValue) else {
-            setupError.stringValue = "FN Connect ID 格式不正确"
+            setupError.stringValue = L("FN Connect ID 格式不正确")
             window?.makeFirstResponder(fnIDField)
             return
         }
         let username = usernameField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !username.isEmpty else {
-            setupError.stringValue = "请输入 fnOS 用户名"
+            setupError.stringValue = L("请输入 fnOS 用户名")
             window?.makeFirstResponder(usernameField)
             return
         }
         let password = passwordField.stringValue
         guard !password.isEmpty else {
-            setupError.stringValue = "请输入 fnOS 密码"
+            setupError.stringValue = L("请输入 fnOS 密码")
             window?.makeFirstResponder(passwordField)
             return
         }
@@ -1075,7 +1123,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
                         throw NSError(
                             domain: "FnCPN",
                             code: 4,
-                            userInfo: [NSLocalizedDescriptionKey: "Invalid authorization request"]
+                            userInfo: [NSLocalizedDescriptionKey: L("授权请求无效")]
                         )
                     }
                     requestID = value
@@ -1250,11 +1298,11 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         reloginMenuItem?.isEnabled = !busy
         serverValue.stringValue = fnID
         serverValue.toolTip = fnID
-        statusValue.stringValue = busy && loginInFlight ? "正在登录" : presentation.title
+        statusValue.stringValue = busy && loginInFlight ? L("正在登录") : presentation.title
         statusValue.textColor = presentation.needsLogin ? .systemOrange :
             presentation.connected ? .systemGreen : .labelColor
         pathValue.stringValue = [
-            "local": "局域网", "ipv6": "IPv6 / UDP", "fn-connect": "FN Connect / WSS"
+            "local": L("局域网"), "ipv6": "IPv6 / UDP", "fn-connect": "FN Connect / WSS"
         ][status["path"] as? String ?? ""] ?? "-"
         addressValue.stringValue = displayed["clientAddress"] as? String ?? "-"
         let interfaceName = displayed["networkInterface"] as? String ?? "-"
@@ -1262,9 +1310,9 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         interfaceValue.stringValue = mtu > 0 ? "\(interfaceName) · MTU \(mtu)" : interfaceName
         handshakeValue.stringValue = displayed["handshakeAge"] as? String ?? "-"
         let privilegedAvailable = diagnostics["privilegedAvailable"] as? Bool == true
-        rootValue.stringValue = !privilegedAvailable ? "不可用" :
-            diagnostics["privilegedDegraded"] as? Bool == true ? "降级" :
-            diagnostics["privilegedActive"] as? Bool == true ? "活动" : "就绪"
+        rootValue.stringValue = !privilegedAvailable ? L("不可用") :
+            diagnostics["privilegedDegraded"] as? Bool == true ? L("降级") :
+            diagnostics["privilegedActive"] as? Bool == true ? L("活动") : L("就绪")
         let nasAddress = displayed["nasAddress"] as? String ?? ""
         nasValue.stringValue = nasAddress.isEmpty ? "-" : nasAddress
         nasValue.isHidden = setup || nasAddress.isEmpty
@@ -1274,7 +1322,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         adminButton.isHidden = setup || fnID.isEmpty || !administrator
         adminButton.isEnabled = !busy
         if !administrator {
-            adminButton.toolTip = "管理后台仅对 fnOS 管理员账号开放"
+            adminButton.toolTip = L("管理后台仅对 fnOS 管理员账号开放")
         }
         if !privilegedAvailable && !privilegedStartPrompted {
             notifyRootUnavailable()
@@ -1286,11 +1334,11 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         if !directError.isEmpty { messages.append("IPv6: \(directError)") }
         if let endpoint = direct["endpoint"] as? String { messages.append("UDP \(endpoint)") }
         if let count = direct["candidateCount"] as? Int, count > 0 {
-            messages.append("IPv6 候选 \(count)，已尝试 \(direct["attemptCount"] as? Int ?? 0)")
+            messages.append(L("IPv6 候选 {0}，已尝试 {1}", String(count), String(direct["attemptCount"] as? Int ?? 0)))
         }
-        if displayed["lanOverlap"] as? Bool == true { messages.append("本地与 NAS 网段重叠，仅保留隧道内 NAS 路由") }
+        if displayed["lanOverlap"] as? Bool == true { messages.append(L("本地与 NAS 网段重叠，仅保留隧道内 NAS 路由")) }
         errorValue.string = messages.filter { !$0.isEmpty }.joined(separator: "\n")
-        if errorValue.string.isEmpty { errorValue.string = "无异常" }
+        if errorValue.string.isEmpty { errorValue.string = L("无异常") }
         setupError.stringValue = setup ? loginFailureMessage(status["lastError"] as? [String: Any]) : ""
         setupError.maximumNumberOfLines = 3
         setupError.toolTip = setupError.stringValue
@@ -1298,7 +1346,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         let iconState = presentation.needsLogin ? "AUTH_REQUIRED" :
             (busy ? "PROBING" : presentation.state)
         statusItem?.button?.image = connectionStatusIcon(iconState)
-        let statusDescription = "FnCPN：" + (busy && loginInFlight ? "正在登录" : presentation.title)
+        let statusDescription = L("FnCPN：") + (busy && loginInFlight ? L("正在登录") : presentation.title)
         statusItem?.button?.toolTip = statusDescription
         statusItem?.button?.setAccessibilityLabel(statusDescription)
         adjustWindowHeightForPage(setup)
@@ -1314,7 +1362,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         // Resize to the target content height first, then lock min == max so
         // the user cannot drag the height.
         window.setContentSize(NSSize(width: window.contentLayoutRect.width, height: targetHeight))
-        window.contentMinSize = NSSize(width: 560, height: targetHeight)
+        window.contentMinSize = NSSize(width: 680, height: targetHeight)
         window.contentMaxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: targetHeight)
     }
 

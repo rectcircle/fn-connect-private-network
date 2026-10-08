@@ -142,3 +142,27 @@ sudo /Library/PrivilegedHelperTools/cn.rectcircle.fncpn/uninstall.sh \
 macOS 状态栏使用22 × 18 pt 模板图标，自动适配深浅色及菜单选中颜色。应用与状态栏图标都由 `scripts/generate-icons.swift` 中同一个 `connectionMark()` 绘制，使用一致的“内网边界、飞牛标志与接入路径”图形。应用图标采用 fnOS 默认图标风格的浅蓝底与亮蓝前景。所有状态保留内网边界和飞牛标志，以连接线最左侧的端点替换图形表达状态：圆点表示已连接，省略号表示连接中，叉号表示断开，感叹号表示异常或需要登录。局域网、IPv6 直连、中继共用已连接图标，具体连接方式由悬停提示和界面详情说明。生成脚本和生成的资源均保留在仓库中。
 
 正式图标采用圆角矩形表示内网边界，内部复用 `packaging/assets/fnos-original.png` 中的飞牛原始标志，外部连接采用圆角水平 / 垂直折线，并通过边框预留的入口进入内网。原始标志素材与绘图脚本一同保留，重新生成时无需联网。
+
+## 中英文界面
+
+macOS 客户端与 fnOS 管理页支持简体中文和英文：首选语言为中文时使用简体中文，
+其他语言使用英文。macOS 使用系统/应用首选语言，修改后重新启动应用；网页使用
+浏览器首选语言，修改后刷新页面。管理页同步设置 HTML 语言标记，并按界面语言格式化
+握手时间和流量数字。系统网络权限说明也提供中英文资源。
+
+用户提示按稳定错误码翻译；原始错误消息、请求 ID 和诊断详情保留用于排障。
+CLI、协议字段和后台日志继续使用英文。fnOS 安装包描述同时提供中英文。
+
+开发与测试需要 Python 3（仅使用标准库，无新增运行时依赖）。
+统一文案源为 `localization/messages.json`：键使用中文源文案，英文值为对应翻译；
+动态参数使用 `{0}`、`{1}`，不要拼接需要翻译的句子。更新后运行：
+
+```bash
+python3 scripts/sync-localizations.py
+python3 scripts/sync-localizations.py --check
+node --test internal/server/web/index.test.cjs
+```
+
+脚本生成 macOS `.lproj/Localizable.strings` 和管理页内嵌词典，并检查缺失翻译和参数一致性。
+生成文件需一起提交；macOS 打包会复制两种语言资源。`go test ./...` 包含资源同步检查及
+macOS 中英文/回退运行测试；`FNCPN_LAYOUT_CHECK=1 go test ./packaging -count=1` 检查两种语言的窗口布局。

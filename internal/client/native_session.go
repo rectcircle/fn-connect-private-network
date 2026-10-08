@@ -109,11 +109,13 @@ func (c NativeSessionClient) Login(
 	}
 	if nativeString(response, "token") == "" &&
 		(nativeBool(response, "isTwofaEnforced") || nativeString(response, "accessToken") != "") {
-		return NativeSession{}, model.WithOperation(model.NewError(
+		failure := model.WithOperation(model.NewError(
 			model.ErrorFailedPrecondition,
 			"this fnOS account requires two-factor authentication, which is not supported yet",
 			false,
 		), "native_session.login")
+		failure.RemoteCode = "TWO_FACTOR_REQUIRED"
+		return NativeSession{}, failure
 	}
 	if !nativeSuccess(response) {
 		return NativeSession{}, nativeAuthenticationError("fnOS username or password is invalid", response)

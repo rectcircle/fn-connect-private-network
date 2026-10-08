@@ -5,8 +5,8 @@ export COPYFILE_DISABLE=1
 export COPY_EXTENDED_ATTRIBUTES_DISABLE=1
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-VERSION="${VERSION:-0.1.46}"
-BUILD_NUMBER="${BUILD_NUMBER:-46}"
+VERSION="${VERSION:-0.1.47}"
+BUILD_NUMBER="${BUILD_NUMBER:-47}"
 ARCH="$(go env GOARCH)"
 BUILD_DIR="${TMPDIR:-/tmp}/fncpn-macos-pkg-${UID}"
 PAYLOAD="${BUILD_DIR}/root"
@@ -19,7 +19,7 @@ if [ "$(uname -s)" != "Darwin" ]; then
   echo "macOS package must be built on macOS" >&2
   exit 1
 fi
-for tool in go swiftc pkgbuild pkgutil plutil codesign bsdtar lsbom mkbom gzip iconutil; do
+for tool in go python3 swiftc pkgbuild pkgutil plutil codesign bsdtar lsbom mkbom gzip iconutil; do
   command -v "$tool" >/dev/null || {
     echo "missing build dependency: $tool" >&2
     exit 1
@@ -60,6 +60,7 @@ swiftc \
   "${ROOT_DIR}/platform/macos/FnCPNApp.swift" \
   -o "${APP_DIR}/Contents/MacOS/FnCPN"
 
+cp -R "${ROOT_DIR}/packaging/macos/en.lproj" "${ROOT_DIR}/packaging/macos/zh-Hans.lproj" "${APP_DIR}/Contents/Resources/"
 cp -X "${ROOT_DIR}/packaging/macos/Info.plist" "${APP_DIR}/Contents/"
 plutil -replace CFBundleShortVersionString -string "$VERSION" \
   "${APP_DIR}/Contents/Info.plist"

@@ -3,7 +3,9 @@
 <plist version="1.0">
 <dict>
   <key>CFBundleDevelopmentRegion</key>
-  <string>zh_CN</string>
+  <string>en</string>
+  <key>CFBundleLocalizations</key>
+  <array><string>en</string><string>zh-Hans</string></array>
   <key>CFBundleExecutable</key>
   <string>FnCPN</string>
   <key>CFBundleIdentifier</key>
@@ -17,9 +19,9 @@
   <key>CFBundlePackageType</key>
   <string>APPL</string>
   <key>CFBundleShortVersionString</key>
-  <string>0.1.46</string>
+  <string>0.1.47</string>
   <key>CFBundleVersion</key>
-  <string>46</string>
+  <string>47</string>
   <key>CFBundleURLTypes</key>
   <array>
     <dict>
@@ -38,6 +40,6 @@
   <key>NSHighResolutionCapable</key>
   <true/>
   <key>NSLocalNetworkUsageDescription</key>
-  <string>FnCPN 需要访问局域网，以检测并直连您的 fnOS NAS 私有网络。</string>
+  <string>FnCPN needs local network access to detect and connect directly to your fnOS NAS private network.</string>
 </dict>
 </plist>

@@ -117,7 +117,8 @@ func TestNativeSessionLoginRejectsTwoFactorWithoutPersistableSession(t *testing.
 		return connection, err
 	}}
 	_, err := client.Login(context.Background(), "home-nas", "admin", "password", "device", "FnCPN")
-	if err == nil || model.AsError(err).Code != model.ErrorFailedPrecondition {
+	if err == nil || model.AsError(err).Code != model.ErrorFailedPrecondition ||
+		model.AsError(err).RemoteCode != "TWO_FACTOR_REQUIRED" {
 		t.Fatalf("2FA response was not surfaced: %v", err)
 	}
 }
