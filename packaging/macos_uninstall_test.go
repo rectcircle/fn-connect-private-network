@@ -35,6 +35,13 @@ func TestMacOSUninstallPreservesOtherUserCredentials(t *testing.T) {
 			if err != nil {
 				t.Fatalf("uninstall: %v\n%s", err, output)
 			}
+			kills, err := os.ReadFile(filepath.Join(directory, "kills"))
+			if err != nil || string(kills) != "-TERM 12345\n" {
+				t.Fatalf("expected only FnCPN UI to be stopped: %q, %v", kills, err)
+			}
+			if !purge && !strings.Contains(string(output), "privileged logs in "+filepath.Join(directory, "logs")+" will be removed") {
+				t.Fatalf("missing privileged log removal notice: %s", output)
+			}
 			_, ownErr := os.Stat(filepath.Join(state, "credentials", "501", "fixture.secret"))
 			if purge && !os.IsNotExist(ownErr) || !purge && ownErr != nil {
 				t.Fatalf("own credential retention: purge=%v err=%v", purge, ownErr)
@@ -61,7 +68,9 @@ func runMacOSUninstallFixture(t *testing.T, directory string, purge bool) ([]byt
 set -eu
 case "${0##*/}" in
   id) printf '0\n' ;;
-  ps|launchctl) exit 0 ;;
+  ps) printf '501 12345 %s/app/Contents/MacOS/FnCPN\n501 12346 /Applications/Other.app/Contents/MacOS/Other\n' "$TEST_ROOT" ;;
+  kill) printf '%s\n' "$*" >> "$TEST_ROOT/kills" ;;
+  launchctl) exit 0 ;;
   dscl)
     case "$2" in
       -search) printf 'fixture 501\n' ;;
@@ -102,7 +111,7 @@ esac
 		"/Applications/FnCPN.app", filepath.Join(directory, "app"),
 		"/var/log/fncpn", filepath.Join(directory, "logs"),
 	}
-	for _, path := range []string{"/usr/bin/id", "/bin/ps", "/bin/launchctl", "/usr/bin/dscl", "/bin/rm", "/bin/rmdir"} {
+	for _, path := range []string{"/usr/bin/id", "/bin/ps", "/bin/kill", "/bin/launchctl", "/usr/bin/dscl", "/bin/rm", "/bin/rmdir"} {
 		tool := filepath.Join(tools, filepath.Base(path))
 		if err := os.WriteFile(tool, []byte(stub), 0o700); err != nil {
 			t.Fatal(err)

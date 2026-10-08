@@ -2,7 +2,7 @@
 
 从 Mac 连接 fnOS NAS 和已启用的家庭局域网。客户端自动选择局域网直达、IPv6 直连或 FN Connect 中继，无需手动配置密钥与路由。
 
-当前为 `0.1.55` 测试版本，尚未完成正式发布验收。中继基础访问、LAN 转发和部分恢复场景已有实机记录；最新版完整网络切换、LOCAL / DIRECT、多设备和卸载验收仍待完成，详见 [验收状态](docs/release-acceptance.md)。
+当前为 `0.1.55` 测试版本，尚未完成正式发布验收。中继基础访问、LAN 转发和部分恢复场景已有实机记录；网络与配置已获用户实机确认，常规安装与多次覆盖升级已验证；卸载及故障注入专项未执行，详见 [验收状态](docs/release-acceptance.md)。
 
 ## 使用条件
 
@@ -61,7 +61,7 @@ fncpn diagnose --json
 
 更新前查看 [变更记录](CHANGELOG.md)。正式兼容性承诺从 `1.0.0` 开始：两端 MAJOR 必须相同，客户端 MINOR 不能高于服务端，PATCH 不影响连接准入。`0.x` 测试版不承诺历史数据迁移；不支持的旧格式需先停止服务、清理网络并备份，再主动处理，更新不会自动清空用户数据。
 
-fnOS 通过应用中心停止或卸载 FnCPN。Mac 可运行随包安装的卸载脚本，默认保留用户配置、日志和凭据：
+fnOS 通过应用中心停止或卸载 FnCPN。Mac 可运行随包安装的卸载脚本，默认保留用户配置、用户日志和凭据，删除特权服务日志（`/var/log/fncpn`）：
 
 ```bash
 sudo /Library/PrivilegedHelperTools/cn.rectcircle.fncpn/uninstall.sh

@@ -23,6 +23,15 @@ elif [ "$#" -ne 0 ]; then
   exit 2
 fi
 
+# Close the running UI before removing its app bundle.
+/bin/ps -axo uid=,pid=,command= | while read -r uid pid command; do
+  case "$command" in
+    "/Applications/FnCPN.app/Contents/MacOS/FnCPN"*)
+      /bin/kill -TERM "$pid" 2>/dev/null || true
+      ;;
+  esac
+done
+
 # Stop every loaded user agent whose executable is the installed FnCPN binary.
 /bin/ps -axo uid=,pid=,command= | while read -r uid pid command; do
   case "$command" in
@@ -55,7 +64,7 @@ if [ -n "$PURGE_UID" ]; then
   fi
   /bin/rm -rf "${STATE_DIR}/credentials/${PURGE_UID}"
 else
-  echo "FnCPN user configuration, logs, and root-owned credentials were retained"
+  echo "FnCPN user configuration, user logs, and root-owned credentials were retained; privileged logs in /var/log/fncpn will be removed"
 fi
 
 /bin/rm -f /var/run/fncpn-client-privileged.sock
