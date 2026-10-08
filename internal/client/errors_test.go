@@ -156,3 +156,12 @@ func TestRelayEventKeepsLatestFailure(t *testing.T) {
 		t.Fatal("recovery event lost")
 	}
 }
+
+// A healthy status has a nil *model.Error. Passing LastError through the error
+// interface must remain safe when LOCAL probes fail and recovery checks it.
+func TestAdmissionFailureWithHealthyStatus(t *testing.T) {
+	status := model.ClientStatus{State: model.ClientLocal}
+	if isAdmissionFailure(status.LastError) {
+		t.Fatal("healthy status reported an admission failure")
+	}
+}

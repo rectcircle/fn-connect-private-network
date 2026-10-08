@@ -19,6 +19,8 @@ const (
 	MethodConnect             = "connect"
 	MethodDisconnect          = "disconnect"
 	MethodRetry               = "retry"
+	MethodRecheckNetwork      = "recheck-network"
+	MethodContinueRemote      = "continue-remote"
 	MethodAuthorize           = "authorize-complete"
 	MethodAuthorizeNative     = "authorize-native"
 	MethodAuthorizationBegin  = "authorization-begin"
@@ -150,6 +152,18 @@ func (s *Service) Handle(
 		err = s.runtime.Connect(ctx)
 	case MethodDisconnect:
 		err = s.runtime.Disconnect(ctx)
+	case MethodContinueRemote:
+		continuer, ok := s.runtime.(interface{ ContinueRemoteConnection() })
+		if !ok {
+			return ipc.Failure(request.ID, model.NewError(model.ErrorFailedPrecondition, "local network permission wait is unavailable", false))
+		}
+		continuer.ContinueRemoteConnection()
+	case MethodRecheckNetwork:
+		checker, ok := s.runtime.(interface{ RecheckNetwork() })
+		if !ok {
+			return ipc.Failure(request.ID, model.NewError(model.ErrorFailedPrecondition, "network recheck is unavailable", false))
+		}
+		checker.RecheckNetwork()
 	case MethodRetry:
 		err = s.runtime.Retry(ctx)
 	case MethodAuthorizationBegin:

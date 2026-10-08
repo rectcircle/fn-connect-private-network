@@ -356,3 +356,30 @@ func TestCoordinatorAuthenticationRecoveryStopsAfterRepeatedRejection(t *testing
 		}
 	})
 }
+
+func TestPermissionGrantRechecksWithoutResumingPausedClient(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		m, p, _, _, _ := coordinationFixture(t)
+		stop := runCoordinated(t, m)
+		defer stop()
+		before := p.calls.Load()
+		m.RecheckNetwork()
+		synctest.Wait()
+		if p.calls.Load() <= before {
+			t.Fatal("permission grant did not immediately recheck LOCAL")
+		}
+		if err := m.Disconnect(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		before = p.calls.Load()
+		m.RecheckNetwork()
+		synctest.Wait()
+		config, err := m.store.Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if config.AutoConnect || m.Status().State != model.ClientPaused || p.calls.Load() != before {
+			t.Fatal("late permission grant resumed a paused client")
+		}
+	})
+}

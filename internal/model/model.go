@@ -151,13 +151,15 @@ const (
 )
 
 type ClientStatus struct {
-	State         ClientState `json:"state"`
-	Path          string      `json:"path,omitempty"`
-	Interface     string      `json:"interface,omitempty"`
-	MTU           int         `json:"mtu,omitempty"`
-	LastHandshake *time.Time  `json:"lastHandshake,omitempty"`
-	LastError     *Error      `json:"lastError,omitempty"`
-	UpdatedAt     time.Time   `json:"updatedAt"`
+	LocalNetworkWaiting bool        `json:"localNetworkWaiting,omitempty"`
+	LocalNetworkAccess  string      `json:"localNetworkAccess,omitempty"`
+	State               ClientState `json:"state"`
+	Path                string      `json:"path,omitempty"`
+	Interface           string      `json:"interface,omitempty"`
+	MTU                 int         `json:"mtu,omitempty"`
+	LastHandshake       *time.Time  `json:"lastHandshake,omitempty"`
+	LastError           *Error      `json:"lastError,omitempty"`
+	UpdatedAt           time.Time   `json:"updatedAt"`
 }
 
 type ClientDiagnostics struct {

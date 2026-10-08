@@ -275,3 +275,16 @@ nftables 中一个 base chain 的 ACCEPT 不是最终放行，后续同 hook 的
 - `internal/platform/linux/firewall_docker_linux_test.go`：在独立 Linux 网络命名空间中
   验证真实转发、NAT、Docker 默认 DROP、iptables-nft 兼容性、规则更新和清理，
   不修改宿主机现有网络规则。
+
+## Go runtime 崩溃日志
+
+配置 `--log-file` 的 daemon 在启动时同时配置 `<log-file>.crash`，捕获任意 goroutine
+未处理的 panic 和 Go runtime fatal 输出，包括堆栈；普通 JSON 业务日志继续独立轮转。
+macOS 客户端默认位置为 `~/Library/Logs/FnCPN/client.log.crash`，特权进程为
+`/var/log/fncpn/client-privileged.log.crash`；fnOS 位于相应 daemon 日志文件旁。
+文件权限为 `0600`，目录为 `0700`；下次启动轮转非空崩溃文件，保留 5 份历史。
+崩溃过程不进行大小轮转，也不保证捕获 SIGKILL、断电、runtime 初始化前或日志初始化前的错误。
+
+runtime 原文绕过业务脱敏，可能包含 panic 值与堆栈参数；仅作为本地私有排障文件，
+分享前需检查，不应直接拼入用户的脱敏诊断输出。普通业务错误、已恢复的 panic 和
+进程启动失败仍需检查业务日志或服务管理器输出。崩溃捕获不恢复执行，也不改变退出码。

@@ -76,3 +76,10 @@ relay 不以 Origin/Host 匹配代替身份认证，剩余资源占用风险见 
 - privileged-daemon 独立校验 overlay、peer 地址、监听端口、转发网段和防火墙规则。
 - 服务端私钥只由 privileged-daemon 生成和读取；普通 server daemon 只获得服务端公钥。
 - HTTP/WSS 请求及其 Header、Cookie 和原始 body 不得透传到 privileged-daemon。
+
+### 局域网权限等待
+
+本地用户 IPC `continue-remote` 释放 daemon 当前的局域网权限等待，不启用 AutoConnect，
+不注册设备，也不改变远程版本准入。状态响应可选字段 `localNetworkAccess` 表示
+原生连接观察结果，`localNetworkWaiting` 表示是否正在等待用户处理权限。
+`recheck-network` 只提交自动健康检测，遵守暂停与退出登录意图；本地组件成套升级。

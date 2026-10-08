@@ -147,5 +147,6 @@ func decodeResponse(response *http.Response, destination any) error {
 // isAdmissionFailure prevents stale configuration and automatic reconnect from
 // bypassing a missing server or rejected product version.
 func isAdmissionFailure(err error) bool {
-	return version.IsFailure(err) || err != nil && model.AsError(err).Code == model.ErrorServerUnavailable
+	failure := model.AsError(err)
+	return failure != nil && (version.IsFailure(failure) || failure.Code == model.ErrorServerUnavailable)
 }

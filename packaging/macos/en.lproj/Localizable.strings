@@ -144,3 +144,5 @@
 "本地组件版本不一致，请完成更新并重新启动 FnCPN。" = "Local component versions differ. Complete the update and restart FnCPN.";
 "未找到 FnCPN 服务" = "FnCPN server not found";
 "未找到 FnCPN 服务，请在 fnOS 安装或启动 FnCPN 后重新连接。" = "FnCPN server was not found. Install or start FnCPN on fnOS, then connect again.";
+"正在等待局域网访问权限" = "Waiting for local network access";
+"继续远程连接" = "Continue with remote connection";

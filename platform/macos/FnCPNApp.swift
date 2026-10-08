@@ -109,7 +109,8 @@ private final class IPCClient {
         guard descriptor >= 0 else { throw POSIXError(.EIO) }
         defer { Darwin.close(descriptor) }
         try setTimeout(
-            seconds: ["authorize-native", "watch-client-status"].contains(method) ? 310 : 30,
+            seconds: ["authorize-native", "watch-client-status"].contains(method) ? 310 :
+                ["connect", "retry"].contains(method) ? 45 : 30,
             on: descriptor
         )
 
@@ -485,6 +486,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
     private var adminWindowOpen = false
     private var refreshInFlight = false
     private var refreshPending = false
+    private var waitingForLocalNetwork = false
     private var busy = false
     private var loginInFlight = false
     private var editingServer = false
@@ -537,8 +539,8 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
             self?.showInitialWindowIfNeeded()
         }
-        setupLaunchAgent()
         configureStatusItem()
+        setupLaunchAgent()
         render()
         refresh()
         startStatusWatch()
@@ -1085,16 +1087,8 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func submitLogin() {
+        if waitingForLocalNetwork { continueWithoutLocalAccess(); return }
         guard !busy else { return }
-        // Local Network access on macOS 15+ requires user permission. Trigger
-        // the system prompt (and confirm it was not denied) BEFORE the daemon
-        // runs its LOCAL LAN probe, otherwise that probe can be silently
-        // blocked by the privacy system.
-        guard ensureLocalNetworkAccess() else {
-            setupError.stringValue = L("请在系统设置中允许 FnCPN 访问本地网络，然后重试。")
-            window?.makeFirstResponder(fnIDField)
-            return
-        }
         guard let fnID = normalizeFNID(fnIDField.stringValue) else {
             setupError.stringValue = L("FN Connect ID 格式不正确")
             window?.makeFirstResponder(fnIDField)
@@ -1189,6 +1183,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func primaryAction() {
+        if waitingForLocalNetwork { continueWithoutLocalAccess(); return }
         guard !busy else { return }
         if savedFNID.isEmpty && pendingFNID.isEmpty { showWindow(); return }
         if presentation.needsLogin || savedFNID.isEmpty { relogin() }
@@ -1208,8 +1203,15 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         if presentation.needsLogin { relogin() } else { perform("retry", showsWindow: true) }
     }
 
+    private func continueWithoutLocalAccess() {
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            _ = try? self?.ipc.call(method: "continue-remote")
+        }
+    }
+
     private func perform(_ method: String, showsWindow: Bool = true) {
         guard !busy else { return }
+        if waitingForLocalNetwork && method != "disconnect" { return }
         busy = true
         operationError = nil
         render()
@@ -1251,6 +1253,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func applyDiagnostics(_ value: [String: Any]) {
         diagnostics = value
+        waitingForLocalNetwork = (value["status"] as? [String: Any])?["localNetworkWaiting"] as? Bool == true
         savedFNID = value["fnId"] as? String ?? ""
         savedUsername = value["username"] as? String ?? savedUsername
         let status = value["status"] as? [String: Any] ?? [:]
@@ -1290,18 +1293,19 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         returnButton.isHidden = savedFNID.isEmpty
         changeButton.isHidden = setup
         changeButton.isEnabled = !busy
-        setupButton.isEnabled = !busy
+        setupButton.isEnabled = !busy || waitingForLocalNetwork
+        setupButton.title = waitingForLocalNetwork ? L("继续远程连接") : L("登录并连接")
         fnIDField.isEnabled = !busy
         usernameField.isEnabled = !busy
         passwordField.isEnabled = !busy
-        primaryButton.isEnabled = !busy
-        primaryButton.title = presentation.actionTitle
+        primaryButton.isEnabled = !busy || waitingForLocalNetwork
+        primaryButton.title = waitingForLocalNetwork ? L("继续远程连接") : presentation.actionTitle
         primaryButton.toolTip = primaryButton.title
         primaryButton.image = NSImage(systemSymbolName: presentation.actionSymbol, accessibilityDescription: primaryButton.title)
         primaryButton.setAccessibilityLabel(primaryButton.title)
         loginButton.isHidden = presentation.needsLogin
         loginButton.isEnabled = !busy
-        retryButton.isEnabled = !busy
+        retryButton.isEnabled = !busy && !waitingForLocalNetwork
         retryButton.isHidden = presentation.needsLogin || savedFNID.isEmpty
         menuAction?.title = presentation.actionTitle
         menuAction?.isEnabled = !busy
@@ -1309,7 +1313,8 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         reloginMenuItem?.isEnabled = !busy
         serverValue.stringValue = fnID
         serverValue.toolTip = fnID
-        statusValue.stringValue = busy && loginInFlight ? L("正在登录") : presentation.title
+        statusValue.stringValue = waitingForLocalNetwork ? L("正在等待局域网访问权限") :
+            busy && loginInFlight ? L("正在登录") : presentation.title
         statusValue.textColor = presentation.needsLogin ? .systemOrange :
             presentation.connected ? .systemGreen : .labelColor
         pathValue.stringValue = [
@@ -1350,14 +1355,14 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         if displayed["lanOverlap"] as? Bool == true { messages.append(L("本地与 NAS 网段重叠，仅保留隧道内 NAS 路由")) }
         errorValue.string = messages.filter { !$0.isEmpty }.joined(separator: "\n")
         if errorValue.string.isEmpty { errorValue.string = L("无异常") }
-        setupError.stringValue = setup ? loginFailureMessage(status["lastError"] as? [String: Any]) : ""
+        setupError.stringValue = setup ? (waitingForLocalNetwork ? L("正在等待局域网访问权限") : loginFailureMessage(status["lastError"] as? [String: Any])) : ""
         setupError.maximumNumberOfLines = 3
         setupError.toolTip = setupError.stringValue
-        if busy { progress.startAnimation(nil) } else { progress.stopAnimation(nil) }
+        if busy || waitingForLocalNetwork { progress.startAnimation(nil) } else { progress.stopAnimation(nil) }
         let iconState = presentation.needsLogin ? "AUTH_REQUIRED" :
             (busy ? "PROBING" : presentation.state)
         statusItem?.button?.image = connectionStatusIcon(iconState)
-        let statusDescription = L("FnCPN：") + (busy && loginInFlight ? L("正在登录") : presentation.title)
+        let statusDescription = L("FnCPN：") + statusValue.stringValue
         statusItem?.button?.toolTip = statusDescription
         statusItem?.button?.setAccessibilityLabel(statusDescription)
         adjustWindowHeightForPage(setup)
@@ -1389,54 +1394,6 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func openLogs() {
         let directory = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Logs/FnCPN")
         NSWorkspace.shared.open(directory)
-    }
-
-    /// macOS 15+ (Sequoia) blocks access to addresses on the local network
-    /// until the user grants the "Local Network" permission. The system prompt
-    /// is only surfaced after a real local-network operation, so we fire a
-    /// multicast probe from the app bundle (the process that owns the
-    /// `NSLocalNetworkUsageDescription` key) to bring up the authorization
-    /// dialog. It returns false when the user has explicitly denied access, so
-    /// the connect flow stops instead of letting the daemon's LOCAL probe get
-    /// blocked silently. On macOS older than 15 local network access is
-    /// unrestricted, so it is always allowed.
-    private func ensureLocalNetworkAccess() -> Bool {
-        guard #available(macOS 15.0, *) else { return true }
-        let descriptor = Darwin.socket(AF_INET, SOCK_DGRAM, 0)
-        guard descriptor >= 0 else { return true }
-        defer { Darwin.close(descriptor) }
-        // mDNS multicast group: reaching it exercises the local-network path
-        // and causes macOS to present the Local Network permission prompt.
-        var destination = sockaddr_in()
-        destination.sin_family = sa_family_t(AF_INET)
-        destination.sin_port = in_port_t(5353).bigEndian
-        destination.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
-        destination.sin_addr.s_addr = inet_addr("224.0.0.251")
-        var loop: UInt8 = 1
-        _ = withUnsafePointer(to: &loop) { pointer in
-            Darwin.setsockopt(
-                descriptor, IPPROTO_IP, IP_MULTICAST_LOOP,
-                pointer, socklen_t(MemoryLayout<UInt8>.size)
-            )
-        }
-        let payload: [UInt8] = [0]
-        let result = payload.withUnsafeBytes { bytes -> Int in
-            var target = destination
-            return withUnsafePointer(to: &target) { pointer -> Int in
-                pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { socketAddress in
-                    Darwin.sendto(
-                        descriptor, bytes.baseAddress, payload.count, 0,
-                        socketAddress, socklen_t(MemoryLayout<sockaddr_in>.size)
-                    )
-                }
-            }
-        }
-        if result < 0 {
-            let code = Darwin.errno
-            // EPERM/EACCES indicate the user denied Local Network access.
-            if code == EPERM || code == EACCES { return false }
-        }
-        return true
     }
 
     private func startStatusWatch() {

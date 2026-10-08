@@ -354,7 +354,11 @@ func (m *Manager) runCoordinator(ctx context.Context) {
 			c.activeWaiters, c.waiters = c.waiters, nil
 			epoch := c.epoch
 			attempt++
-			workerCtx, cancel := context.WithTimeout(ctx, connectionAttemptTimeout)
+			budget := connectionAttemptTimeout
+			if _, ok := m.probe.(localAccessWatcher); ok {
+				budget += localAccessWaitTimeout + configurationFetchTimeout + localEndpointTimeout
+			}
+			workerCtx, cancel := context.WithTimeout(ctx, budget)
 			workerCtx = logging.WithLogger(workerCtx, m.logger.With("attempt_id", fmt.Sprint(attempt), "network_generation", epoch, "trigger", work.String()))
 			workerCtx = context.WithValue(workerCtx, connectionAttemptKey{}, connectionAttemptIdentity{c, epoch})
 			c.cancel = cancel
@@ -529,4 +533,10 @@ func (m *Manager) commitConnection(ctx context.Context, publish func()) error {
 	}
 	publish()
 	return nil
+}
+
+// RecheckNetwork is an automatic notification, unlike Retry/Connect. It never
+// enables AutoConnect and is ignored by a suspended coordinator.
+func (m *Manager) RecheckNetwork() {
+	m.scheduleConnection(workHealth)
 }

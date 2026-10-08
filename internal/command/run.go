@@ -848,6 +848,10 @@ func openProcessLogger(
 	if err != nil {
 		return nil, nil, fmt.Errorf("open process log: %w", err)
 	}
+	if err := logging.EnableCrashOutput(path + ".crash"); err != nil {
+		writer.Close()
+		return nil, nil, fmt.Errorf("open crash log: %w", err)
+	}
 	return logger(logging.MultiWriter(writer, fallback)), writer, nil
 }
 

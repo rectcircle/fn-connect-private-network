@@ -48,3 +48,10 @@ func TestCLIErrorIdentifiesBothVersionsAndUpgradeTarget(t *testing.T) {
 		}
 	}
 }
+
+func TestIsFailureWithNilModelError(t *testing.T) {
+	var failure *model.Error
+	if IsFailure(failure) {
+		t.Fatal("nil model error reported a version failure")
+	}
+}

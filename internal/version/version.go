@@ -75,5 +75,8 @@ func IsFailure(err error) bool {
 		return false
 	}
 	e := model.AsError(err)
+	if e == nil {
+		return false
+	}
 	return e.Code == model.ErrorVersionIncompatible || e.Operation == "version.check"
 }

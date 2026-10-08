@@ -66,3 +66,21 @@ go vet ./...
 日志以 `attempt_id`、`network_generation`、`trigger` 关联一次评估；开始、结束及连接阶段记录耗时。实机验收仍需覆盖 Wi-Fi/Ethernet 切换、睡眠唤醒、NAS 冷启动、弱网、全隧道 VPN 和多网卡路由。
 
 同一次失败通过带 cause 的内部标记跨层传递，外层仍可识别超时并处理退避，但不重复记录 ERROR 或提交失败状态。不同尝试的失败分别记录。
+
+## macOS 局域网权限与启动
+
+启用 CGO 的 macOS daemon 使用 Network.framework 观察实际 NAS 探测端点的 TCP 连接。
+只有系统 path 明确报告 `local_network_denied` 时显示“正在等待局域网访问权限”；
+普通连接失败不作为权限拒绝证据。TCP ready 仅表示访问可用，仍须正常 HTTP/HMAC
+身份证明及版本检查通过才能进入 LOCAL。App 不使用 Bonjour 自发现推断 daemon 权限。
+
+权限等待在普通 2 秒 LOCAL 选择窗口之前，最长 15 秒；用户可选择“继续远程连接”。
+初始原生观察最多 600ms，必要的端点元数据读取最多 3 秒；macOS CGO 单轮总预算
+为原 20 秒加这些准备预算（最多 38.6 秒）。其他平台和不启用 CGO 的构建保持原预算。
+权限恢复事件立即提交自动健康检测，不启用 AutoConnect；迟到事件不能恢复已暂停的连接。
+换网或端点变化重建观察器；退出和取消释放原生连接，跳过等待后继续观察后续允许事件。
+
+状态通过本地 IPC 的 `localNetworkAccess` 与 `localNetworkWaiting` 可选字段呈现，
+`continue-remote` 只释放当前权限等待，不修改配置、用户连接意图或远程准入规则。
+自动化覆盖等待、授权、超时、跳过、取消和暂停保护；首次弹窗、拒绝、延迟允许及
+设置中修改权限仍须实机验收。unsigned/ad-hoc 构建的系统身份变化也须在升级后复测。

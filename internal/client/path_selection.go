@@ -84,6 +84,7 @@ func (m *Manager) selectLocal(ctx context.Context, remote RemoteService, config 
 	if m.localProbeConfig == nil {
 		m.loadLocalProbeCache(config.FNID)
 	}
+	m.waitForLocalAccess(ctx, remote, config)
 	cached := cloneLocalProbeConfiguration(m.localProbeConfig)
 	stage, cancel := context.WithTimeout(ctx, localSelectionTimeout)
 	defer cancel()

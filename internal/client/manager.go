@@ -185,16 +185,21 @@ type Manager struct {
 	// It is retained even when the LAN probe itself fails: once the VPN tunnel
 	// is up this address is reachable, so it is shown on the client's details
 	// page regardless of which path (local/direct/relay) was selected.
-	nasAddress       string
-	ipv6RouteChecker func(context.Context, netip.Addr, int) bool
-	status           model.ClientStatus
-	maintenanceError bool
-	maintenancePhase string
-	statusChanges    *notify.Change
-	watchCancel      context.CancelFunc
-	adminProxy       *AdminProxy
-	coordinatorMu    sync.Mutex
-	coordinator      *connectionCoordinator
+	localAccessContext  context.Context
+	localAccessCancel   func()
+	localAccessEndpoint string
+	localAccessReady    chan struct{}
+	localAccessSkip     chan struct{}
+	nasAddress          string
+	ipv6RouteChecker    func(context.Context, netip.Addr, int) bool
+	status              model.ClientStatus
+	maintenanceError    bool
+	maintenancePhase    string
+	statusChanges       *notify.Change
+	watchCancel         context.CancelFunc
+	adminProxy          *AdminProxy
+	coordinatorMu       sync.Mutex
+	coordinator         *connectionCoordinator
 	// The following connection evidence is owned by operation.
 	lastPlan               *model.ClientPlan
 	lastNetworkFingerprint string
@@ -568,6 +573,7 @@ func (m *Manager) Disconnect(ctx context.Context) error {
 }
 
 func (m *Manager) disconnect(ctx context.Context) error {
+	m.stopLocalAccess()
 	logger := logging.FromContext(ctx, m.logger)
 	logger.Info("client disconnect requested")
 	m.setDirectDiagnostics(model.DirectDiagnostics{})
@@ -717,6 +723,7 @@ func (m *Manager) Forget(ctx context.Context) error {
 	m.suspendConnections()
 	m.operation.Lock()
 	defer m.operation.Unlock()
+	m.stopLocalAccess()
 	m.cancelConfigurationWatch()
 	m.setDirectDiagnostics(model.DirectDiagnostics{})
 	config, err := m.store.Load()
@@ -777,7 +784,13 @@ func (m *Manager) closeAdminProxy() {
 }
 
 func (m *Manager) Run(ctx context.Context) {
+	m.operation.Lock()
+	m.localAccessContext = ctx
+	m.operation.Unlock()
 	m.runCoordinator(ctx)
+	m.operation.Lock()
+	m.stopLocalAccess()
+	m.operation.Unlock()
 }
 
 // handleRelayFailure runs in the coordinator worker, never in its event loop.
@@ -2282,12 +2295,13 @@ func (m *Manager) setNetworkStatus(
 ) {
 	m.mu.Lock()
 	m.status = model.ClientStatus{
-		State:         state,
-		Path:          path,
-		Interface:     network.Interface,
-		MTU:           network.MTU,
-		LastHandshake: network.LastHandshake,
-		UpdatedAt:     time.Now().UTC(),
+		LocalNetworkAccess: m.status.LocalNetworkAccess,
+		State:              state,
+		Path:               path,
+		Interface:          network.Interface,
+		MTU:                network.MTU,
+		LastHandshake:      network.LastHandshake,
+		UpdatedAt:          time.Now().UTC(),
 	}
 	m.maintenanceError = false
 	m.mu.Unlock()
@@ -2523,11 +2537,12 @@ func (m *Manager) setStatus(
 ) {
 	m.mu.Lock()
 	m.status = model.ClientStatus{
-		State:     state,
-		Path:      path,
-		Interface: interfaceName,
-		LastError: model.PublicError(lastError),
-		UpdatedAt: time.Now().UTC(),
+		LocalNetworkAccess: m.status.LocalNetworkAccess,
+		State:              state,
+		Path:               path,
+		Interface:          interfaceName,
+		LastError:          model.PublicError(lastError),
+		UpdatedAt:          time.Now().UTC(),
 	}
 	m.maintenanceError = false
 	m.mu.Unlock()
