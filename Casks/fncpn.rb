@@ -1,6 +1,6 @@
 cask "fncpn" do
-  version "1.0.0"
-  sha256 "b6cf2b05be21e5975600a2c435763410063d10e1904db9585538fde198dc0331"
+  version "1.0.1"
+  sha256 "14a07ab62200dcd557b075d80d8e89aba27611d6e5b6bc00f1d674879af75813"
 
   url "https://github.com/rectcircle/fn-connect-private-network/releases/download/v#{version}/FnCPN-#{version}-arm64-unsigned.pkg"
   name "FnCPN"
