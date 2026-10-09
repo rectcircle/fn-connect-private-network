@@ -99,3 +99,12 @@ Docker DROP、网段限制、幂等、事务失败及清理；正式 Docker LAN 
 
 后续兼容验收应使用这些固定历史源码与正式产物，不以修改测试中的版本字符串代替历史实现。
 rc.2 安装已获用户确认；1.0.0 的重新构建和产物检查单独记录，不推导正式包已在目标机器安装。
+
+
+## 1.0.0 构建与发布核验（2026-10-09）
+
+- 源码 commit：`478c4e6cb1076071e903c11823a59fa004f364de`，tag：`v1.0.0`；发布流水线 `37926567426` 通过。
+- 三种正式安装包从同一提交重新构建，发布清单与 SHA256 匹配；GitHub Release 已公开为稳定版并设为 Latest。
+- macOS PKG 版本、App 产品版本和 CLI 均为 `1.0.0`，build number 为 `23`；固定 App 路径、无 relocate bundle、ad-hoc 签名、macOS 13 deployment target 和许可证检查通过。
+- fnOS 两种 FPK 的版本、平台、ELF CPU 架构与许可证检查通过。
+- 正式包未在目标 Mac/fnOS 上重新安装；rc.2 的用户安装确认独立保留。本轮 CLI version smoke test 与产物核验不记为正式包实机连接通过。
