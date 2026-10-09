@@ -2,6 +2,7 @@ package packaging
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -49,12 +50,68 @@ func TestFnOSInitializesFreshInstallation(t *testing.T) {
 		"chown root:root " + filepath.Join(directory, "etc/privileged") + " " + filepath.Join(directory, "var/logs/privileged"),
 		"chown root:fncpn " + filepath.Join(directory, "var/run"),
 		"chown fncpn:fncpn " + filepath.Join(directory, "app/run"),
-		"su fncpn umask 077; : >> '" + logPath + "'",
+		"chown fncpn:fncpn " + logPath,
+		"chown root:root " + filepath.Join(directory, "var/logs/privileged/privileged.log"),
 	} {
 		if !strings.Contains(string(calls), expected) {
 			t.Fatalf("missing ownership operation %q:\n%s", expected, calls)
 		}
 	}
+}
+
+// Regression for install_callback running before ordinary-user storage access.
+func TestFnOSInitializationDoesNotRequireApplicationUserAccess(t *testing.T) {
+	directory := t.TempDir()
+	output, err := runFnOSFunctions(t, directory, "initialize_app", "TEST_FAIL_SU=1")
+	if err != nil {
+		t.Fatalf("installation depends on application-user access: %v\n%s", err, output)
+	}
+	calls, err := os.ReadFile(filepath.Join(directory, "calls"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(calls), "su fncpn") {
+		t.Fatal("initialization changed user")
+	}
+	assertFnOSFile(t, filepath.Join(directory, "var/logs/server/server.log"), "", 0o600)
+}
+
+func TestFnOSLogInitializationRejectsUnsafePaths(t *testing.T) {
+	for _, symlink := range []bool{true, false} {
+		t.Run(fmt.Sprint("symlink_", symlink), func(t *testing.T) {
+			directory := t.TempDir()
+			target := filepath.Join(directory, "unrelated")
+			if err := os.WriteFile(target, []byte("retained"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.Join(directory, "unsafe-log")
+			if symlink {
+				if err := os.Symlink(target, path); err != nil {
+					t.Fatal(err)
+				}
+			} else if err := os.Mkdir(path, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			output, err := runFnOSFunctions(t, directory, `initialize_log "$TEST_LOG_PATH" fncpn:fncpn`, "TEST_LOG_PATH="+path)
+			if err == nil || !strings.Contains(string(output), "refusing unsafe application log path") {
+				t.Fatalf("unsafe log path was accepted: %v\n%s", err, output)
+			}
+			assertFnOSFile(t, target, "retained", 0o644)
+		})
+	}
+}
+
+func TestFnOSLogOwnershipFailureStopsInitialization(t *testing.T) {
+	directory := t.TempDir()
+	path := filepath.Join(directory, "existing.log")
+	if err := os.WriteFile(path, []byte("retained log"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	output, err := runFnOSFunctions(t, directory, `initialize_log "$TEST_LOG_PATH" fncpn:fncpn`, "TEST_LOG_PATH="+path, "TEST_FAIL_CHOWN=1")
+	if err == nil || !strings.Contains(string(output), "application log ownership could not be set: "+path) {
+		t.Fatalf("log ownership failure was ignored: %v\n%s", err, output)
+	}
+	assertFnOSFile(t, path, "retained log", 0o644)
 }
 
 func TestFnOSInitializationPreservesExistingData(t *testing.T) {
@@ -67,7 +124,14 @@ func TestFnOSInitializationPreservesExistingData(t *testing.T) {
 		"var/logs/server/server.log", "var/logs/privileged/privileged.log",
 	}
 	for _, path := range files {
-		if err := os.WriteFile(filepath.Join(directory, path), []byte("retained data"), 0o600); err != nil {
+		mode := os.FileMode(0o600)
+		if strings.HasSuffix(path, ".log") {
+			mode = 0o644
+		}
+		if err := os.WriteFile(filepath.Join(directory, path), []byte("retained data"), mode); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chmod(filepath.Join(directory, path), mode); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -235,6 +299,7 @@ su() {
     [ "$#" -eq 5 ] && [ "$1" = -s ] && [ "$2" = /bin/sh ] &&
         [ "$3" = fncpn ] && [ "$4" = -c ] || return 1
     printf 'su %s %s\n' "$3" "$5" >> "$TEST_CALLS"
+    [ "${TEST_FAIL_SU:-0}" = 0 ] || return 1
     /bin/sh -c "$5"
 }
 umask 077

@@ -95,6 +95,19 @@ wait_for_health() {
     return 1
 }
 
+initialize_log() {
+    local path="$1" owner="$2"
+    if [ -L "$path" ] || { [ -e "$path" ] && [ ! -f "$path" ]; }; then
+        log_error "refusing unsafe application log path: $path"
+        return 1
+    fi
+    # Install callbacks run as root; ordinary-user access may not yet be ready.
+    # Append-open preserves existing logs and also creates a missing file.
+    : >> "$path" || { log_error "application log could not be created: $path"; return 1; }
+    chown "$owner" "$path" || { log_error "application log ownership could not be set: $path"; return 1; }
+    chmod 0600 "$path" || { log_error "application log permissions could not be set: $path"; return 1; }
+}
+
 initialize_app() {
     mkdir -p "$CONTROL_STATE" "$PRIVILEGED_STATE" \
         "$SERVER_LOG_DIR" "$PRIVILEGED_LOG_DIR" || return 1
@@ -107,10 +120,8 @@ initialize_app() {
     chown root:root "$PRIVILEGED_STATE" "$PRIVILEGED_LOG_DIR" || return 1
     chmod 0700 "$PRIVILEGED_STATE" "$PRIVILEGED_LOG_DIR" || return 1
     prepare_runtime || return 1
-    su -s /bin/sh "$APP_USER" -c \
-        "umask 077; : >> '$SERVER_LOG' && chmod 0600 '$SERVER_LOG'" || return 1
-    : >> "$PRIVILEGED_LOG" || return 1
-    chmod 0600 "$PRIVILEGED_LOG"
+    initialize_log "$SERVER_LOG" "$APP_USER:$APP_USER" || return 1
+    initialize_log "$PRIVILEGED_LOG" root:root
 }
 
 prepare_runtime() {
