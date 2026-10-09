@@ -28,6 +28,7 @@ func TestMacOSPackageArchiveOwnership(t *testing.T) {
 		name, from, to, failure string
 	}{
 		{name: "root_archives"},
+		{"reject_relocatable_app", `"BundleIsRelocatable": False`, `"BundleIsRelocatable": True`, "relocatable bundle found in built package"},
 		{"reject_non_root_bom", `$3 = "0/0"`, `$3 = "12345/12345"`, "non-root owner found in built package BOM"},
 		{"reject_non_root_payload", "--uid 0", "--uid 12345", "non-root owner found in built package payload"},
 	} {
@@ -38,11 +39,19 @@ func TestMacOSPackageArchiveOwnership(t *testing.T) {
 			dist := filepath.Join(directory, "dist")
 			for _, path := range []string{
 				filepath.Join(payload, "Library", "PrivilegedHelperTools"),
+				filepath.Join(payload, "Applications", "FnCPN.app", "Contents", "MacOS"),
 				filepath.Join(payload, "usr", "local", "bin"), scripts, dist,
 			} {
 				if err := os.MkdirAll(path, 0o755); err != nil {
 					t.Fatal(err)
 				}
+			}
+			appContents := filepath.Join(payload, "Applications", "FnCPN.app", "Contents")
+			if err := os.WriteFile(filepath.Join(appContents, "Info.plist"), []byte(`<?xml version="1.0"?><plist version="1.0"><dict><key>CFBundleIdentifier</key><string>cn.rectcircle.fncpn</string><key>CFBundleExecutable</key><string>FnCPN</string><key>CFBundlePackageType</key><string>APPL</string><key>CFBundleShortVersionString</key><string>1.0.0</string><key>CFBundleVersion</key><string>1</string></dict></plist>`), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(appContents, "MacOS", "FnCPN"), []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+				t.Fatal(err)
 			}
 			relativeTool := "Library/PrivilegedHelperTools/test helper"
 			tool := filepath.Join(payload, relativeTool)

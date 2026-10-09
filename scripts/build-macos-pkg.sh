@@ -125,10 +125,26 @@ RAW_OUTPUT="${BUILD_DIR}/raw.pkg"
 EXPANDED_PACKAGE="${BUILD_DIR}/expanded"
 BOM_LIST="${BUILD_DIR}/bom.list"
 rm -f "$OUTPUT" "$RAW_OUTPUT"
+# App, helper and launchd templates form one installation unit at fixed paths.
+# Explicit metadata is required: older pkgbuild versions default to relocation.
+COMPONENT_PLIST="${BUILD_DIR}/components.plist"
+python3 - "$COMPONENT_PLIST" <<'PYCOMPONENT'
+import plistlib
+import sys
+with open(sys.argv[1], "wb") as output:
+    plistlib.dump([{
+        "RootRelativeBundlePath": "Applications/FnCPN.app",
+        "BundleIsRelocatable": False,
+        "BundleIsVersionChecked": False,
+        "BundleHasStrictIdentifier": True,
+        "BundleOverwriteAction": "upgrade",
+    }], output)
+PYCOMPONENT
 # The recommended-ownership path can fail while flushing pkgbuild's temporary
 # BOM. Preserve source ownership here, then normalize both archive formats below.
 pkgbuild \
   --root "$PAYLOAD" \
+  --component-plist "$COMPONENT_PLIST" \
   --scripts "$SCRIPTS" \
   --identifier cn.rectcircle.fncpn \
   --version "$PACKAGE_VERSION" \
@@ -139,6 +155,16 @@ pkgbuild \
   "$RAW_OUTPUT"
 
 pkgutil --expand "$RAW_OUTPUT" "$EXPANDED_PACKAGE"
+python3 - "$EXPANDED_PACKAGE/PackageInfo" <<'PYVERIFY'
+import sys
+import xml.etree.ElementTree as ET
+info = ET.parse(sys.argv[1]).getroot()
+if info.findall("./relocate/bundle"):
+    sys.exit("relocatable bundle found in built package")
+if not any(bundle.get("path", "").lstrip("./") == "Applications/FnCPN.app"
+           for bundle in info.findall("./bundle")):
+    sys.exit("fixed application path missing from built package")
+PYVERIFY
 lsbom "$EXPANDED_PACKAGE/Bom" |
   awk -F '\t' -v OFS='\t' '
     $1 !~ /(^|\/)\._/ {

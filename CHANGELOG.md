@@ -8,6 +8,12 @@
 
 首次正式 `1.0.0` 待 RC 实机确认后发布。
 
+## [1.0.0-rc.2] - 2026-10-09
+
+### Fixed
+
+- macOS PKG 显式禁止 App 自动重定位，避免其他位置存在 App 副本时安装后脚本因 `/Applications/FnCPN.app` 缺失而失败；构建校验固定路径，并增加真实 PKG 工具回归测试。
+
 ### Changed
 
 - RC 改为仅手动下载覆盖安装，移除 `fncpn-rc` Cask；Homebrew 统一使用 `fncpn`，仅更新公开稳定版。已公开 RC 安装包保持不变。

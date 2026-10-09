@@ -1,6 +1,8 @@
-# FnCPN 1.0.0-rc.1
+# FnCPN 1.0.0-rc.2
 
-首个公开发布候选版，供首次安装与发布链路验证；不是正式 1.0.0。
+第二个发布候选版，修复 rc.1 的 macOS 安装失败；不是正式 1.0.0。
+
+rc.1 在存在其他 App 副本时可能被安装器自动重定位，导致安装后脚本找不到 `/Applications/FnCPN.app`。rc.2 明确禁止重定位，并在构建中校验固定安装路径；不删除用户身份或配置。RC 仅手动下载覆盖安装，Homebrew 只更新稳定版。
 
 - Apple Silicon macOS 13+ 客户端；fnOS x86_64 / ARM64 服务端。
 - FN Connect 登录，自动选择 LOCAL / IPv6 DIRECT / RELAY；支持 NAS LAN 访问、网络配置同步与恢复。

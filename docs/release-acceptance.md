@@ -1,5 +1,15 @@
 # FnCPN P0 发布验收
 
+## RC 安装问题（2026-10-09）
+
+公开 `1.0.0-rc.1` 在目标 Mac 安装失败。`/var/log/install.log` 记录安装器将
+`Applications/FnCPN.app` 重定位到工作区中的安装包展开副本，随后 postinstall 的
+`chown /Applications/FnCPN.app` 因路径不存在失败。不是签名或网络错误。
+
+`1.0.0-rc.2` 显式设置 `BundleIsRelocatable=false`，并校验生成包中不存在
+relocate bundle、App 路径正确；真实 macOS 打包工具测试覆盖成功构建和拒绝重定位配置。
+修复不清空身份或配置。rc.2 的实机安装仍待用户确认；历史 0.x 安装成功不代表 RC 已通过。
+
 ## 实机验收记录
 
 截至 2026-10-02，已完成一轮 RELAY 基础访问、LAN 转发、日常恢复和设备清理验证，
