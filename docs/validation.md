@@ -162,3 +162,15 @@ rc.2 安装已获用户确认；1.0.0 的重新构建和产物检查单独记录
 - macOS PKG 和产品版本为 1.0.2，build number 为 27；CLI version、固定安装路径、无 relocate bundle 及 App 的 codesign 深度校验通过。
 - 远端五份资产逐字节复核后公开为 Latest 稳定版，Homebrew Cask 更新至 1.0.2；未覆盖历史版本。
 - 本轮未在 NAS 写文件、停服、升级或启用；产物核验和自动化通过不代表 fnOS 实机启用已通过。
+
+
+## fnOS 1.0.2 启用后的状态权限故障（2026-10-09）
+
+用户日志确认 1.0.2 已通过日志初始化，读取 control/state.json 返回 Permission denied。
+namei 输出显示 control 归 fncpn 所有、0700，state.json 归 root:root 所有、0700；
+fncpn UID 为 978。由此确认普通 server 无法读取该已有文件；文件为何变为 root 属主尚未确认。
+
+修复候选在安装和停止旧进程后的启动阶段修复已存在的 control/state.json、probe.key 属主与权限，
+保留全部内容，并分别保持 privileged/server.key、network-state.json 为 root 私有。
+回归覆盖已存在文件的 0700 权限收敛、逐文件属主调用、内容保留及不安全路径拒绝；
+chown 使用替身，未记为实际跨 UID 或 NAS 实机启用通过。实机启用结果需另行记录。

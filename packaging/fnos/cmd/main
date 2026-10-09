@@ -138,9 +138,39 @@ prepare_logs() {
     done
 }
 
+prepare_state() {
+    local directory path owner
+    for directory in "$CONTROL_STATE" "$PRIVILEGED_STATE"; do
+        if [ -L "$directory" ] || { [ -e "$directory" ] && [ ! -d "$directory" ]; }; then
+            log_error "refusing unsafe application state directory: $directory"
+            return 1
+        fi
+        mkdir -p "$directory" || return 1
+    done
+    chown "root:$APP_USER" "$TRIM_PKGETC" || return 1
+    chmod 0750 "$TRIM_PKGETC" || return 1
+    chown "$APP_USER:$APP_USER" "$CONTROL_STATE" || return 1
+    chown root:root "$PRIVILEGED_STATE" || return 1
+    chmod 0700 "$CONTROL_STATE" "$PRIVILEGED_STATE" || return 1
+    # Repair known persistent files without creating, rewriting or deleting them.
+    # Ordinary control state must remain separate from root-only network secrets.
+    for path in "$CONTROL_STATE/state.json" "$CONTROL_STATE/probe.key" \
+        "$PRIVILEGED_STATE/server.key" "$PRIVILEGED_STATE/network-state.json"; do
+        if [ -L "$path" ] || { [ -e "$path" ] && [ ! -f "$path" ]; }; then
+            log_error "refusing unsafe application state file: $path"
+            return 1
+        fi
+        [ -e "$path" ] || continue
+        owner="root:root"
+        case "$path" in "$CONTROL_STATE/"*) owner="$APP_USER:$APP_USER" ;; esac
+        chown "$owner" "$path" || { log_error "application state ownership could not be set: $path"; return 1; }
+        chmod 0600 "$path" || { log_error "application state permissions could not be set: $path"; return 1; }
+    done
+}
+
 initialize_app() {
     prepare_logs || return 1
-    mkdir -p "$CONTROL_STATE" "$PRIVILEGED_STATE" || return 1
+    prepare_state || return 1
     chown "root:$APP_USER" "$TRIM_PKGETC" "$TRIM_PKGVAR" "${TRIM_PKGVAR}/logs" || return 1
     chmod 0750 "$TRIM_PKGETC" "$TRIM_PKGVAR" "${TRIM_PKGVAR}/logs" || return 1
     chown root:root "$TRIM_APPDEST" "${TRIM_APPDEST}/server" "$BINARY" || return 1
@@ -171,6 +201,10 @@ start_app() {
     fi
     if ! stop_app; then
         log_error "existing FnCPN processes could not be stopped"
+        return 1
+    fi
+    if ! prepare_state; then
+        log_error "application state permissions could not be prepared"
         return 1
     fi
     if ! prepare_logs; then

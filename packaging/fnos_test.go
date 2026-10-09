@@ -192,8 +192,10 @@ start_app
 	if !strings.HasPrefix(string(calls), "stopped\n") || !strings.HasSuffix(string(calls), "launch boundary\n") {
 		t.Fatalf("wrong startup order: %s", calls)
 	}
-	if _, err := os.Stat(filepath.Join(directory, "etc")); !os.IsNotExist(err) {
-		t.Fatalf("start touched identity storage: %v", err)
+	for _, path := range []string{"etc/control/state.json", "etc/control/probe.key", "etc/privileged/server.key"} {
+		if _, err := os.Stat(filepath.Join(directory, path)); !os.IsNotExist(err) {
+			t.Fatalf("start created identity file %s: %v", path, err)
+		}
 	}
 }
 
@@ -206,7 +208,7 @@ stop_app() { return 0; }
 prepare_runtime() { touch "$TRIM_PKGVAR/launched"; }
 start_app
 `, "TEST_FAIL_CHOWN=1")
-	if err == nil || !strings.Contains(string(output), "application logs could not be prepared") {
+	if err == nil || !strings.Contains(string(output), "application state permissions could not be prepared") {
 		t.Fatalf("permission failure ignored: %v %s", err, output)
 	}
 	if _, err := os.Stat(filepath.Join(directory, "var/launched")); !os.IsNotExist(err) {
@@ -243,6 +245,62 @@ start_app
 			if _, err := os.Stat(filepath.Join(directory, "var/launched")); !os.IsNotExist(err) {
 				t.Fatal("continued launch after unsafe log")
 			}
+		})
+	}
+}
+
+func TestFnOSStatePreparationPreservesAndRepairsExistingFiles(t *testing.T) {
+	directory := t.TempDir()
+	for _, path := range []string{"etc/control/state.json", "etc/control/probe.key", "etc/privileged/server.key", "etc/privileged/network-state.json"} {
+		full := filepath.Join(directory, path)
+		if err := os.MkdirAll(filepath.Dir(full), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte("retained identity"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	output, err := runFnOSFunctions(t, directory, "prepare_state")
+	if err != nil {
+		t.Fatalf("prepare state: %v %s", err, output)
+	}
+	calls, err := os.ReadFile(filepath.Join(directory, "calls"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{"etc/control/state.json", "etc/control/probe.key", "etc/privileged/server.key", "etc/privileged/network-state.json"} {
+		full := filepath.Join(directory, path)
+		assertFnOSFile(t, full, "retained identity", 0o600)
+		owner := "root:root"
+		if strings.Contains(path, "/control/") {
+			owner = "fncpn:fncpn"
+		}
+		if !strings.Contains(string(calls), "chown "+owner+" "+full+"\n") {
+			t.Fatalf("missing ownership repair: %s", calls)
+		}
+	}
+}
+
+func TestFnOSStatePreparationRejectsSymlinks(t *testing.T) {
+	for _, path := range []string{"etc/control", "etc/control/state.json", "etc/control/probe.key", "etc/privileged/server.key"} {
+		t.Run(path, func(t *testing.T) {
+			directory := t.TempDir()
+			target := filepath.Join(directory, "unrelated")
+			if err := os.WriteFile(target, []byte("retained"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			full := filepath.Join(directory, path)
+			if err := os.MkdirAll(filepath.Dir(full), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(target, full); err != nil {
+				t.Fatal(err)
+			}
+			output, err := runFnOSFunctions(t, directory, "prepare_state")
+			if err == nil || !strings.Contains(string(output), "refusing unsafe application state") {
+				t.Fatalf("unsafe state accepted: %v %s", err, output)
+			}
+			assertFnOSFile(t, target, "retained", 0o644)
 		})
 	}
 }

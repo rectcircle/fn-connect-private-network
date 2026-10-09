@@ -49,6 +49,8 @@ jobs:
           ./scripts/install-fnpack.sh "$RUNNER_TEMP/fnpack"
       - name: Validate
         run: ./scripts/check-release.sh
+      - name: Verify root-owned fnOS state recovery
+        run: sudo bash scripts/test-fnos-state-permissions.sh
       - name: Build release draft
         if: ${{ !inputs.publish }}
         run: ./scripts/build-all.sh

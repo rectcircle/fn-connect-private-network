@@ -20,3 +20,5 @@ jobs:
         with:
           node-version: "22.14.0"
       - run: ./scripts/check-release.sh
+      - name: Verify root-owned fnOS state recovery
+        run: sudo bash scripts/test-fnos-state-permissions.sh
