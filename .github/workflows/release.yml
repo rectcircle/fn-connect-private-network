@@ -1,11 +1,11 @@
-name: Release candidate
+name: Release
 on:
   push:
     tags: ["v*"]
   workflow_dispatch:
     inputs:
       tag:
-        description: Existing release tag
+        description: Existing version tag (stable or RC)
         required: true
         type: string
       publish:
@@ -49,10 +49,10 @@ jobs:
           ./scripts/install-fnpack.sh "$RUNNER_TEMP/fnpack"
       - name: Validate
         run: ./scripts/check-release.sh
-      - name: Build candidate
+      - name: Build release draft
         if: ${{ !inputs.publish }}
         run: ./scripts/build-all.sh
-      - name: Download existing candidate for publication
+      - name: Download existing draft for publication
         if: inputs.publish
         run: |
           mkdir -p "$DIST_DIR"

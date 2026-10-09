@@ -1,6 +1,6 @@
 # 技术架构与核心决策
 
-以当前源码为事实，产品行为见 [产品需求](product.md)，远程与本地契约见 [接口](interfaces.md)。
+以源码为依据，产品行为见 [产品需求](product.md)，远程与本地契约见 [接口](interfaces.md)。
 采用最小 root 进程而非 Network Extension：macOS 在特权进程内嵌 wireguard-go，fnOS 使用内核 WireGuard；不随包启动外部 wg/bridge 工具。
 
 ## 总体架构
@@ -161,7 +161,7 @@ macOS 和 fnOS 分别构建适配自身平台的 `fncpn`，但每个平台的安
 - 凭据文件不提供额外磁盘加密或应用签名隔离；IPC 按当前控制台 UID 授权，
   不能防御同一用户下通过 IPC 读取凭据的进程或已取得 root 权限的进程。
 - 默认卸载保留所有用户凭据；`--purge-user-data UID` 仅删除指定用户的凭据、
-  配置和日志。不承诺迁移开发期凭据格式；保留当前格式身份时重新授权复用原密钥。
+  配置和日志。不承诺迁移开发期凭据格式；保留受支持格式身份时重新授权复用原密钥。
 - 重启或异常退出后，client privileged-daemon 根据状态执行幂等清理。
 
 ### fnOS 服务端

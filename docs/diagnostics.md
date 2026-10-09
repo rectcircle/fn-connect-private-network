@@ -3,7 +3,7 @@
 错误通过稳定字段跨 HTTP、IPC 和 UI 传递。远程协议遵守 [版本与兼容性](versioning-and-compatibility.md)，本地 IPC 独立版本化，不能用本地协议号解释远程兼容性。
 
 本文描述诊断规则与受控回归；各版本的现场失败、修复后用户确认及尚未覆盖的范围，
-统一记录在 [发布验收的实机记录](release-acceptance.md#实机验收记录)。
+统一记录在 [发布验收的实机记录](validation.md#历史实机证据)。
 
 ## 错误契约
 
@@ -228,7 +228,7 @@ FORWARD 路径可用。若 NAS 自身能访问 LAN 设备、`ip_forward=1`、客
 但客户端无法访问该设备，应同时检查 FnCPN 和宿主机其他 base chain。
 
 nftables 中一个 base chain 的 ACCEPT 不是最终放行，后续同 hook 的链仍可 DROP。
-本次实机中，FnCPN 的优先级 `-10` 链先放行，随后 Docker 的 `ip filter / FORWARD`
+2026-10-02 实机记录中，FnCPN 的优先级 `-10` 链先放行，随后 Docker 的 `ip filter / FORWARD`
 默认 DROP 丢弃了四个 ICMP 请求；数据包未到 POSTROUTING，已有 masquerade 不能补救。
 
 修复仅针对已有的 iptables-nft `DOCKER-USER` 扩展链增加带所有权注释的窄范围规则。

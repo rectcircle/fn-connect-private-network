@@ -1,7 +1,7 @@
 # 开发、构建与发布
 
 开发需要 Go 1.27；macOS 构建需要 Swift/AppKit 工具链，Python 3 用于资源同步。
-包职责见 [架构](architecture.md)，正式发布须同时遵守 [版本契约](versioning-and-compatibility.md) 和 [验收](release-acceptance.md)。
+包职责见 [架构](architecture.md)，正式发布须同时遵守 [版本契约](versioning-and-compatibility.md) 和 [验收](validation.md)。
 
 ## 本地运行
 
@@ -78,20 +78,25 @@ Go CLI 默认构建也会嵌入这个版本，不再报告 `dev`。
 要求干净 checkout、当前 commit 对应 `v<version>` tag，并拒绝覆盖本地同名产物；重建草稿应使用新的 `DIST_DIR`。
 构建生成仅包含当前发布产物的 `release-<version>.json` 和 `SHA256SUMS-<version>`。
 发布时应归档安装包、元数据、协议与数据样本，后续兼容验收使用这些历史基线。
-正式发布前仍须完成安装升级、真实网络与 fnOS 的实机验收。
+正式产物需完成安装与基础连接确认；已有验证及暂缓范围见 [验证记录](validation.md)。
 
 ## GitHub 发布与 Homebrew
 
 流水线固定 Go 1.27.1、Xcode 16.4 / 对应 SDK、Node 22.14.0 和 fnpack 1.2.3（下载验证 SHA256），使用 macOS 15 Apple Silicon runner。临时目录按构建随机隔离。
 本地首发环境可能不同，发布清单记录实际工具版本；两端同一 commit 不等于构建字节可复现。
 
-1. 更新 `internal/version/VERSION`（例如 `1.0.0-rc.1`）、同步模板、更新 `docs/release-notes.md` 和 CHANGELOG，提交代码。
+1. 更新 `internal/version/VERSION`（正式首发为 `1.0.0`，候选版可用 `1.0.0-rc.N`）、同步模板、更新 CHANGELOG，提交代码。
 2. 创建并推送对应 tag。tag 流水线运行检查、构建并上传草稿，不自动公开。
-3. 草稿出错可修复、重建及替换；公开 RC 后修复应发 `rc.2`，公开正式版后兼容修复应升 PATCH。
+3. 草稿出错可修复、重建及替换；公开 RC 后修复应递增 RC 编号，公开正式版后兼容修复应升 PATCH。
 4. 候选验收后，在 workflow_dispatch 指定 tag 并勾选 publish。流水线下载原草稿产物复核并公开，不重新构建；也可使用本地已验收的原始产物运行 `python3 scripts/publish-release.py dist --publish`，避免将另一批未经确认的构建视为已验收。
-5. 发布脚本下载远端所有资产逐字节复核后公开；已公开版本只允许校验一致的幂等重试，不覆盖。
+5. Release 说明从 CHANGELOG 对应版本条目提取；尚未登记版本时使用 Unreleased，公开前应完成版本条目。发布脚本下载远端所有资产逐字节复核后公开；已公开版本只允许校验一致的幂等重试，不覆盖。
 6. `python3 scripts/update-cask.py <version>` 仅从公开稳定版发布清单生成 `Casks/fncpn.rb`；脚本拒绝 RC、草稿和 GitHub prerelease，RC 发布跳过 Cask 更新。提交并推送生成文件。
 
 PKG Cask 安装使用系统 installer，卸载先运行项目脚本做网络清理，再清理 package receipt；默认保留用户配置与凭据。
 不配置自动 zap/purge，防止误删其他用户数据。RC 仅手动下载覆盖安装，不维护 RC Cask；Homebrew 统一标识符为 `fncpn`，只跟随稳定版。
-首次正式 `1.0.0` 再归档协议及数据基线；RC 归档不代表正式兼容验收完成。
+首次正式 `1.0.0` 归档协议及数据基线；RC 归档不代表正式兼容验收完成。
+
+首次正式发布：review 后提交并推送 `v1.0.0`，从该提交重建三种安装包；核对草稿的
+版本/build number、固定 App 路径、签名、许可证与 SHA256，完成安装及基础连接确认后公开。
+归档正式产物、commit、工具版本和脱敏的协议/数据样本，不归档真实私钥、凭据或 Cookie。
+发布前将 CHANGELOG 的准备条目整理为对应版本说明，公开后补记实际发布日期并更新 README 的公开状态；后续修复递增 PATCH。

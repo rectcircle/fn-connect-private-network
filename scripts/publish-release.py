@@ -4,12 +4,25 @@ import argparse
 import hashlib
 import json
 import pathlib
+import re
 import subprocess
 import tempfile
 
 
 def run(*args):
     return subprocess.check_output(args, text=True).strip()
+
+
+def release_notes(version):
+    """Use the version's changelog entry, or Unreleased while preparing a draft."""
+    changelog = pathlib.Path('CHANGELOG.md').read_text()
+    sections = {}
+    for match in re.finditer(r'^## \[([^\]]+)\][^\n]*\n(.*?)(?=^## |\Z)', changelog, re.M | re.S):
+        sections[match.group(1)] = match.group(2).strip()
+    notes = sections.get(version, sections.get('Unreleased', ''))
+    if not notes:
+        raise SystemExit('Missing release notes in CHANGELOG.md')
+    return notes + '\n'
 
 
 def publish(directory, repository, make_public=False):
@@ -44,11 +57,14 @@ def publish(directory, repository, make_public=False):
     releases = json.loads(run('gh', 'api', '--paginate', '--slurp', f'repos/{repository}/releases'))
     release = next((r for page in releases for r in page if r['tag_name'] == tag), None)
     if release is None:
-        args = ['gh', 'release', 'create', tag, '--repo', repository, '--verify-tag', '--draft',
-                '--title', f'FnCPN {version}', '--notes-file', 'docs/release-notes.md']
-        if '-rc.' in version:
-            args.append('--prerelease')
-        run(*args)
+        with tempfile.TemporaryDirectory(prefix='fncpn-release-notes-') as temporary:
+            notes = pathlib.Path(temporary) / 'notes.md'
+            notes.write_text(release_notes(version))
+            args = ['gh', 'release', 'create', tag, '--repo', repository, '--verify-tag', '--draft',
+                    '--title', f'FnCPN {version}', '--notes-file', str(notes)]
+            if '-rc.' in version:
+                args.append('--prerelease')
+            run(*args)
         release = json.loads(run('gh', 'release', 'view', tag, '--repo', repository, '--json', 'isDraft,assets'))
         draft = release['isDraft']
     else:

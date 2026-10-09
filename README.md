@@ -1,69 +1,105 @@
 # FN Connect Private Network
 
-从 Mac 连接 fnOS NAS 和已启用的家庭局域网。客户端自动选择局域网直达、IPv6 直连或 FN Connect 中继，无需手动配置密钥与路由。
-
-当前为 `1.0.0-rc.2` 发布候选版，尚未完成正式发布验收。中继基础访问、LAN 转发和部分恢复场景已有实机记录；网络与配置已获用户实机确认，历史 0.x 常规安装与多次覆盖升级已验证，rc.1 安装重定位问题在 rc.2 修复，rc.2 实机安装待确认；卸载及故障注入专项未执行，详见 [验收状态](docs/release-acceptance.md)。
+从 Mac 连接 fnOS NAS 和家庭局域网。FnCPN 自动选择局域网直达、IPv6 直连或 FN Connect 中继，无需手动配置密钥与路由。
 
 ## 使用条件
 
 - Apple Silicon Mac，macOS 13 或更新版本。
-- fnOS NAS，已启用 FN Connect；服务端提供 x86_64 和 ARM64 安装包，ARM 实机验收尚未完成。
-- 有效的 fnOS 用户账号。普通用户可以连接，安装应用与管理网络设置需要管理员。
-- 当前原生登录不支持 fnOS 双重认证（2FA）。
+- 已启用 FN Connect 的 fnOS NAS，支持 x86_64 和 ARM64。
+- fnOS 用户账号。普通用户可以连接；安装软件和修改服务端网络设置需要管理员权限。
 
-当前 macOS App 与 helper 使用 ad-hoc 签名；PKG 未签名、未公证，安装时可能需要在系统设置中明确批准。FN Connect 中继速度取决于上游服务和网络条件。
+原生登录不支持双重认证（2FA）。
 
-RC 安装包见 [GitHub Releases](https://github.com/rectcircle/fn-connect-private-network/releases)。
+## 安装
 
-RC 仅从 GitHub Releases 手动下载安装包，后续 RC 使用 PKG 覆盖安装；fnOS 通过应用中心更新 FPK。
-覆盖安装保留当前受支持格式的身份与配置，旧 `0.x` 历史格式不承诺迁移。
+先安装 NAS 服务端，再安装 Mac 客户端。安装包从 [GitHub Releases](https://github.com/rectcircle/fn-connect-private-network/releases) 下载：
 
-Homebrew 仅分发稳定版，统一标识符为 `fncpn`；首个正式版发布后提供安装命令：
+| 设备 | 选择的文件 |
+| --- | --- |
+| x86_64 NAS | `fncpn-<version>-x86.fpk` |
+| ARM64 NAS | `fncpn-<version>-arm.fpk` |
+| Apple Silicon Mac | `FnCPN-<version>-arm64-unsigned.pkg` |
+
+### NAS
+
+在 fnOS 应用中心手动安装对应的 FPK，打开 FnCPN，确认服务正常运行。
+
+### Mac：手动安装
+
+维护者没有 Apple 开发者账号，因此 App/helper 使用 ad-hoc 签名，PKG 未签名、未公证。
+如果信任本仓库及发布产物，可以通过命令行移除下载隔离标记后安装。
+
+例如，安装下载到「下载」目录的包（将文件名替换为实际版本）：
+
+```bash
+/usr/bin/xattr -d com.apple.quarantine "$HOME/Downloads/FnCPN-<version>-arm64-unsigned.pkg"
+open "$HOME/Downloads/FnCPN-<version>-arm64-unsigned.pkg"
+```
+
+按安装器提示输入管理员密码。安装完成后打开 App：
+
+```bash
+open /Applications/FnCPN.app
+```
+
+如果提示 `No such xattr: com.apple.quarantine`，表示该文件没有这个标记，无需重复删除。
+也可以保留隔离标记，在系统拦截后通过「系统设置 → 隐私与安全性」批准打开。
+
+### Mac：Homebrew 安装
+
+公开稳定版提供 Cask。先下载，移除这份 PKG 的隔离标记，再安装：
 
 ```bash
 brew tap rectcircle/fn-connect-private-network https://github.com/rectcircle/fn-connect-private-network
-brew install --cask rectcircle/fn-connect-private-network/fncpn
+brew fetch --cask rectcircle/fn-connect-private-network/fncpn
+/usr/bin/xattr -d com.apple.quarantine "$(brew --cache --cask rectcircle/fn-connect-private-network/fncpn)"
+HOMEBREW_NO_AUTO_UPDATE=1 brew install --cask rectcircle/fn-connect-private-network/fncpn
+open /Applications/FnCPN.app
 ```
 
-当前尚无稳定版 Cask。后续 RC 发布不会更新它，稳定版用户不会通过它收到 RC。
-测试 RC 时直接覆盖安装 PKG；请勿用 `brew reinstall` 获取 RC，它会安装 Cask 指向的稳定版。
-若已通过旧 `fncpn-rc` Cask 安装，请先通过 brew 卸载（默认保留用户配置与凭据），再手动安装 RC。
+Homebrew 校验下载包并调用系统安装器，可能要求输入管理员密码。该次安装关闭自动更新，以复用已处理的版本。
 
-## 安装与首次连接
+`xattr` 命令仅移除下载 PKG 的 `com.apple.quarantine`，绕过该安装包的 Gatekeeper 下载隔离检查；
+不会全局关闭 Gatekeeper，也不会授予局域网等权限或补上签名与公证。仅在信任源码和发布产物时执行。
 
-安装包按版本命名：
+### 自行编译
 
-| 设备 | 安装包 |
-| --- | --- |
-| Apple Silicon Mac | `FnCPN-<version>-arm64-unsigned.pkg` |
-| x86_64 fnOS | `fncpn-<version>-x86.fpk` |
-| ARM64 fnOS | `fncpn-<version>-arm.fpk` |
+如果不信任预编译安装包，请先审查源码，再从选定的发布 tag 自行构建。macOS 构建需要 Apple Silicon Mac、Go 1.27、Python 3 和 Xcode/Swift 工具链。
 
-1. 在 fnOS 应用中心安装对应的 FPK，打开 FnCPN，确认服务状态正常。
-2. 在 Mac 安装 PKG，打开「FnCPN」。
-3. 输入 FN Connect ID、fnOS 用户名和密码，完成登录。密码不会持久化保存。
-4. 等待客户端自动注册设备并连接，在详情中查看 NAS 地址和当前连接方式。
+```bash
+git clone https://github.com/rectcircle/fn-connect-private-network.git
+cd fn-connect-private-network
+git checkout "<选定的发布tag>"
+go test ./...
+./scripts/build-macos-pkg.sh
+```
 
-默认私有网络为 `10.253.203.0/24`，NAS 地址为 `10.253.203.1`。管理员修改网段后，以界面显示为准。首次安装若提示网段或端口冲突，请在 fnOS 管理页修改配置并重试。
+将 tag 占位符替换为要审查和构建的版本。生成的 PKG 位于 `dist/`，用它完成安装。
+本地构建也使用 ad-hoc 签名，不获得 Apple 开发者认证；fnOS 构建与完整测试步骤见 [开发与构建](docs/development.md)。
+
+## 首次连接
+
+1. 在 Mac 打开 FnCPN，输入 FN Connect ID、fnOS 用户名和密码。
+2. 点击「授权并连接」，等待设备自动注册并建立连接。密码不会持久化保存。
+3. 在连接详情中查看 NAS 地址，用该地址访问 NAS；也可访问服务端启用的 LAN 网段。
+
+默认 NAS 私有地址为 `10.253.203.1`。管理员修改网段后，以连接详情显示的地址为准。
+如果提示网段或端口冲突，在 fnOS 的 FnCPN 管理页修改网络设置后重试。
 
 ## 日常使用
 
-- **局域网直达**：使用 NAS 的局域网地址访问。
-- **IPv6 直连 / FN Connect 中继**：使用详情中的 NAS 私有网络地址，或已启用的远端 LAN 地址访问。
-- **断开**：暂停自动连接；再次点击连接后恢复。网络变化和重启不会取消用户的暂停意图。
-- **重新登录**：会话无法自动恢复时，重新输入密码；保留有效设备身份和配置。
+- **访问 NAS**：局域网直达时使用 NAS 局域网地址；远程连接时使用详情中的 NAS 私有地址或已启用的 LAN 地址。
+- **断开与重连**：断开会暂停自动连接；再次点击连接即可恢复。网络变化或重启不会取消暂停意图。
+- **重新登录**：会话无法自动恢复时重新输入密码，保留设备身份与配置。
 - **退出登录**：断开并清除登录凭据，保留设备身份。
 - **忘记此服务端**：清除本机配置、密钥和凭据，之后需要重新设置。
 
-本地与远端 LAN 网段重叠时，不添加冲突的 LAN 路由，仅保留 NAS 私有网络地址访问，并显示提示。管理页的「删除离线设备」用于清理记录，不代表安全撤销账号或设备的访问权限。
+本地与远端 LAN 网段重叠时，FnCPN 会提示冲突并保留 NAS 私有地址访问。中继速度取决于上游服务和网络条件。
+界面支持简体中文与英文，跟随系统或浏览器首选语言。
 
-客户端和 fnOS 管理页支持简体中文与英文，跟随系统或浏览器首选语言；修改语言后重启 App 或刷新页面。
+连接失败时，先检查 FN Connect 是否可用、NAS 上 FnCPN 是否运行，再按 App 提示处理。排障与脱敏诊断见 [诊断指南](docs/diagnostics.md)。
 
-## 连接失败时
-
-先检查 FN Connect 是否可用、NAS 上 FnCPN 是否运行，再查看客户端错误提示。需要登录时重新登录；权限不足时检查账号权限；版本不兼容时按提示升级对应端。可使用客户端的诊断功能获取脱敏信息，排障方法见 [诊断指南](docs/diagnostics.md)。
-
-安装后也可通过终端查询和控制连接：
+也可以使用命令行：
 
 ```bash
 fncpn status
@@ -75,21 +111,38 @@ fncpn diagnose --json
 
 ## 更新与卸载
 
-更新前查看 [变更记录](CHANGELOG.md)。正式兼容性承诺从 `1.0.0` 开始：两端 MAJOR 必须相同，客户端 MINOR 不能高于服务端，PATCH 不影响连接准入。`0.x` 测试版不承诺历史数据迁移；不支持的旧格式需先停止服务、清理网络并备份，再主动处理，更新不会自动清空用户数据。
+更新前查看 [变更记录](CHANGELOG.md)。手动安装的 Mac 客户端使用新 PKG 覆盖安装，NAS 在应用中心更新 FPK。正常更新保留受支持格式的身份与配置；版本不兼容时，按界面提示升级对应端。
 
-fnOS 通过应用中心停止或卸载 FnCPN。Mac 可运行随包安装的卸载脚本，默认保留用户配置、用户日志和凭据，删除特权服务日志（`/var/log/fncpn`）：
+通过 Homebrew 安装的客户端可使用：
+
+```bash
+brew update
+brew upgrade --cask rectcircle/fn-connect-private-network/fncpn
+```
+
+卸载：
+
+```bash
+brew uninstall --cask rectcircle/fn-connect-private-network/fncpn
+```
+
+Homebrew 只更新稳定版；测试候选版时手动下载安装包。
+
+手动安装的 Mac 客户端使用随包卸载脚本：
 
 ```bash
 sudo /Library/PrivilegedHelperTools/cn.rectcircle.fncpn/uninstall.sh
 ```
 
-如需同时删除当前用户的数据（无法撤销），使用：
+卸载保留用户配置、用户日志与凭据，清理特权服务日志。若要同时删除该用户的数据，改用以下命令（无法撤销）：
 
 ```bash
 sudo /Library/PrivilegedHelperTools/cn.rectcircle.fncpn/uninstall.sh \
   --purge-user-data "$(id -u)"
 ```
 
+NAS 服务端通过 fnOS 应用中心卸载。管理页的「删除离线设备」用于清理记录，不等同于安全撤销访问权限。
+
 ## 项目资料与许可证
 
-开发、协议研究、设计与发布资料见 [文档索引](docs/README.md)。源码采用 [MIT 许可证](LICENSE)；第三方依赖许可证见 [第三方声明](THIRD_PARTY_NOTICES.md)。fnOS 与 FN Connect 商标归各自权利人，本项目与其无隶属或背书关系。
+开发与协议资料见 [文档索引](docs/README.md)，实测范围见 [验证记录](docs/validation.md)。源码采用 [MIT 许可证](LICENSE)，依赖许可证见 [第三方声明](THIRD_PARTY_NOTICES.md)。fnOS 与 FN Connect 商标归各自权利人，本项目与其无隶属或背书关系。

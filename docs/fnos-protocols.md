@@ -1,7 +1,7 @@
 # fnOS / FN Connect 协议与验证
 
 本文记录 2026-09-27 至 2026-10-04 的协议研究与实测，不是 fnOS 官方稳定 API 承诺。
-上游变动需重新验证；当前适配以 `internal/client/discovery.go`、`native_session.go`、`cookies.go`、`adminproxy.go` 为准。
+上游变动需重新验证；适配实现见 `internal/client/discovery.go`、`native_session.go`、`cookies.go`、`adminproxy.go` 为准。
 FnCPN 自有接口见 [接口契约](interfaces.md)。
 
 ## 地址发现接口
@@ -25,7 +25,7 @@ authx: nonce=<nonce>&timestamp=<timestamp>&sign=<md5>
 {"fnId":"<fn-id>"}
 ```
 
-本次实测返回了局域网 IPv4、公网 IPv4、公网 IPv6、FN 中继域名、fnOS HTTP/HTTPS 端口、版本和探测校验值。该接口不依赖用户 Cookie，但包含两层由公开前端常量计算的签名：
+2026-09-27 实测返回了局域网 IPv4、公网 IPv4、公网 IPv6、FN 中继域名、fnOS HTTP/HTTPS 端口、版本和探测校验值。该接口不依赖用户 Cookie，但包含两层由公开前端常量计算的签名：
 
 ```text
 fn-sign = SHA256("trim_connect`" + fnId + "`" + timestamp + "`anna")
@@ -46,7 +46,7 @@ authx.sign = MD5(
 
 这属于客户端校验或反滥用机制，**不是用户身份认证**。算法与常量都在公开前端资源中，不能作为本项目的安全边界。[cite:2]
 
-该接口是未公开的内部接口。当前隔离在 `internal/client/discovery.go` 中，并允许协议变化后快速替换。
+该接口是未公开的内部接口。适配逻辑隔离在 `internal/client/discovery.go` 中，并允许协议变化后快速替换。
 
 
 ## 登录、Cookie 与会话恢复
@@ -112,7 +112,7 @@ FN Connect 返回 `101 Switching Protocols` 后，客户端在 WebSocket 文本�
 7. 有效短 token 作为 `fnos-token` Cookie 访问 `/app/fncpn` 的 HTTP 和 WSS
    入口；`mode=relay` 仍只负责选择 FN Connect 中继路径。
 
-当前 FN Connect 浏览器会话使用 `ost` 作为短 token，并在页面存储中保存
+2026-09-27 实测的 FN Connect 浏览器会话使用 `ost` 作为短 token，并在页面存储中保存
 `fnos-Secret`。浏览器中继会话没有暴露 `fnos-long-token`，因此仅导出浏览器
 Cookie 不能形成完整的长期恢复会话。正式客户端现已保存
 `token + longToken + secret + backId + did + username`，同时保留完整 Cookie jar
@@ -172,7 +172,7 @@ Cookie 不能形成完整的长期恢复会话。正式客户端现已保存
   不能从单次快照推导。
 - `GET /websocket?type=main`、`user.login`、`user.authToken` 和
   `user.tokenLogin` 均已通过 FN Connect 实机执行。
-- 尚未验证 2FA、信任设备、密码修改或服务端撤销设备后的恢复分支。
+- 上述实测未覆盖 2FA、信任设备、密码修改或服务端撤销设备后的恢复分支。
 - 影视 OAuth 只签发 Media token，不需要用于 FnCPN 系统网关认证。
 
 结论：
@@ -184,7 +184,7 @@ Cookie 不能形成完整的长期恢复会话。正式客户端现已保存
 > FnCPN HTTP/WSS 鉴权已全部通过 FN Connect 实机验证，无需依赖客户端具备 IPv6。
 
 
-## 当前客户端会话规则
+## 客户端会话规则
 
 ## Client 获取与维护 fnOS 会话
 
@@ -202,7 +202,7 @@ Cookie 不能形成完整的长期恢复会话。正式客户端现已保存
   非管理员同样可以注册设备与建链，但 Web 管理后台仅对管理员开放。
   不能以 `user.login` 成功代替应用授权。
 - 鉴权失败时详情页提供“重新登录”；登录页预填 FN Connect ID 和用户名，密码始终为空。
-- 当前版本不支持 2FA 登录；检测到 2FA challenge 时明确报错，不保存不完整会话。
+- 原生登录不支持 2FA challenge；检测到 2FA challenge 时明确报错，不保存不完整会话。
 
 ### 管理后台会话
 
@@ -235,7 +235,7 @@ Cookie 不能形成完整的长期恢复会话。正式客户端现已保存
 
 ### 信任边界
 
-FN Connect 统一网关当前要求有效 fnOS 登录态，因此客户端保存的是具有 fnOS 会话能力的敏感凭证。WireGuard 密钥不能替代该网关凭证。
+上述实测中的 FN Connect 统一网关要求有效 fnOS 登录态，因此客户端保存的是具有 fnOS 会话能力的敏感凭证。WireGuard 密钥不能替代该网关凭证。
 
 正式实现必须：
 
@@ -250,7 +250,7 @@ FN Connect 统一网关当前要求有效 fnOS 登录态，因此客户端保存
 [cite:1] 飞牛，《如何远程访问到飞牛 NAS？》  
 https://help.fnnas.com/articles/v1/access/how-access
 
-[cite:2] FN Connect 当前网页前端资源与 2026-09-27 实测  
+[cite:2] 2026-09-27 的 FN Connect 网页前端资源与实测
 https://static2.fnnas.com/connect/assets/1MPg8Gvv7C7Lrf46.js  
 https://fnos.net/api/v1/fn/con
 
