@@ -90,8 +90,8 @@ Go CLI 默认构建也会嵌入这个版本，不再报告 `dev`。
 3. 草稿出错可修复、重建及替换；公开 RC 后修复应发 `rc.2`，公开正式版后兼容修复应升 PATCH。
 4. 候选验收后，在 workflow_dispatch 指定 tag 并勾选 publish。流水线下载原草稿产物复核并公开，不重新构建；也可使用本地已验收的原始产物运行 `python3 scripts/publish-release.py dist --publish`，避免将另一批未经确认的构建视为已验收。
 5. 发布脚本下载远端所有资产逐字节复核后公开；已公开版本只允许校验一致的幂等重试，不覆盖。
-6. `python3 scripts/update-cask.py <version>` 从公开发布清单生成 `Casks/fncpn-rc.rb` 或 `Casks/fncpn.rb`；稳定版 Cask 不跟随 RC 更新。提交并推送生成文件。
+6. `python3 scripts/update-cask.py <version>` 仅从公开稳定版发布清单生成 `Casks/fncpn.rb`；脚本拒绝 RC、草稿和 GitHub prerelease，RC 发布跳过 Cask 更新。提交并推送生成文件。
 
 PKG Cask 安装使用系统 installer，卸载先运行项目脚本做网络清理，再清理 package receipt；默认保留用户配置与凭据。
-不配置自动 zap/purge，防止误删其他用户数据。RC 与正式 Cask 互斥。
+不配置自动 zap/purge，防止误删其他用户数据。RC 仅手动下载覆盖安装，不维护 RC Cask；Homebrew 统一标识符为 `fncpn`，只跟随稳定版。
 首次正式 `1.0.0` 再归档协议及数据基线；RC 归档不代表正式兼容验收完成。

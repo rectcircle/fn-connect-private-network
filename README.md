@@ -15,16 +15,19 @@
 
 RC 安装包见 [GitHub Releases](https://github.com/rectcircle/fn-connect-private-network/releases)。
 
-Homebrew RC 安装（Apple Silicon）：
+RC 仅从 GitHub Releases 手动下载安装包，后续 RC 使用 PKG 覆盖安装；fnOS 通过应用中心更新 FPK。
+覆盖安装保留当前受支持格式的身份与配置，旧 `0.x` 历史格式不承诺迁移。
+
+Homebrew 仅分发稳定版，统一标识符为 `fncpn`；首个正式版发布后提供安装命令：
 
 ```bash
 brew tap rectcircle/fn-connect-private-network https://github.com/rectcircle/fn-connect-private-network
-brew install --cask rectcircle/fn-connect-private-network/fncpn-rc
-# 更新 RC：
-brew upgrade --cask rectcircle/fn-connect-private-network/fncpn-rc
+brew install --cask rectcircle/fn-connect-private-network/fncpn
 ```
 
-稳定版与 RC 使用同一系统安装位置，不应同时安装；正式版发布后再提供稳定版 Cask。
+当前尚无稳定版 Cask。后续 RC 发布不会更新它，稳定版用户不会通过它收到 RC。
+测试 RC 时直接覆盖安装 PKG；请勿用 `brew reinstall` 获取 RC，它会安装 Cask 指向的稳定版。
+若已通过旧 `fncpn-rc` Cask 安装，请先通过 brew 卸载（默认保留用户配置与凭据），再手动安装 RC。
 
 ## 安装与首次连接
 

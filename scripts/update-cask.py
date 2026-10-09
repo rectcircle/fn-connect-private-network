@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate a stable or RC cask only from a public release manifest."""
+"""Generate the stable fncpn cask only from a public stable release manifest."""
 import json
 import pathlib
 import re
@@ -7,12 +7,12 @@ import subprocess
 import sys
 
 version = sys.argv[1]
-if not re.fullmatch(r'(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-rc\.(0|[1-9][0-9]*))?', version):
-    raise SystemExit('Invalid version')
+if not re.fullmatch(r'(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)', version):
+    raise SystemExit('Homebrew accepts stable X.Y.Z versions only; download RC packages manually')
 repository = 'rectcircle/fn-connect-private-network'
 release = json.loads(subprocess.check_output(['gh', 'release', 'view', 'v' + version, '--repo', repository, '--json', 'isDraft,isPrerelease'], text=True))
-if release['isDraft'] or release['isPrerelease'] != ('-rc.' in version):
-    raise SystemExit('Cask requires a public release with matching prerelease status')
+if release['isDraft'] or release['isPrerelease']:
+    raise SystemExit('Cask requires a public stable release')
 manifest = json.loads(subprocess.check_output(['gh', 'release', 'download', 'v' + version, '--repo', repository, '--pattern', f'release-{version}.json', '--output', '-'], text=True))
 if manifest['version'] != version:
     raise SystemExit('Manifest version mismatch')
@@ -20,8 +20,7 @@ artifact = next(a for a in manifest['artifacts'] if a['file'] == f'FnCPN-{versio
 sha = artifact['sha256']
 if not re.fullmatch('[0-9a-f]{64}', sha):
     raise SystemExit('Invalid checksum')
-token = 'fncpn-rc' if '-rc.' in version else 'fncpn'
-conflict = 'fncpn' if token == 'fncpn-rc' else 'fncpn-rc'
+token = 'fncpn'
 body = '''cask "TOKEN" do
   version "VERSION"
   sha256 "SHA256"
@@ -33,7 +32,6 @@ body = '''cask "TOKEN" do
 
   depends_on arch: :arm64
   depends_on macos: :ventura
-  conflicts_with cask: "CONFLICT"
 
   pkg "FnCPN-#{version}-arm64-unsigned.pkg"
 
@@ -50,7 +48,7 @@ body = '''cask "TOKEN" do
   EOS
 end
 '''
-for key, value in [('TOKEN', token), ('VERSION', version), ('SHA256', sha), ('CONFLICT', conflict)]:
+for key, value in [('TOKEN', token), ('VERSION', version), ('SHA256', sha)]:
     body = body.replace(key, value)
 path = pathlib.Path('Casks') / (token + '.rb')
 path.parent.mkdir(exist_ok=True)

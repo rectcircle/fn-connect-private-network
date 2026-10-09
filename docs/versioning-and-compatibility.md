@@ -33,6 +33,7 @@ macOS 的 `CFBundleShortVersionString` 与 PKG 版本使用核心数字版本；
 fnOS manifest 和发布文件名保留完整 RC 版本。App 展示与本地组件一致性校验使用完整产品版本，
 `CFBundleVersion` 使用递增构建号。RC 到正式版仍需重新构建和验收正式元数据，不能仅给 RC 包改名。
 macOS build number、Git commit 等用于构建追溯，不参与远程兼容性判定。
+RC 仅通过 GitHub Releases 手动下载覆盖安装；Homebrew 统一使用 `fncpn`，只更新公开稳定版，RC 不更新 Cask。
 
 ## 2. 唯一的远程版本准入规则
 

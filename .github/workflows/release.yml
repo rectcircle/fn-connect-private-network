@@ -69,8 +69,8 @@ jobs:
           else
             python3 scripts/publish-release.py "$DIST_DIR"
           fi
-      - name: Update public release cask
-        if: inputs.publish
+      - name: Update public stable release cask
+        if: ${{ inputs.publish && !contains(env.RELEASE_TAG, '-rc.') }}
         run: |
           VERSION="$(cat internal/version/VERSION)"
           git fetch origin main
