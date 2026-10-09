@@ -143,6 +143,110 @@ func TestFnOSInitializationPreservesExistingData(t *testing.T) {
 	}
 }
 
+// Reproduce retained crash/rotated logs during upgrade and direct enable.
+func TestFnOSStartRepairsAllLogFamiliesBeforeLaunching(t *testing.T) {
+	directory := t.TempDir()
+	var files []string
+	for _, base := range []string{"var/logs/server/server.log", "var/logs/privileged/privileged.log"} {
+		for _, suffix := range []string{"", ".crash"} {
+			for index := 0; index <= 5; index++ {
+				path := base + suffix
+				if index > 0 {
+					path += fmt.Sprintf(".%d", index)
+				}
+				full := filepath.Join(directory, path)
+				if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(full, []byte("retained capture"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				files = append(files, full)
+			}
+		}
+	}
+	output, err := runFnOSFunctions(t, directory, `
+id() { printf '978\n'; }
+process_matches() { return 1; }
+stop_app() { printf 'stopped\n' >> "$TEST_CALLS"; }
+prepare_runtime() { printf 'launch boundary\n' >> "$TEST_CALLS"; return 1; }
+start_app
+`)
+	if err == nil || !strings.Contains(string(output), "runtime directories could not be prepared") {
+		t.Fatalf("unexpected start: %v %s", err, output)
+	}
+	calls, err := os.ReadFile(filepath.Join(directory, "calls"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range files {
+		assertFnOSFile(t, path, "retained capture", 0o600)
+		owner := "fncpn:fncpn"
+		if strings.Contains(path, "/privileged/") {
+			owner = "root:root"
+		}
+		if !strings.Contains(string(calls), "chown "+owner+" "+path+"\n") {
+			t.Fatalf("ownership not repaired: %s", path)
+		}
+	}
+	if !strings.HasPrefix(string(calls), "stopped\n") || !strings.HasSuffix(string(calls), "launch boundary\n") {
+		t.Fatalf("wrong startup order: %s", calls)
+	}
+	if _, err := os.Stat(filepath.Join(directory, "etc")); !os.IsNotExist(err) {
+		t.Fatalf("start touched identity storage: %v", err)
+	}
+}
+
+func TestFnOSStartAbortsWhenLogPermissionsCannotBePrepared(t *testing.T) {
+	directory := t.TempDir()
+	output, err := runFnOSFunctions(t, directory, `
+id() { printf '978\n'; }
+process_matches() { return 1; }
+stop_app() { return 0; }
+prepare_runtime() { touch "$TRIM_PKGVAR/launched"; }
+start_app
+`, "TEST_FAIL_CHOWN=1")
+	if err == nil || !strings.Contains(string(output), "application logs could not be prepared") {
+		t.Fatalf("permission failure ignored: %v %s", err, output)
+	}
+	if _, err := os.Stat(filepath.Join(directory, "var/launched")); !os.IsNotExist(err) {
+		t.Fatal("continued startup after permissions failed")
+	}
+}
+
+func TestFnOSStartRejectsUnsafeRetainedLogsBeforeLaunching(t *testing.T) {
+	for _, relative := range []string{"var/logs/server", "var/logs/server/server.log.crash", "var/logs/server/server.log.crash.1", "var/logs/privileged/privileged.log.5"} {
+		t.Run(relative, func(t *testing.T) {
+			directory := t.TempDir()
+			target := filepath.Join(directory, "unrelated")
+			if err := os.WriteFile(target, []byte("retained"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.Join(directory, relative)
+			if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(target, path); err != nil {
+				t.Fatal(err)
+			}
+			output, err := runFnOSFunctions(t, directory, `
+id() { printf '978\n'; }
+process_matches() { return 1; }
+stop_app() { return 0; }
+prepare_runtime() { touch "$TRIM_PKGVAR/launched"; }
+start_app
+`)
+			if err == nil || !strings.Contains(string(output), "application logs could not be prepared") {
+				t.Fatalf("unsafe start: %v %s", err, output)
+			}
+			assertFnOSFile(t, target, "retained", 0o644)
+			if _, err := os.Stat(filepath.Join(directory, "var/launched")); !os.IsNotExist(err) {
+				t.Fatal("continued launch after unsafe log")
+			}
+		})
+	}
+}
+
 func TestFnOSRuntimePreparationDoesNotInitializePersistentState(t *testing.T) {
 	directory := t.TempDir()
 	if output, err := runFnOSFunctions(t, directory, "prepare_runtime"); err != nil {

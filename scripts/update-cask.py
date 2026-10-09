@@ -44,9 +44,9 @@ body = '''cask "TOKEN" do
   caveats <<~EOS
     The app and helper are ad-hoc signed. The PKG is unsigned and is not notarized.
     The maintainer does not have an Apple Developer account.
-    Installation requires administrator privileges. See the README for downloading
-    the PKG and removing its quarantine attribute before installation, if you trust
-    this release. This affects only that package, not system-wide protection.
+    Homebrew uses the system command-line installer with administrator privileges.
+    No manual PKG opening or quarantine removal is required as a preparation step.
+    If macOS blocks installation or launch, follow its security approval prompts.
     If you do not trust the prebuilt artifacts, review the source and build locally.
     Uninstall retains user configuration and credentials. Purge is a separate manual operation.
   EOS

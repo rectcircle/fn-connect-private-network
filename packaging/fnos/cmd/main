@@ -49,7 +49,7 @@ process_matches() {
     [ "$actual_uid" = "$expected_uid" ] || return 1
     executable="$(readlink -f "/proc/${pid}/exe" 2>/dev/null)" || return 1
     [ "$executable" = "$(readlink -f "$BINARY")" ] || return 1
-    command_line="$(tr '\0' ' ' < "/proc/${pid}/cmdline" 2>/dev/null)" || return 1
+    command_line="$({ tr '\0' ' ' < "/proc/${pid}/cmdline"; } 2>/dev/null)" || return 1
     case "$command_line" in
         *"server ${expected_role}"*) return 0 ;;
         *) return 1 ;;
@@ -68,7 +68,7 @@ find_process() {
         [ "$actual_uid" = "$expected_uid" ] || continue
         executable="$(readlink -f "/proc/${pid}/exe" 2>/dev/null)" || continue
         [ "$executable" = "$(readlink -f "$BINARY")" ] || continue
-        command_line="$(tr '\0' ' ' < "/proc/${pid}/cmdline" 2>/dev/null)" || continue
+        command_line="$({ tr '\0' ' ' < "/proc/${pid}/cmdline"; } 2>/dev/null)" || continue
         case "$command_line" in
             *"server ${expected_role}"*)
                 [ -z "$found" ] || return 2
@@ -108,9 +108,39 @@ initialize_log() {
     chmod 0600 "$path" || { log_error "application log permissions could not be set: $path"; return 1; }
 }
 
+prepare_logs() {
+    local directory path base index owner
+    for directory in "${TRIM_PKGVAR}/logs" "$SERVER_LOG_DIR" "$PRIVILEGED_LOG_DIR"; do
+        if [ -L "$directory" ] || { [ -e "$directory" ] && [ ! -d "$directory" ]; }; then
+            log_error "refusing unsafe application log directory: $directory"
+            return 1
+        fi
+        mkdir -p "$directory" || return 1
+    done
+    chown "root:$APP_USER" "$TRIM_PKGVAR" "${TRIM_PKGVAR}/logs" || return 1
+    chmod 0750 "$TRIM_PKGVAR" "${TRIM_PKGVAR}/logs" || return 1
+    chown "$APP_USER:$APP_USER" "$SERVER_LOG_DIR" || return 1
+    chown root:root "$PRIVILEGED_LOG_DIR" || return 1
+    chmod 0700 "$SERVER_LOG_DIR" "$PRIVILEGED_LOG_DIR" || return 1
+    # Repair only the two daemons' known log families, retaining their contents.
+    # Both ordinary logs and crash captures retain five numbered backups.
+    for base in "$SERVER_LOG" "$PRIVILEGED_LOG"; do
+        owner="root:root"
+        [ "$base" != "$SERVER_LOG" ] || owner="$APP_USER:$APP_USER"
+        for path in "$base" "$base.crash"; do
+            initialize_log "$path" "$owner" || return 1
+            for index in 1 2 3 4 5; do
+                if [ -e "$path.$index" ] || [ -L "$path.$index" ]; then
+                    initialize_log "$path.$index" "$owner" || return 1
+                fi
+            done
+        done
+    done
+}
+
 initialize_app() {
-    mkdir -p "$CONTROL_STATE" "$PRIVILEGED_STATE" \
-        "$SERVER_LOG_DIR" "$PRIVILEGED_LOG_DIR" || return 1
+    prepare_logs || return 1
+    mkdir -p "$CONTROL_STATE" "$PRIVILEGED_STATE" || return 1
     chown "root:$APP_USER" "$TRIM_PKGETC" "$TRIM_PKGVAR" "${TRIM_PKGVAR}/logs" || return 1
     chmod 0750 "$TRIM_PKGETC" "$TRIM_PKGVAR" "${TRIM_PKGVAR}/logs" || return 1
     chown root:root "$TRIM_APPDEST" "${TRIM_APPDEST}/server" "$BINARY" || return 1
@@ -119,9 +149,7 @@ initialize_app() {
     chmod 0700 "$CONTROL_STATE" "$SERVER_LOG_DIR" || return 1
     chown root:root "$PRIVILEGED_STATE" "$PRIVILEGED_LOG_DIR" || return 1
     chmod 0700 "$PRIVILEGED_STATE" "$PRIVILEGED_LOG_DIR" || return 1
-    prepare_runtime || return 1
-    initialize_log "$SERVER_LOG" "$APP_USER:$APP_USER" || return 1
-    initialize_log "$PRIVILEGED_LOG" root:root
+    prepare_runtime
 }
 
 prepare_runtime() {
@@ -143,6 +171,10 @@ start_app() {
     fi
     if ! stop_app; then
         log_error "existing FnCPN processes could not be stopped"
+        return 1
+    fi
+    if ! prepare_logs; then
+        log_error "application logs could not be prepared"
         return 1
     fi
     if ! prepare_runtime; then

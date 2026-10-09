@@ -47,20 +47,20 @@ open /Applications/FnCPN.app
 
 ### Mac：Homebrew 安装
 
-公开稳定版提供 Cask。先下载，移除这份 PKG 的隔离标记，再安装：
+公开稳定版提供 Cask：
 
 ```bash
 brew tap rectcircle/fn-connect-private-network https://github.com/rectcircle/fn-connect-private-network
-brew fetch --cask rectcircle/fn-connect-private-network/fncpn
-/usr/bin/xattr -d com.apple.quarantine "$(brew --cache --cask rectcircle/fn-connect-private-network/fncpn)"
-HOMEBREW_NO_AUTO_UPDATE=1 brew install --cask rectcircle/fn-connect-private-network/fncpn
+brew install --cask rectcircle/fn-connect-private-network/fncpn
 open /Applications/FnCPN.app
 ```
 
-Homebrew 校验下载包并调用系统安装器，可能要求输入管理员密码。该次安装关闭自动更新，以复用已处理的版本。
+Homebrew 校验下载包，然后通过 `sudo` 调用系统命令行安装器，可能要求管理员密码。
+无需预先打开 PKG 或移除隔离标记；如果实际遇到 macOS 安全拦截，再按提示通过「隐私与安全性」处理。
 
-`xattr` 命令仅移除下载 PKG 的 `com.apple.quarantine`，绕过该安装包的 Gatekeeper 下载隔离检查；
-不会全局关闭 Gatekeeper，也不会授予局域网等权限或补上签名与公证。仅在信任源码和发布产物时执行。
+维护者没有 Apple 开发者账号；Homebrew 不会补上开发者签名或公证。
+手动安装中的 `xattr` 命令只移除指定 PKG 的下载隔离标记，不会全局关闭 Gatekeeper 或授予局域网权限。
+只应在信任源码与发布产物时批准打开或移除标记。
 
 ### 自行编译
 
@@ -113,11 +113,12 @@ fncpn diagnose --json
 
 更新前查看 [变更记录](CHANGELOG.md)。手动安装的 Mac 客户端使用新 PKG 覆盖安装，NAS 在应用中心更新 FPK。正常更新保留受支持格式的身份与配置；版本不兼容时，按界面提示升级对应端。
 
-通过 Homebrew 安装的客户端可使用：
+通过 Homebrew 安装的客户端可直接升级：
 
 ```bash
 brew update
 brew upgrade --cask rectcircle/fn-connect-private-network/fncpn
+fncpn version
 ```
 
 卸载：
@@ -140,6 +141,16 @@ sudo /Library/PrivilegedHelperTools/cn.rectcircle.fncpn/uninstall.sh
 sudo /Library/PrivilegedHelperTools/cn.rectcircle.fncpn/uninstall.sh \
   --purge-user-data "$(id -u)"
 ```
+
+如果软件由 Homebrew 安装，彻底删除该用户数据并清理 Brew 记录时使用：
+
+```bash
+sudo /Library/PrivilegedHelperTools/cn.rectcircle.fncpn/uninstall.sh \
+  --purge-user-data "$(id -u)" &&
+brew uninstall --cask --force rectcircle/fn-connect-private-network/fncpn
+```
+
+项目脚本会删除自身，因此第二步用 `--force` 跳过已不存在的脚本。只在第一步成功后继续；正常卸载无需 `--force`。
 
 NAS 服务端通过 fnOS 应用中心卸载。管理页的「删除离线设备」用于清理记录，不等同于安全撤销访问权限。
 
