@@ -174,3 +174,12 @@ fncpn UID 为 978。由此确认普通 server 无法读取该已有文件；文�
 保留全部内容，并分别保持 privileged/server.key、network-state.json 为 root 私有。
 回归覆盖已存在文件的 0700 权限收敛、逐文件属主调用、内容保留及不安全路径拒绝；
 chown 使用替身，未记为实际跨 UID 或 NAS 实机启用通过。实机启用结果需另行记录。
+
+## 1.0.3 构建与发布核验（2026-10-09）
+
+- 源码 commit：`0b74a7208c8d3436c101af2ef659839e6481c49a`，tag：`v1.0.3`；发布流水线 `37935906843` 与 main CI `37935907565` 通过。
+- 两个 CI 流水线均执行真实权限回归：在 macOS runner 临时目录创建 root 所有、0700 的已有状态文件，确认 nobody 不可读；执行实际 prepare_state 后确认普通用户可读、内容保留、目录可写，特权密钥和目录仍不可访问。仅对 runner 的 nobody/root 组名做平台映射，不使用 chown 替身；不等同于 fnOS ACL 或目标 NAS 实机启用验证。
+- 三种安装包版本、源码 commit 和 SHA256 核验通过，两个 FPK 的 cmd/main 与源码逐字节一致，ELF 架构及许可证核验通过。
+- macOS 产品/PKG/CLI 版本为 1.0.3，build number 为 29；固定路径、无 relocate bundle 和 App 的 codesign 深度校验通过。
+- 远端五份资产逐字节复核后公开为 Latest 稳定版，Homebrew Cask 更新至 1.0.3；历史公开版本未覆盖。
+- 本轮未在 NAS 写文件、停服、升级或启用；新包实机启用结果需单独记录。
