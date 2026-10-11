@@ -648,11 +648,16 @@ function Assert-WindowsFnIdNormalization([string]$AssemblyPath, [string]$Product
     if ($null -eq $authorizationFailureConstructor) { throw 'WPF authorization-wait failure constructor was not found' }
     $failedWait = $remoteErrorConstructor.Invoke([object[]]@('PERMISSION_DENIED', 'denied', $null, 'authorization.create', $null, 403, $null, $null, $null, $null))
     $authorizationFailure = $authorizationFailureConstructor.Invoke([object[]]@($failedWait))
-    $actual = $loginFailureForException.Invoke($null, [object[]]@($authorizationFailure))
-    if ($actual -ne '该账号权限不足，无法完成授权') { throw "Structured authorization-wait failure was not mapped to the login message: '$actual'" }
-    $authorizationFailureWithoutDetails = $authorizationFailureConstructor.Invoke([object[]]@($null))
-    $actual = $loginFailureForException.Invoke($null, [object[]]@($authorizationFailureWithoutDetails))
-    if ($actual -ne '授权没有完成') { throw "Empty authorization-wait failure was not mapped to the localized fallback: '$actual'" }
+    $previousCulture = [Globalization.CultureInfo]::CurrentUICulture
+    try {
+        [Globalization.CultureInfo]::CurrentUICulture = [Globalization.CultureInfo]::GetCultureInfo('zh-Hans')
+        $actual = $loginFailureForException.Invoke($null, [object[]]@($authorizationFailure))
+        if ($actual -ne '该账号权限不足，无法完成授权') { throw "Structured authorization-wait failure was not mapped to the login message: '$actual'" }
+        $authorizationFailureWithoutDetails = $authorizationFailureConstructor.Invoke([object[]]@($null))
+        $actual = $loginFailureForException.Invoke($null, [object[]]@($authorizationFailureWithoutDetails))
+        if ($actual -ne '授权没有完成') { throw "Empty authorization-wait failure was not mapped to the localized fallback: '$actual'" }
+    }
+    finally { [Globalization.CultureInfo]::CurrentUICulture = $previousCulture }
     $ipcExceptionType = $assembly.GetType('FnCPN.Windows.IPCException', $true)
     $ipcExceptionConstructor = $ipcExceptionType.GetConstructors([Reflection.BindingFlags]'Instance,Public,NonPublic') |
         Where-Object { $_.GetParameters().Count -eq 2 } | Select-Object -First 1
