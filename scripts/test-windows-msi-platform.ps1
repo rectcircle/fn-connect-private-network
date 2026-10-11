@@ -20,7 +20,11 @@ try {
     if ($session.DoAction('AppSearch') -ne 1) { throw 'AppSearch failed' }
     $build = (Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion').CurrentBuildNumber
     if ($session.Property('WINDOWSBUILDNUMBER') -ne $build) { throw 'MSI did not read the actual OS build' }
-    if ($session.EvaluateCondition($condition) -ne 1) { throw 'Actual host rejected' }
+    # Hosted Windows runners use Server, which the product intentionally rejects.
+    $hostExpected = if ($session.Property('VersionNT64') -and
+        $session.Property('MsiNTProductType') -eq '1' -and [int]$build -ge 19045) { 1 } else { 0 }
+    if ($session.EvaluateCondition($condition) -ne $hostExpected) { throw 'Actual host launch condition mismatch' }
+    Write-Host "PASS $Architecture actual host (expected $hostExpected)"
     foreach ($case in @(
         @{ Name='Windows 11 compatibility version'; Version='603'; Build='22000'; Product='1'; Installed=''; Expected=1 },
         @{ Name='Windows 11 current'; Version='1000'; Build='26200'; Product='1'; Installed=''; Expected=1 },
