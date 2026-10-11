@@ -18,7 +18,87 @@ concurrency:
   group: release-${{ inputs.tag || github.ref_name }}
   cancel-in-progress: false
 jobs:
+  windows-build:
+    runs-on: windows-2025
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+          fetch-depth: 0
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.27.1"
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+      - name: Verify release tag, generated resources and Windows Go packages
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $tag = '${{ inputs.tag || github.ref_name }}'
+          $version = (Get-Content internal/version/VERSION -Raw).Trim()
+          if ($tag -ne "v$version") { throw 'Release tag does not match product version' }
+          $tagCommit = (& git rev-parse "$tag^{commit}").Trim()
+          if ($LASTEXITCODE -ne 0) { throw 'Release tag cannot be resolved' }
+          if ($tagCommit -ne (& git rev-parse HEAD).Trim()) { throw 'Release tag does not match checkout' }
+          if (& git status --porcelain) { throw 'Release requires a clean checkout' }
+          python scripts/sync-version.py --check
+          if ($LASTEXITCODE -ne 0) { throw 'Generated product versions are stale' }
+          python scripts/sync-localizations.py --check
+          if ($LASTEXITCODE -ne 0) { throw 'Generated localization catalogs are stale' }
+          ./scripts/check-windows-localization.ps1
+          go test ./...
+          if ($LASTEXITCODE -ne 0) { throw 'Windows Go tests failed' }
+          go vet ./...
+          if ($LASTEXITCODE -ne 0) { throw 'Windows Go vet failed' }
+      - name: Install pinned WiX and official Wintun payload
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $wix = Join-Path $PWD '.dev/tools/wix'
+          $wintun = Join-Path $PWD '.dev/dependencies/wintun/0.14.1'
+          $webview2 = Join-Path $PWD '.dev/dependencies/webview2/MicrosoftEdgeWebView2Setup.exe'
+          New-Item -ItemType Directory -Force -Path $wix, (Split-Path -Parent $wintun), (Split-Path -Parent $webview2) | Out-Null
+          dotnet tool install wix --version 7.0.0 --tool-path $wix
+          if ($LASTEXITCODE -ne 0) { throw 'WiX installation failed' }
+          Push-Location $wix
+          try {
+            foreach ($extension in @('Util', 'UI')) {
+              & ./wix.exe -acceptEula wix7 extension add "WixToolset.$extension.wixext/7.0.0"
+              if ($LASTEXITCODE -ne 0) { throw "WiX $extension extension installation failed" }
+            }
+          } finally { Pop-Location }
+          $archive = Join-Path $env:RUNNER_TEMP 'wintun-0.14.1.zip'
+          Invoke-WebRequest 'https://www.wintun.net/builds/wintun-0.14.1.zip' -OutFile $archive
+          if ((Get-FileHash $archive -Algorithm SHA256).Hash -ne '07C256185D6EE3652E09FA55C0B673E2624B565E02C4B9091C79CA7D2F24EF51') { throw 'Wintun archive SHA256 mismatch' }
+          $stage = Join-Path $env:RUNNER_TEMP 'wintun-stage'
+          Expand-Archive -LiteralPath $archive -DestinationPath $stage
+          Move-Item -LiteralPath (Join-Path $stage 'wintun') -Destination $wintun
+          foreach ($arch in @('arm64', 'amd64')) {
+            $dll = Join-Path $wintun "bin/$arch/wintun.dll"
+            if ((Get-AuthenticodeSignature $dll).Status -ne 'Valid') { throw "Invalid Wintun signature: $dll" }
+          }
+          $webview2Cache = Join-Path $env:RUNNER_TEMP 'MicrosoftEdgeWebView2Setup.exe'
+          Invoke-WebRequest -UseBasicParsing 'https://go.microsoft.com/fwlink/p/?LinkId=2124703' -OutFile $webview2Cache
+          $webview2Signature = Get-AuthenticodeSignature $webview2Cache
+          if ($webview2Signature.Status -ne 'Valid' -or $webview2Signature.SignerCertificate.Subject -notlike '*Microsoft Corporation*') { throw 'Invalid Microsoft WebView2 bootstrapper signature' }
+          Copy-Item -LiteralPath $webview2Cache -Destination $webview2
+      - name: Build ARM64 and x64 release MSIs
+        shell: pwsh
+        run: ./scripts/build-windows.ps1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-release-candidates-${{ inputs.tag || github.ref_name }}
+          path: |
+            dist/windows/arm64/FnCPN-*-arm64-unsigned.msi
+            dist/windows/arm64/build-manifest.json
+            dist/windows/x64/FnCPN-*-x64-unsigned.msi
+            dist/windows/x64/build-manifest.json
+          if-no-files-found: error
   release:
+    needs: windows-build
     runs-on: macos-15
     env:
       DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
@@ -51,6 +131,11 @@ jobs:
         run: ./scripts/check-release.sh
       - name: Verify root-owned fnOS state recovery
         run: sudo bash scripts/test-fnos-state-permissions.sh
+      - uses: actions/download-artifact@v4
+        if: ${{ !inputs.publish }}
+        with:
+          name: windows-release-candidates-${{ inputs.tag || github.ref_name }}
+          path: dist/windows
       - name: Build release draft
         if: ${{ !inputs.publish }}
         run: ./scripts/build-all.sh

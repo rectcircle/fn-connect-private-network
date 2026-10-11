@@ -18,7 +18,7 @@ plist_path = root / 'packaging/macos/Info.plist'
 
 failed = False
 for path, (pattern, replacement) in updates.items():
-    before = path.read_text()
+    before = path.read_text(encoding='utf-8')
     after, count = re.subn(pattern, replacement, before)
     if path == plist_path:
         after, product_count = re.subn(r'(<key>FnCPNProductVersion</key>\s*<string>)[^<]+(</string>)', rf'\g<1>{version}\g<2>', after)
@@ -31,5 +31,5 @@ for path, (pattern, replacement) in updates.items():
             print(f'Outdated version template: {path}', file=sys.stderr)
             failed = True
         else:
-            path.write_text(after)
+            path.write_text(after, encoding='utf-8')
 sys.exit(1 if failed else 0)

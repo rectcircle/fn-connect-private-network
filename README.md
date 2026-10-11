@@ -1,10 +1,11 @@
 # FN Connect Private Network
 
-从 Mac 连接 fnOS NAS 和家庭局域网。FnCPN 自动选择局域网直达、IPv6 直连或 FN Connect 中继，无需手动配置密钥与路由。
+从 Mac 或 Windows 连接 fnOS NAS 和家庭局域网。FnCPN 自动选择局域网直达、IPv6 直连或 FN Connect 中继，无需手动配置密钥与路由。
 
 ## 使用条件
 
 - Apple Silicon Mac，macOS 13 或更新版本。
+- Windows RC 客户端：Windows 10 22H2（build 19045）或更新的 ARM64/x64 系统，不支持 32 位或 Windows Server；目前日常功能实测通过的是 Windows 11 ARM64，原生 x64 和 Windows 10 待验收。
 - 已启用 FN Connect 的 fnOS NAS，支持 x86_64 和 ARM64。
 - fnOS 用户账号。普通用户可以连接；安装软件和修改服务端网络设置需要管理员权限。
 
@@ -12,13 +13,22 @@
 
 ## 安装
 
-先安装 NAS 服务端，再安装 Mac 客户端。安装包从 [GitHub Releases](https://github.com/rectcircle/fn-connect-private-network/releases) 下载：
+先安装 NAS 服务端，再安装对应客户端。安装包从 [GitHub Releases](https://github.com/rectcircle/fn-connect-private-network/releases) 下载，Windows 候选需选择 RC：
 
 | 设备 | 选择的文件 |
 | --- | --- |
 | x86_64 NAS | `fncpn-<version>-x86.fpk` |
 | ARM64 NAS | `fncpn-<version>-arm.fpk` |
 | Apple Silicon Mac | `FnCPN-<version>-arm64-unsigned.pkg` |
+| Windows ARM64 | `FnCPN-<version>-arm64-unsigned.msi` |
+| Windows x64 | `FnCPN-<version>-x64-unsigned.msi` |
+
+### Windows：RC 安装
+
+按 Windows 系统架构选择 MSI，双击安装并批准管理员权限。FnCPN EXE/MSI 未签名，
+系统可能提示未知发布者；仅安装信任的来源。缺少 WebView2 Runtime 时首次安装需要联网。
+安装完成后从开始菜单或桌面打开 FnCPN。普通卸载与重装保留用户配置和凭据。
+RC 按发布顺序安装，公开后的修复使用新的 RC 编号。验证范围见 [变更记录](CHANGELOG.md)。
 
 ### NAS
 
@@ -79,7 +89,7 @@ go test ./...
 
 ## 首次连接
 
-1. 在 Mac 打开 FnCPN，输入 FN Connect ID、fnOS 用户名和密码。
+1. 打开 FnCPN，输入 FN Connect ID、fnOS 用户名和密码。
 2. 点击「授权并连接」，等待设备自动注册并建立连接。密码不会持久化保存。
 3. 在连接详情中查看 NAS 地址，用该地址访问 NAS；也可访问服务端启用的 LAN 网段。
 
@@ -108,6 +118,8 @@ fncpn disconnect
 fncpn retry
 fncpn diagnose --json
 ```
+
+`fncpn authorize <fn-id>` 当前会打开 App 登录页并等待授权结果，不是终端密码交互。
 
 ## 更新与卸载
 

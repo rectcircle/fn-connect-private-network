@@ -60,6 +60,28 @@ func TestServiceDelegatesCommandsToRuntime(t *testing.T) {
 	}
 }
 
+func TestLocalSystemPeerCanOnlyStopClientDaemon(t *testing.T) {
+	service := NewWithRuntime(&recordingRuntime{status: model.ClientStatus{State: model.ClientPaused}})
+	stopped := make(chan struct{}, 1)
+	service.SetShutdownHandler(func() { stopped <- struct{}{} })
+	system := ipc.WithPeerIdentity(context.Background(), ipc.PeerIdentity{
+		SID: "S-1-5-18", SessionID: 0, PID: 42,
+	})
+	status := service.Handle(system, ipc.Request{ID: "status", Method: MethodStatus})
+	if status.OK || status.Error == nil || status.Error.Code != model.ErrorPermissionDenied {
+		t.Fatalf("LocalSystem status response = %+v, want permission denied", status)
+	}
+	shutdown := service.Handle(system, ipc.Request{ID: "stop", Method: MethodShutdown})
+	if !shutdown.OK {
+		t.Fatalf("LocalSystem shutdown response = %+v", shutdown)
+	}
+	select {
+	case <-stopped:
+	case <-time.After(time.Second):
+		t.Fatal("LocalSystem shutdown request did not invoke daemon stop handler")
+	}
+}
+
 func TestRuntimeServiceReturnsAdminProxyURL(t *testing.T) {
 	runtime := &recordingRuntime{adminProxyURL: "http://127.0.0.1:12345/app/fncpn?fncpn_proxy=nonce"}
 	response := NewWithRuntime(runtime).Handle(

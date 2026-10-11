@@ -6,6 +6,19 @@
 
 ## [Unreleased]
 
+## [1.0.4-rc.1] - 2026-10-11
+
+### Added
+
+- Windows ARM64/x64 客户端候选，提供原生登录、LOCAL/IPv6 DIRECT/RELAY、NAS 访问、独立管理后台、托盘、自启动、诊断与 MSI 安装。复用现有产品功能，不要求服务端升级到新的 MINOR 或 PATCH。
+
+### 验证范围与使用说明
+
+- Windows 11 ARM64 日常功能已实测通过，包括三种连接路径、安装/候选替换、卸载后重装保留配置、重启自动连接、睡眠/锁屏恢复、正常服务重启、托盘和诊断工具。
+- 安装准入为 Windows 10 22H2（build 19045）及以上的 64 位客户端系统；原生 x64、Windows 10、异常安装回滚、服务崩溃恢复与复杂网络/多用户场景仍待验收。x64 当前运行证据来自 ARM64 系统仿真。
+- FnCPN EXE/MSI 未签名，首次下载或安装可能出现系统安全提示；Wintun 保留官方签名。缺少 WebView2 Runtime 时首次安装需要联网，正常卸载保留用户配置与凭据。
+- 当前 `fncpn authorize` 会唤起 App 登录页；纯命令行授权列为后续需求。RC 通过 GitHub Releases 手动下载，不更新 Homebrew Cask。
+
 ## [1.0.3] - 2026-10-09
 
 ### Fixed

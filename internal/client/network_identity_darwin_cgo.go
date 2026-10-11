@@ -104,8 +104,9 @@ func defaultPhysicalInterface() (string, error) {
 	return "", nil
 }
 
-func enrichPhysicalNetwork(snapshot *NetworkSnapshot) {
+func enrichPhysicalNetwork(snapshot *NetworkSnapshot) error {
 	for i := range snapshot.Links {
 		snapshot.Links[i].Identity = physicalIdentity(snapshot.Links[i].Name)
 	}
+	return nil
 }

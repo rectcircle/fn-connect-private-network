@@ -14,7 +14,7 @@ spec.loader.exec_module(publisher)
 
 
 class PublicationTest(unittest.TestCase):
-    def exercise(self, draft, corrupt=False, publish=True, version="1.0.0-rc.1"):
+    def exercise(self, draft, corrupt=False, publish=True, version="1.0.0-rc.1", flattened=False, missing_architecture=None):
         with tempfile.TemporaryDirectory() as temporary:
             root = pathlib.Path(temporary)
             previous = pathlib.Path.cwd()
@@ -25,10 +25,20 @@ class PublicationTest(unittest.TestCase):
                 pathlib.Path('internal/version/VERSION').write_text(version + '\n')
                 out = root / 'dist'
                 out.mkdir()
-                (out / 'candidate.pkg').write_bytes(b'candidate')
-                sha = hashlib.sha256(b'candidate').hexdigest()
-                (out / f'release-{version}.json').write_text(json.dumps({'version': version, 'commit': 'commit', 'artifacts': [{'file': 'candidate.pkg', 'sha256': sha}]}))
-                (out / f'SHA256SUMS-{version}').write_text(f'{sha}  candidate.pkg\n')
+                sources = {}
+                artifacts = []
+                for architecture in ('arm64', 'x64'):
+                    if architecture == missing_architecture:
+                        continue
+                    name = f'FnCPN-{version}-{architecture}-unsigned.msi'
+                    source = out / name if flattened else out / 'windows' / architecture / name
+                    source.parent.mkdir(parents=True, exist_ok=True)
+                    source.write_bytes(architecture.encode())
+                    sha = hashlib.sha256(architecture.encode()).hexdigest()
+                    sources[name] = source
+                    artifacts.append({'file': name, 'path': f'windows/{architecture}/{name}', 'sha256': sha})
+                (out / f'release-{version}.json').write_text(json.dumps({'version': version, 'commit': 'commit', 'artifacts': artifacts}))
+                (out / f'SHA256SUMS-{version}').write_text(''.join(f"{a['sha256']}  {a['file']}\n" for a in artifacts))
                 calls = []
 
                 def run(*args):
@@ -54,10 +64,12 @@ class PublicationTest(unittest.TestCase):
                         return json.dumps({'isDraft': True, 'assets': []})
                     if args[:3] == ('gh', 'release', 'download'):
                         target = pathlib.Path(args[args.index('--dir') + 1])
-                        for p in out.iterdir():
+                        for name, source in sources.items():
+                            (target / name).write_bytes(source.read_bytes())
+                        for p in (out / f'release-{version}.json', out / f'SHA256SUMS-{version}'):
                             (target / p.name).write_bytes(p.read_bytes())
                         if corrupt:
-                            (target / 'candidate.pkg').write_bytes(b'corrupt')
+                            (target / f'FnCPN-{version}-arm64-unsigned.msi').write_bytes(b'corrupt')
                     return 'https://example.invalid/release'
 
                 with patch.object(publisher, 'run', run):
@@ -66,6 +78,9 @@ class PublicationTest(unittest.TestCase):
                             publisher.publish(out, 'owner/repo', publish)
                     else:
                         publisher.publish(out, 'owner/repo', publish)
+                uploads = [c for c in calls if c[:3] == ('gh', 'release', 'upload')]
+                if uploads:
+                    self.assertTrue(all(str(source.resolve()) in uploads[0] for source in sources.values()))
                 mutations = [c[2] for c in calls if c[:2] == ('gh', 'release') and c[2] in ('upload', 'edit', 'create')]
                 return mutations
             finally:
@@ -101,6 +116,42 @@ class PublicationTest(unittest.TestCase):
 
     def test_default_keeps_draft(self):
         self.assertEqual(self.exercise(True, publish=False), ['upload'])
+
+    def test_downloaded_release_assets_can_be_verified_from_flat_layout(self):
+        self.assertEqual(self.exercise(True, publish=False, flattened=True), ['upload'])
+
+    def test_inventory_missing_windows_architecture_is_rejected(self):
+        with self.assertRaisesRegex(SystemExit, 'missing required Windows MSI assets'):
+            self.exercise(None, missing_architecture='x64')
+
+    def test_artifact_path_cannot_escape_inventory_directory(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            previous = pathlib.Path.cwd()
+            os.chdir(root)
+            try:
+                pathlib.Path('internal/version').mkdir(parents=True)
+                pathlib.Path('internal/version/VERSION').write_text('1.0.0\n')
+                out = root / 'dist'
+                out.mkdir()
+                artifacts = []
+                for architecture in ('arm64', 'x64'):
+                    name = f'FnCPN-1.0.0-{architecture}-unsigned.msi'
+                    payload = root / name
+                    payload.write_bytes(architecture.encode())
+                    sha = hashlib.sha256(architecture.encode()).hexdigest()
+                    path = '../outside.msi' if architecture == 'arm64' else f'windows/x64/{name}'
+                    artifacts.append({'file': name, 'path': path, 'sha256': sha})
+                (out / 'release-1.0.0.json').write_text(json.dumps({'version': '1.0.0', 'commit': 'commit', 'artifacts': artifacts}))
+                def run(*args):
+                    if args[:2] == ('git', 'status'):
+                        return ''
+                    return 'commit'
+                with patch.object(publisher, 'run', run):
+                    with self.assertRaisesRegex(SystemExit, 'Invalid release artifact path'):
+                        publisher.publish(out, 'owner/repo')
+            finally:
+                os.chdir(previous)
 
 
 if __name__ == '__main__':

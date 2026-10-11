@@ -1,3 +1,5 @@
+//go:build !windows
+
 package ipc
 
 import (
@@ -32,12 +34,14 @@ func (function HandlerFunc) Handle(ctx context.Context, request Request) Respons
 }
 
 type Server struct {
-	SocketPath string
-	Mode       os.FileMode
-	Authorize  Authorizer
-	Handler    Handler
-	Logger     *slog.Logger
-	Timeout    time.Duration
+	SocketPath             string
+	Mode                   os.FileMode
+	PipeSecurityDescriptor string
+	Authorize              Authorizer
+	Handler                Handler
+	Logger                 *slog.Logger
+	Timeout                time.Duration
+	OnReady                func()
 }
 
 func (s Server) Serve(ctx context.Context) error {
@@ -73,6 +77,9 @@ func (s Server) Serve(ctx context.Context) error {
 		return fmt.Errorf("set IPC socket mode: %w", err)
 	}
 	logger.Info("IPC listener ready", "socket", s.SocketPath)
+	if s.OnReady != nil {
+		s.OnReady()
+	}
 	defer logger.Info("IPC listener stopped", "socket", s.SocketPath)
 
 	go func() {

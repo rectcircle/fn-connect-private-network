@@ -117,28 +117,38 @@ func (w *RotatingWriter) rotate() error {
 	if err := w.file.Sync(); err != nil {
 		return err
 	}
+	if err := w.file.Close(); err != nil {
+		w.file = nil
+		return err
+	}
+	w.file = nil
+	reopen := func(cause error) error {
+		if err := w.open(); err != nil {
+			return errors.Join(cause, err)
+		}
+		return cause
+	}
 	if err := os.Remove(w.path + "." + strconv.Itoa(w.backups)); err != nil &&
 		!os.IsNotExist(err) {
-		return err
+		return reopen(err)
 	}
 	for index := w.backups - 1; index >= 1; index-- {
 		source := w.path + "." + strconv.Itoa(index)
 		target := w.path + "." + strconv.Itoa(index+1)
 		if err := os.Rename(source, target); err != nil && !os.IsNotExist(err) {
-			return err
+			return reopen(err)
 		}
 	}
 	if err := os.Rename(w.path, w.path+".1"); err != nil && !os.IsNotExist(err) {
-		return err
+		return reopen(err)
 	}
 	file, size, err := openLogFile(w.path)
 	if err != nil {
-		return err
+		return reopen(err)
 	}
-	previous := w.file
 	w.file = file
 	w.size = size
-	return previous.Close()
+	return nil
 }
 
 func Redact(value string) string {

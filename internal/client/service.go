@@ -29,6 +29,7 @@ const (
 	MethodAuthorizationCancel = "authorization-cancel"
 	MethodLogout              = "logout"
 	MethodForget              = "forget"
+	MethodShutdown            = "shutdown-client-daemon"
 	MethodDiagnose            = "diagnose"
 	MethodAdminProxy          = "admin-proxy"
 	defaultAuthorizationTTL   = 5 * time.Minute
@@ -103,6 +104,7 @@ type Service struct {
 	runtime          Runtime
 	pending          map[string]pendingAuthorization
 	authorizationTTL time.Duration
+	shutdown         func()
 }
 
 func NewWithRuntime(runtime Runtime) *Service {
@@ -113,10 +115,23 @@ func NewWithRuntime(runtime Runtime) *Service {
 	}
 }
 
+func (s *Service) SetShutdownHandler(shutdown func()) {
+	s.mu.Lock()
+	s.shutdown = shutdown
+	s.mu.Unlock()
+}
+
 func (s *Service) Handle(
 	ctx context.Context,
 	request ipc.Request,
 ) ipc.Response {
+	if peer, ok := ipc.PeerIdentityFromContext(ctx); ok && peer.SID == "S-1-5-18" && request.Method != MethodShutdown {
+		return ipc.Failure(request.ID, model.NewError(
+			model.ErrorPermissionDenied,
+			"LocalSystem may only stop the client daemon",
+			false,
+		))
+	}
 	var err error
 	switch request.Method {
 	case MethodStatus:
@@ -213,6 +228,14 @@ func (s *Service) Handle(
 		err = s.runtime.Logout(ctx)
 	case MethodForget:
 		err = s.runtime.Forget(ctx)
+	case MethodShutdown:
+		s.mu.RLock()
+		shutdown := s.shutdown
+		s.mu.RUnlock()
+		if shutdown == nil {
+			return ipc.Failure(request.ID, model.NewError(model.ErrorFailedPrecondition, "client daemon cannot be stopped", false))
+		}
+		go shutdown()
 	default:
 		err = model.NewError(
 			model.ErrorInvalidArgument,

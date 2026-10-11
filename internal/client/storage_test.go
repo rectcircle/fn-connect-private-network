@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"testing"
 	"time"
 
@@ -43,8 +44,44 @@ func TestConfigStorePersistsNonSecretConfiguration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stat config: %v", err)
 	}
-	if mode := info.Mode().Perm(); mode != 0o600 {
+	if runtime.GOOS == "windows" {
+		if !isPrivateClientConfig(info) {
+			t.Fatal("config file is not a regular private-profile file")
+		}
+	} else if mode := info.Mode().Perm(); mode != 0o600 {
 		t.Fatalf("config mode = %o", mode)
+	}
+}
+
+func TestConfigStoreRejectsUnsupportedSchemasWithoutChangingData(t *testing.T) {
+	tests := []struct {
+		name string
+		data string
+	}{
+		{name: "unversioned development data", data: `{"version":0,"fnId":"home-nas"}`},
+		{name: "older schema", data: `{"version":1,"fnId":"home-nas"}`},
+		{name: "newer schema", data: `{"version":3,"fnId":"home-nas"}`},
+		{name: "unknown field", data: `{"version":2,"fnId":"home-nas","futureField":true}`},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "config.json")
+			original := []byte(test.data + "\n")
+			if err := os.WriteFile(path, original, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			store := NewConfigStore(path, newMemorySecretStore())
+			if config, err := store.Load(); err == nil || config != nil {
+				t.Fatalf("Load() = (%#v, %v), want schema rejection", config, err)
+			}
+			after, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(after) != string(original) {
+				t.Fatalf("rejected configuration was modified: got %q, want %q", after, original)
+			}
+		})
 	}
 }
 

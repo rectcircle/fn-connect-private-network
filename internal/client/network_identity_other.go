@@ -1,4 +1,4 @@
-//go:build !darwin || !cgo
+//go:build (!darwin && !windows) || (darwin && !cgo)
 
 package client
 
@@ -8,7 +8,7 @@ import (
 	"net/netip"
 )
 
-func enrichPhysicalNetwork(snapshot *NetworkSnapshot) {}
+func enrichPhysicalNetwork(snapshot *NetworkSnapshot) error { return nil }
 
 func defaultPhysicalInterface() (string, error) {
 	connection, err := net.Dial("udp4", "1.1.1.1:53")

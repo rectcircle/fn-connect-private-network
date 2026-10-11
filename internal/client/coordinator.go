@@ -413,12 +413,12 @@ func (m *Manager) runCoordinator(ctx context.Context) {
 		case <-retryEvents:
 			retryEvents = nil
 			c.submit(workHealth)
-		case _, ok := <-privilegedEvents:
+		case event, ok := <-privilegedEvents:
 			if !ok {
 				privilegedEvents = nil
 				continue
 			}
-			c.submit(workPrivileged)
+			c.submit(privilegedLifecycleWork(event))
 		case err, ok := <-bridgeEvents:
 			if !ok {
 				bridgeEvents = nil
@@ -434,6 +434,14 @@ func (m *Manager) runCoordinator(ctx context.Context) {
 			c.submit(workRelay)
 		}
 	}
+}
+
+func privilegedLifecycleWork(event privilegedLifecycleEvent) connectionWork {
+	work := workPrivileged
+	if event.powerResumed {
+		work |= workHealth
+	}
+	return work
 }
 
 func (m *Manager) runConnectionWork(ctx context.Context, work connectionWork, relayErr error) error {

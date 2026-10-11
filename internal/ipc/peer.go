@@ -7,9 +7,12 @@ import (
 )
 
 type PeerIdentity struct {
-	UID uint32
-	GID uint32
-	PID int
+	UID           uint32
+	GID           uint32
+	PID           int
+	SID           string
+	SessionID     uint32
+	Authenticated bool
 }
 
 type Authorizer func(context.Context, PeerIdentity) error

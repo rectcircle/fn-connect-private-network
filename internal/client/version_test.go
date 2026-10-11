@@ -6,11 +6,13 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/rectcircle/fn-connect-private-network/internal/model"
 	"github.com/rectcircle/fn-connect-private-network/internal/version"
@@ -227,5 +229,34 @@ func TestMissingServerVersionIsTerminal(t *testing.T) {
 				t.Fatal("missing server must require manual retry")
 			}
 		})
+	}
+}
+
+type boundedVersionRemote struct {
+	fakeRemoteService
+	deadline time.Time
+	result   error
+}
+
+func (r *boundedVersionRemote) CheckVersion(ctx context.Context) error {
+	r.deadline, _ = ctx.Deadline()
+	return r.result
+}
+func TestRemoteVersionAdmissionHasIndependentBudget(t *testing.T) {
+	expected := errors.New("version admission failed")
+	remote := &boundedVersionRemote{result: expected}
+	start := time.Now()
+	if err := checkRemoteVersion(context.Background(), remote); !errors.Is(err, expected) {
+		t.Fatalf("admission error lost: %v", err)
+	}
+	if delta := remote.deadline.Sub(start); delta <= 0 || delta > configurationFetchTimeout+100*time.Millisecond {
+		t.Fatalf("unbounded version admission: %v", delta)
+	}
+	parent, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	_ = checkRemoteVersion(parent, remote)
+	deadline, _ := parent.Deadline()
+	if remote.deadline.After(deadline) {
+		t.Fatal("version request extended parent deadline")
 	}
 }

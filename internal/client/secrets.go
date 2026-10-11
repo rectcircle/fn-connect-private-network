@@ -12,6 +12,10 @@ type IPCSecretStore struct {
 	Client  ipc.Client
 }
 
+func NewPlatformSecretStore(ctx context.Context, transport ipc.Client) SecretStore {
+	return newPlatformSecretStore(ctx, transport)
+}
+
 func (s IPCSecretStore) Get(service, account string) ([]byte, bool, error) {
 	var result privileged.SecretResult
 	err := s.Client.Call(s.Context, privileged.MethodGetSecret, privileged.SecretRequest{

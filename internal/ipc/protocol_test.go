@@ -2,11 +2,100 @@ package ipc
 
 import (
 	"bytes"
+	"os"
+	"path/filepath"
+	"regexp"
+	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/rectcircle/fn-connect-private-network/internal/model"
 )
+
+func TestNativeClientIPCVersionsMatchGoProtocol(t *testing.T) {
+	_, sourceFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("locate IPC test source")
+	}
+	root := filepath.Clean(filepath.Join(filepath.Dir(sourceFile), "..", ".."))
+	cases := []struct {
+		name  string
+		path  string
+		regex *regexp.Regexp
+	}{
+		{
+			name:  "Windows WPF",
+			path:  filepath.Join(root, "platform", "windows", "FnCPN.Windows", "IPC.cs"),
+			regex: regexp.MustCompile(`internal const int ProtocolVersion = ([0-9]+);`),
+		},
+		{
+			name:  "macOS app",
+			path:  filepath.Join(root, "platform", "macos", "FnCPNApp.swift"),
+			regex: regexp.MustCompile(`private let ipcProtocolVersion = ([0-9]+)`),
+		},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			contents, err := os.ReadFile(test.path)
+			if err != nil {
+				t.Fatalf("read native IPC implementation: %v", err)
+			}
+			match := test.regex.FindSubmatch(contents)
+			if len(match) != 2 {
+				t.Fatalf("protocol version declaration was not found in %s", test.path)
+			}
+			version, err := strconv.Atoi(string(match[1]))
+			if err != nil {
+				t.Fatalf("parse protocol version: %v", err)
+			}
+			if version != ProtocolVersion {
+				t.Fatalf("native protocol version = %d, Go protocol version = %d", version, ProtocolVersion)
+			}
+		})
+	}
+}
+
+func TestWindowsWPFErrorCodesMatchGoModel(t *testing.T) {
+	_, sourceFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("locate IPC test source")
+	}
+	root := filepath.Clean(filepath.Join(filepath.Dir(sourceFile), "..", ".."))
+	path := filepath.Join(root, "platform", "windows", "FnCPN.Windows", "IPC.cs")
+	contents, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read Windows IPC implementation: %v", err)
+	}
+	codeSwitch := regexp.MustCompile(`(?s)private static bool IsKnownErrorCode\(string code\) => code switch\s*\{(.*?)\n\s*\};`).FindSubmatch(contents)
+	if len(codeSwitch) != 2 {
+		t.Fatal("Windows IPC error-code validator was not found")
+	}
+	codes := []model.ErrorCode{
+		model.ErrorInvalidArgument,
+		model.ErrorAuthRequired,
+		model.ErrorPermissionDenied,
+		model.ErrorNotFound,
+		model.ErrorAlreadyExists,
+		model.ErrorFailedPrecondition,
+		model.ErrorDeviceRevoked,
+		model.ErrorUnavailable,
+		model.ErrorConflict,
+		model.ErrorTimeout,
+		model.ErrorCanceled,
+		model.ErrorInternal,
+		model.ErrorProtocol,
+		model.ErrorServerUnavailable,
+		model.ErrorVersionIncompatible,
+		model.ErrorResourceExhausted,
+		model.ErrorDiscoveryFailed,
+	}
+	for _, code := range codes {
+		if !strings.Contains(string(codeSwitch[1]), `"`+string(code)+`"`) {
+			t.Errorf("Windows IPC error-code validator does not recognize Go model code %q", code)
+		}
+	}
+}
 
 func TestFrameRoundTrip(t *testing.T) {
 	payload := []byte(`{"value":"test"}`)

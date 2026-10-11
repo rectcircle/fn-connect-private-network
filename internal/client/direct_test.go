@@ -2,6 +2,7 @@ package client
 
 import (
 	"context"
+	"errors"
 	"net"
 	"net/netip"
 	"slices"
@@ -43,23 +44,50 @@ func TestIPv6SnapshotIsIndependentOfIPv4DefaultInterface(t *testing.T) {
 		}
 		return result, nil
 	}
-	snapshot := networkSnapshot(interfaces, "en0", read)
+	snapshot, err := networkSnapshot(interfaces, "en0", read)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !snapshot.HasPublicIPv6 || snapshot.InterfaceName != "en0" ||
 		!slices.Equal(snapshot.IPv6Networks, []string{"en5:240e:1::/64"}) ||
 		!slices.Equal(snapshot.Prefixes, []netip.Prefix{netip.MustParsePrefix("192.168.1.0/24")}) {
 		t.Fatalf("snapshot=%+v", snapshot)
 	}
 	addrs["en5"] = []string{"240e:1::3/64"}
-	if networkSnapshot(interfaces, "en0", read).Fingerprint() != snapshot.Fingerprint() {
+	rotated, err := networkSnapshot(interfaces, "en0", read)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rotated.Fingerprint() != snapshot.Fingerprint() {
 		t.Fatal("temporary address rotation changed network identity")
 	}
 	addrs["en5"] = []string{"240e:4::1/64"}
-	if networkSnapshot(interfaces, "en0", read).Fingerprint() == snapshot.Fingerprint() {
+	renumbered, err := networkSnapshot(interfaces, "en0", read)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if renumbered.Fingerprint() == snapshot.Fingerprint() {
 		t.Fatal("IPv6 prefix change was invisible")
 	}
 	delete(addrs, "en5")
-	if networkSnapshot(interfaces, "en0", read).HasPublicIPv6 {
+	withoutIPv6, err := networkSnapshot(interfaces, "en0", read)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if withoutIPv6.HasPublicIPv6 {
 		t.Fatal("virtual or down interface incorrectly enabled IPv6")
+	}
+}
+
+func TestNetworkSnapshotRejectsIncompletePhysicalAddressTable(t *testing.T) {
+	readErr := errors.New("interface address table unavailable")
+	_, err := networkSnapshot(
+		[]net.Interface{{Index: 7, Name: "Ethernet", Flags: net.FlagUp}},
+		"Ethernet",
+		func(net.Interface) ([]net.Addr, error) { return nil, readErr },
+	)
+	if !errors.Is(err, readErr) {
+		t.Fatalf("networkSnapshot error = %v, want wrapped address table error", err)
 	}
 }
 
@@ -97,7 +125,7 @@ func TestDirectSelectionAndFallbackReasons(t *testing.T) {
 					return &fakeRemoteService{configuration: managerClientConfiguration()}, nil
 				},
 				Privileged: network, Bridge: &fakeBridge{endpoint: "127.0.0.1:51821"},
-				Probe:      probe, HandshakeTimeout: time.Millisecond,
+				Probe: probe, HandshakeTimeout: time.Millisecond,
 				IPv6RouteChecker: func(context.Context, netip.Addr, int) bool { return test.ipv6Route },
 			})
 			if err != nil {

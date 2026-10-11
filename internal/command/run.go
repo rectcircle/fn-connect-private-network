@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"syscall"
 	"time"
 
@@ -64,6 +65,12 @@ func Run(ctx context.Context, arguments []string, environment Environment) int {
 		err = runCleanup(ctx, arguments[1:], environment)
 	case "internal-purge-user":
 		err = runPurgeUser(arguments[1:], environment)
+	case "internal-stop-daemons":
+		if len(arguments) != 1 {
+			err = model.NewError(model.ErrorInvalidArgument, "internal-stop-daemons does not accept arguments", false)
+		} else {
+			err = runStopAllClientDaemons()
+		}
 	default:
 		printUsage(environment.Stderr)
 		return 2
@@ -112,8 +119,17 @@ func runPurgeUser(arguments []string, environment Environment) error {
 		filepath.Dir(defaultClientLog()),
 		"client log directory",
 	)
+	stopDaemon := flags.Bool("stop-daemon", false, "stop the current user's client daemon before purge")
 	if err := flags.Parse(arguments); err != nil {
 		return err
+	}
+	if err := validatePurgeUserPaths(*dataDirectory, *configPath, *logDirectory); err != nil {
+		return err
+	}
+	if *stopDaemon {
+		if err := stopClientDaemonBeforePurge(); err != nil {
+			return err
+		}
 	}
 	// The root uninstall script removes this user's credential directory.
 	// This command removes only the invoking user's current application data.
@@ -127,6 +143,34 @@ func runPurgeUser(arguments []string, environment Environment) error {
 		return fmt.Errorf("remove client logs: %w", err)
 	}
 	return nil
+}
+
+func stopClientDaemonBeforePurge() error {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	clientIPC := ipc.Client{SocketPath: defaultClientSocket(), Timeout: 2 * time.Second}
+	shutdownErr := clientIPC.Call(ctx, client.MethodShutdown, nil, nil)
+	if shutdownErr != nil {
+		// Purging when the daemon is already absent is safe. If it still answers
+		// status, however, report the shutdown failure rather than racing it.
+		var status model.ClientStatus
+		if statusErr := clientIPC.Call(ctx, client.MethodStatus, nil, &status); statusErr != nil {
+			return nil
+		}
+		return fmt.Errorf("stop client daemon before purge: %w", shutdownErr)
+	}
+	for {
+		if err := ctx.Err(); err != nil {
+			return fmt.Errorf("wait for client daemon to stop before purge: %w", err)
+		}
+		var status model.ClientStatus
+		if err := clientIPC.Call(ctx, client.MethodStatus, nil, &status); err != nil {
+			// Let process teardown close its log file handles before removing files.
+			time.Sleep(100 * time.Millisecond)
+			return nil
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
 }
 
 func runHealthcheck(ctx context.Context, arguments []string) error {
@@ -191,7 +235,7 @@ func runCleanup(
 	arguments []string,
 	environment Environment,
 ) error {
-	if os.Geteuid() != 0 {
+	if !isPrivilegedProcess() {
 		return model.NewError(
 			model.ErrorPermissionDenied,
 			"cleanup must run as root",
@@ -205,29 +249,66 @@ func runCleanup(
 	if err := flags.Parse(arguments); err != nil {
 		return err
 	}
+	if *stateDirectory == "" {
+		*stateDirectory = defaultPrivilegedStateDirectory(*role)
+	}
 	processLogger := logger(environment.Stderr)
 	switch *role {
 	case "client":
-		engine := platform.NewClientEngine(processLogger, *stateDirectory)
-		if err := engine.Recover(ctx); err != nil {
-			return err
-		}
-		return engine.Remove(ctx)
+		return runCleanupNetwork(ctx, *role, *stateDirectory, defaultPrivilegedLog(*role), func(ctx context.Context, stateDirectory string) error {
+			engine := platform.NewClientEngine(processLogger, stateDirectory)
+			if err := engine.Recover(ctx); err != nil {
+				return err
+			}
+			return engine.Remove(ctx)
+		})
 	case "server":
-		engine := platform.NewServerEngine(processLogger, *stateDirectory)
-		if err := engine.Recover(ctx); err != nil {
-			return err
-		}
-		return engine.Remove(ctx)
+		return runCleanupNetwork(ctx, *role, *stateDirectory, defaultPrivilegedLog(*role), func(ctx context.Context, stateDirectory string) error {
+			engine := platform.NewServerEngine(processLogger, stateDirectory)
+			if err := engine.Recover(ctx); err != nil {
+				return err
+			}
+			return engine.Remove(ctx)
+		})
 	default:
 		return model.NewError(model.ErrorInvalidArgument, "invalid cleanup role", false)
 	}
+}
+
+// runCleanupNetwork keeps the trust preflight adjacent to the privileged
+// recovery/removal callback so callers cannot accidentally read the journal
+// before validating its directory tree.
+func runCleanupNetwork(
+	ctx context.Context,
+	role string,
+	stateDirectory string,
+	logPath string,
+	cleanup func(context.Context, string) error,
+) error {
+	if err := preparePrivilegedCleanupDirectories(role, stateDirectory, logPath); err != nil {
+		return fmt.Errorf("secure privileged cleanup data directories: %w", err)
+	}
+	return cleanup(ctx, stateDirectory)
 }
 
 func runClientCommand(
 	ctx context.Context,
 	arguments []string,
 	environment Environment,
+) error {
+	return runClientCommandWithAuthorizationOpener(
+		ctx,
+		arguments,
+		environment,
+		platform.OpenAuthorization,
+	)
+}
+
+func runClientCommandWithAuthorizationOpener(
+	ctx context.Context,
+	arguments []string,
+	environment Environment,
+	openAuthorization func(context.Context, string, string) error,
 ) error {
 	flags := flag.NewFlagSet(arguments[0], flag.ContinueOnError)
 	flags.SetOutput(environment.Stderr)
@@ -236,6 +317,9 @@ func runClientCommand(
 	confirmed := flags.Bool("yes", false, "confirm destructive operation")
 	if err := flags.Parse(arguments[1:]); err != nil {
 		return model.WrapError(model.ErrorInvalidArgument, err.Error(), false, err)
+	}
+	if err := ensureClientDaemon(ctx, *socket); err != nil {
+		return err
 	}
 	ipcClient := ipc.Client{SocketPath: *socket}
 	if arguments[0] == "connect" || arguments[0] == "retry" {
@@ -288,7 +372,7 @@ func runClientCommand(
 				nil,
 			)
 		}()
-		if err := platform.OpenAuthorization(ctx, fnID, pending.RequestID); err != nil {
+		if err := openAuthorization(ctx, fnID, pending.RequestID); err != nil {
 			return err
 		}
 		waitContext, cancel := context.WithTimeout(ctx, 5*time.Minute)
@@ -379,6 +463,9 @@ func runClientProcess(
 		if flags.NArg() != 0 {
 			return model.NewError(model.ErrorInvalidArgument, "unexpected arguments", false)
 		}
+		if defaultClientDataDirectory() == "" {
+			return model.NewError(model.ErrorFailedPrecondition, "could not resolve the current user's LocalAppData directory; repair the Windows user profile before starting the client daemon", false)
+		}
 		processLogger, logWriter, err := openProcessLogger(*logPath, environment.Stderr)
 		if err != nil {
 			return err
@@ -395,10 +482,11 @@ func runClientProcess(
 		}()
 		runContext, stop := context.WithCancel(ctx)
 		defer stop()
-		store := client.NewConfigStore(*configPath, client.IPCSecretStore{
-			Context: runContext,
-			Client:  ipc.Client{SocketPath: *privilegedSocket},
-		})
+		privilegedClient := privilegedIPCClient(*privilegedSocket)
+		store := client.NewConfigStore(*configPath, client.NewPlatformSecretStore(
+			runContext,
+			privilegedClient,
+		))
 		manager, err := client.NewManager(client.ManagerOptions{
 			Store:      store,
 			Discoverer: client.DiscoveryClient{},
@@ -418,13 +506,11 @@ func runClientProcess(
 					onCookies,
 				)
 			},
-			Privileged: client.IPCPrivilegedNetwork{Client: ipc.Client{
-				SocketPath: *privilegedSocket,
-			}},
-			Bridge:  &client.RelayBridge{Logger: processLogger},
-			Probe:   client.SystemLocalProbe{},
-			Monitor: platform.NewNetworkMonitor(),
-			Logger:  processLogger,
+			Privileged: client.IPCPrivilegedNetwork{Client: privilegedClient},
+			Bridge:     &client.RelayBridge{Logger: processLogger},
+			Probe:      client.SystemLocalProbe{},
+			Monitor:    platform.NewNetworkMonitor(),
+			Logger:     processLogger,
 		})
 		if err != nil {
 			return err
@@ -439,9 +525,11 @@ func runClientProcess(
 		}()
 		clientService := client.NewWithRuntime(manager)
 		clientService.Logger = processLogger
+		clientService.SetShutdownHandler(stop)
 		serveErr := ipc.Server{
 			SocketPath: *socket,
 			Mode:       0o600,
+			Authorize:  defaultClientPipeAuthorizer(),
 			Handler:    clientService,
 			Logger:     processLogger,
 		}.Serve(runContext)
@@ -500,7 +588,29 @@ func runPrivilegedProcess(
 	arguments []string,
 	environment Environment,
 ) (resultErr error) {
-	if os.Geteuid() != 0 {
+	if runtime.GOOS == "windows" {
+		return runWindowsService(ctx, role, arguments, environment)
+	}
+	return runPrivilegedDaemon(ctx, role, arguments, environment)
+}
+
+func runPrivilegedDaemon(
+	ctx context.Context,
+	role string,
+	arguments []string,
+	environment Environment,
+) (resultErr error) {
+	return runPrivilegedDaemonWithReady(ctx, role, arguments, environment, nil)
+}
+
+func runPrivilegedDaemonWithReady(
+	ctx context.Context,
+	role string,
+	arguments []string,
+	environment Environment,
+	onReady func(),
+) (resultErr error) {
+	if !isPrivilegedProcess() {
 		return model.NewError(
 			model.ErrorPermissionDenied,
 			"privileged-daemon must run as root",
@@ -535,6 +645,9 @@ func runPrivilegedProcess(
 	if flags.NArg() != 0 {
 		return model.NewError(model.ErrorInvalidArgument, "unexpected arguments", false)
 	}
+	if err := preparePrivilegedDataDirectories(*stateDirectory, *logPath); err != nil {
+		return fmt.Errorf("secure privileged service data directories: %w", err)
+	}
 	processLogger, logWriter, err := openProcessLogger(*logPath, environment.Stderr)
 	if err != nil {
 		return err
@@ -556,12 +669,15 @@ func runPrivilegedProcess(
 	}
 	switch role {
 	case "client":
-		secrets, err := privileged.OpenSecretStore(
-			filepath.Join(*stateDirectory, "credentials"), processLogger,
-		)
-		if err != nil {
-			processLogger.Error("open client credential storage", "error", err)
-			return fmt.Errorf("open client credential storage: %w", err)
+		var secrets privileged.ClientSecretHandler
+		if runtime.GOOS != "windows" {
+			secrets, err = privileged.OpenSecretStore(
+				filepath.Join(*stateDirectory, "credentials"), processLogger,
+			)
+			if err != nil {
+				processLogger.Error("open client credential storage", "error", err)
+				return fmt.Errorf("open client credential storage: %w", err)
+			}
 		}
 		service = privileged.NewClientService(
 			platform.NewClientEngine(processLogger, *stateDirectory),
@@ -583,11 +699,13 @@ func runPrivilegedProcess(
 	}
 	processLogger.Info("privileged network recovery completed")
 	serveErr := ipc.Server{
-		SocketPath: *socket,
-		Mode:       0o666,
-		Authorize:  privileged.AuthorizePeer(role, *allowedUID),
-		Handler:    service,
-		Logger:     processLogger,
+		SocketPath:             *socket,
+		Mode:                   0o666,
+		PipeSecurityDescriptor: defaultPrivilegedPipeSecurityDescriptor(role),
+		Authorize:              privileged.AuthorizePeer(role, *allowedUID),
+		Handler:                service,
+		Logger:                 processLogger,
+		OnReady:                onReady,
 	}.Serve(ctx)
 	cleanupContext, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -792,48 +910,6 @@ func openHTTPListener(socketPath string) (net.Listener, func(), error) {
 		_ = listener.Close()
 		_ = os.Remove(socketPath)
 	}, nil
-}
-
-func defaultClientSocket() string {
-	return filepath.Join(defaultClientDataDirectory(), "run", "client.sock")
-}
-
-func defaultPrivilegedSocket(role string) string {
-	return filepath.Join("/var/run", "fncpn-"+role+"-privileged.sock")
-}
-
-func defaultPrivilegedStateDirectory(role string) string {
-	if role == "server" {
-		return "/var/lib/fncpn"
-	}
-	return "/var/db/fncpn"
-}
-
-func defaultClientConfig() string {
-	return filepath.Join(defaultClientDataDirectory(), "config.json")
-}
-
-func defaultClientDataDirectory() string {
-	configDirectory, err := os.UserConfigDir()
-	if err != nil {
-		return filepath.Join(os.TempDir(), "FnCPN")
-	}
-	return filepath.Join(configDirectory, "FnCPN")
-}
-
-func defaultClientLog() string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return filepath.Join(os.TempDir(), "fncpn-client.log")
-	}
-	return filepath.Join(home, "Library", "Logs", "FnCPN", "client.log")
-}
-
-func defaultPrivilegedLog(role string) string {
-	if role == "client" {
-		return "/var/log/fncpn/client-privileged.log"
-	}
-	return "/var/log/fncpn/server-privileged.log"
 }
 
 func openProcessLogger(

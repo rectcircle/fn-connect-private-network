@@ -88,7 +88,7 @@ func (s *ConfigStore) Load() (_ *LocalConfig, failure error) {
 	if err != nil {
 		return nil, fmt.Errorf("stat client config: %w", err)
 	}
-	if !info.Mode().IsRegular() || info.Mode().Perm()&0o077 != 0 {
+	if !isPrivateClientConfig(info) {
 		return nil, model.NewError(model.ErrorFailedPrecondition, "client config permissions are invalid", false)
 	}
 	data, err := io.ReadAll(io.LimitReader(file, maxLocalConfigSize+1))
@@ -637,13 +637,5 @@ func writeClientFileAtomic(path string, data []byte) error {
 	if err := temporary.Close(); err != nil {
 		return err
 	}
-	if err := os.Rename(temporaryPath, path); err != nil {
-		return err
-	}
-	directoryHandle, err := os.Open(directory)
-	if err != nil {
-		return err
-	}
-	defer directoryHandle.Close()
-	return directoryHandle.Sync()
+	return replaceClientFile(temporaryPath, path, directory)
 }

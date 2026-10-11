@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -31,8 +32,11 @@ func TestRotatingWriterLimitsFilesAndPermissions(t *testing.T) {
 		if err != nil {
 			t.Fatalf("stat %s: %v", candidate, err)
 		}
-		if info.Mode().Perm() != 0o600 {
+		if runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 {
 			t.Fatalf("%s mode = %o", candidate, info.Mode().Perm())
+		}
+		if runtime.GOOS == "windows" && !info.Mode().IsRegular() {
+			t.Fatalf("%s is not a regular log file", candidate)
 		}
 	}
 	if _, err := os.Stat(path + ".3"); !os.IsNotExist(err) {

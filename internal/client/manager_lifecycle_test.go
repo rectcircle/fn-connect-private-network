@@ -2,13 +2,67 @@ package client
 
 import (
 	"context"
+	"log/slog"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/rectcircle/fn-connect-private-network/internal/model"
+	"github.com/rectcircle/fn-connect-private-network/internal/privileged"
 	"github.com/rectcircle/fn-connect-private-network/internal/version"
 )
+
+func TestPrivilegedLifecycleEventsIdentifyPowerResume(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	manager := &Manager{
+		privileged: &powerResumeLifecycleWatcher{
+			fakePrivilegedNetwork: &fakePrivilegedNetwork{},
+			result: privileged.WatchResult[privileged.ClientStatus]{
+				Changed:    true,
+				Generation: 1,
+				Status:     privileged.ClientStatus{PowerResumeGeneration: 1},
+			},
+		},
+		logger: slog.Default(),
+	}
+	events := manager.privilegedLifecycleEvents(ctx)
+	select {
+	case event := <-events:
+		if !event.powerResumed {
+			t.Fatal("power resume generation was not identified by the daemon lifecycle watcher")
+		}
+		work := privilegedLifecycleWork(event)
+		if work&workPrivileged == 0 || work&workHealth == 0 {
+			t.Fatalf("resume event work = %v, want privileged and health checks", work)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("privileged lifecycle watcher did not deliver the resume event")
+	}
+}
+
+func TestPublishPrivilegedLifecycleEventPreservesResumeWhileCoalescing(t *testing.T) {
+	events := make(chan privilegedLifecycleEvent, 1)
+	events <- privilegedLifecycleEvent{}
+	publishPrivilegedLifecycleEvent(events, privilegedLifecycleEvent{powerResumed: true})
+	if event := <-events; !event.powerResumed {
+		t.Fatal("coalescing dropped the pending power-resume signal")
+	}
+}
+
+type powerResumeLifecycleWatcher struct {
+	*fakePrivilegedNetwork
+	result privileged.WatchResult[privileged.ClientStatus]
+	called atomic.Bool
+}
+
+func (w *powerResumeLifecycleWatcher) WatchLifecycle(ctx context.Context, _ uint64) (privileged.WatchResult[privileged.ClientStatus], error) {
+	if w.called.CompareAndSwap(false, true) {
+		return w.result, nil
+	}
+	<-ctx.Done()
+	return privileged.WatchResult[privileged.ClientStatus]{}, ctx.Err()
+}
 
 func newRecoveryTestManager(t *testing.T, store *ConfigStore, network *fakePrivilegedNetwork, remote RemoteFactory) *Manager {
 	t.Helper()

@@ -28,10 +28,11 @@ type WatchResult[Status any] struct {
 }
 
 type ClientStatus struct {
-	Role      string                       `json:"role"`
-	Platform  string                       `json:"platform"`
-	Available bool                         `json:"available"`
-	Network   model.ClientPrivilegedStatus `json:"network"`
+	Role                  string                       `json:"role"`
+	Platform              string                       `json:"platform"`
+	Available             bool                         `json:"available"`
+	Network               model.ClientPrivilegedStatus `json:"network"`
+	PowerResumeGeneration uint64                       `json:"powerResumeGeneration,omitempty"`
 }
 
 type ServerStatus struct {
@@ -131,12 +132,16 @@ type Service[NetworkStatus, StatusEnvelope any] struct {
 
 type ClientService struct {
 	*Service[model.ClientPrivilegedStatus, ClientStatus]
-	secrets *SecretStore
+	secrets ClientSecretHandler
+}
+
+type ClientSecretHandler interface {
+	Handle(context.Context, ipc.Request) ipc.Response
 }
 
 func NewClientService(
 	engine ClientEngine,
-	secrets *SecretStore,
+	secrets ClientSecretHandler,
 ) *ClientService {
 	service := &Service[model.ClientPrivilegedStatus, ClientStatus]{
 		engine:  engine,
@@ -159,12 +164,16 @@ func NewClientService(
 			return engine.Status()
 		},
 		status: func() ClientStatus {
-			return ClientStatus{
+			status := ClientStatus{
 				Role:      "client",
 				Platform:  runtime.GOOS,
 				Available: engine.Available(),
 				Network:   engine.Status(),
 			}
+			if source, ok := engine.(interface{ PowerResumeGeneration() uint64 }); ok {
+				status.PowerResumeGeneration = source.PowerResumeGeneration()
+			}
+			return status
 		},
 	}
 	if source, ok := engine.(interface{ SetLifecycleNotifier(func()) }); ok {

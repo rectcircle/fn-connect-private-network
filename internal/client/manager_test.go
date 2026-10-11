@@ -12,6 +12,7 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -1046,7 +1047,10 @@ func TestClientNetworkHealthErrorIncludesCause(t *testing.T) {
 }
 
 func TestIPCPrivilegedNetworkRejectsUnavailableEngine(t *testing.T) {
-	directory, err := os.MkdirTemp("/tmp", "fncpn-ipc-")
+	if runtime.GOOS == "windows" {
+		t.Skip("this test exercises a Unix-domain socket; Windows Named Pipes are covered by ipc tests")
+	}
+	directory, err := os.MkdirTemp(os.TempDir(), "fncpn-ipc-")
 	if err != nil {
 		t.Fatalf("create short socket directory: %v", err)
 	}

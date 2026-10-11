@@ -14,8 +14,9 @@ import (
 )
 
 type Client struct {
-	SocketPath string
-	Timeout    time.Duration
+	SocketPath   string
+	Timeout      time.Duration
+	VerifyServer func(net.Conn) error
 }
 
 func (c Client) Call(ctx context.Context, method string, params, result any) (callErr error) {
@@ -41,8 +42,7 @@ func (c Client) Call(ctx context.Context, method string, params, result any) (ca
 	if timeout == 0 {
 		timeout = 30 * time.Second
 	}
-	dialer := net.Dialer{Timeout: min(timeout, 5*time.Second)}
-	connection, err := dialer.DialContext(ctx, "unix", c.SocketPath)
+	connection, err := dialIPC(ctx, c.SocketPath, min(timeout, 5*time.Second))
 	if err != nil {
 		return model.NormalizeError(
 			fmt.Errorf("connect to daemon: %w", err),
@@ -52,6 +52,16 @@ func (c Client) Call(ctx context.Context, method string, params, result any) (ca
 		)
 	}
 	defer connection.Close()
+	if c.VerifyServer != nil {
+		if err := c.VerifyServer(connection); err != nil {
+			return model.NormalizeError(
+				err,
+				model.ErrorPermissionDenied,
+				"IPC server identity verification failed",
+				false,
+			)
+		}
+	}
 	deadline := time.Now().Add(timeout)
 	if contextDeadline, ok := ctx.Deadline(); ok && contextDeadline.Before(deadline) {
 		deadline = contextDeadline

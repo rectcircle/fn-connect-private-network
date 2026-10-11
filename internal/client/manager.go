@@ -76,6 +76,10 @@ type PrivilegedLifecycleWatcher interface {
 	) (privileged.WatchResult[privileged.ClientStatus], error)
 }
 
+type privilegedLifecycleEvent struct {
+	powerResumed bool
+}
+
 type Bridge interface {
 	Start(context.Context, string, CookieProvider, ...func([]Cookie, []Cookie) error) (string, error)
 	BindPeer(uint16) error
@@ -1157,15 +1161,16 @@ func (m *Manager) resetReconnectCooldown() {
 	m.mu.Unlock()
 }
 
-func (m *Manager) privilegedLifecycleEvents(ctx context.Context) <-chan struct{} {
+func (m *Manager) privilegedLifecycleEvents(ctx context.Context) <-chan privilegedLifecycleEvent {
 	watcher, ok := m.privileged.(PrivilegedLifecycleWatcher)
 	if !ok {
 		return nil
 	}
-	events := make(chan struct{}, 1)
+	events := make(chan privilegedLifecycleEvent, 1)
 	go func() {
 		defer close(events)
 		var generation uint64
+		var powerResumeGeneration uint64
 		retryDelay := time.Second
 		for ctx.Err() == nil {
 			result, err := watcher.WatchLifecycle(ctx, generation)
@@ -1176,7 +1181,7 @@ func (m *Manager) privilegedLifecycleEvents(ctx context.Context) <-chan struct{}
 				m.logger.Error("watch privileged lifecycle failed", logging.ErrorAttrs(
 					model.WithOperation(err, "privileged.watch_lifecycle"))...)
 				select {
-				case events <- struct{}{}:
+				case events <- privilegedLifecycleEvent{}:
 				default:
 				}
 				timer := time.NewTimer(retryDelay)
@@ -1190,19 +1195,36 @@ func (m *Manager) privilegedLifecycleEvents(ctx context.Context) <-chan struct{}
 					retryDelay = min(2*retryDelay, 5*time.Second)
 				}
 				generation = 0
+				powerResumeGeneration = 0
 				continue
 			}
 			retryDelay = time.Second
 			generation = result.Generation
-			if result.Changed {
-				select {
-				case events <- struct{}{}:
-				default:
-				}
+			powerResumed := result.Status.PowerResumeGeneration > powerResumeGeneration
+			powerResumeGeneration = result.Status.PowerResumeGeneration
+			if result.Changed || powerResumed {
+				publishPrivilegedLifecycleEvent(events, privilegedLifecycleEvent{powerResumed: powerResumed})
 			}
 		}
 	}()
 	return events
+}
+
+func publishPrivilegedLifecycleEvent(events chan privilegedLifecycleEvent, event privilegedLifecycleEvent) {
+	select {
+	case events <- event:
+		return
+	default:
+	}
+	select {
+	case pending := <-events:
+		event.powerResumed = event.powerResumed || pending.powerResumed
+	default:
+	}
+	select {
+	case events <- event:
+	default:
+	}
 }
 
 // localProbeHealthChecks is how many consecutive failed LAN probe checks mark an
@@ -2417,6 +2439,9 @@ func routedPrefixes(
 	localPrefixes []netip.Prefix,
 ) []string {
 	server, _ := netip.ParsePrefix(config.ServerAddress)
+	// The first route is the NAS overlay host route. Platform network
+	// executors preserve this /32 if a physical LAN overlaps the overlay,
+	// while the LAN routes below remain subject to local route conflict policy.
 	result := []string{netip.PrefixFrom(server.Addr(), 32).String()}
 	for _, value := range config.AllowedIPs {
 		prefix, err := netip.ParsePrefix(value)
@@ -2850,10 +2875,15 @@ func (SystemLocalProbe) Snapshot() (NetworkSnapshot, error) {
 	if err != nil {
 		return NetworkSnapshot{}, err
 	}
-	snapshot := networkSnapshot(interfaces, defaultInterface, func(iface net.Interface) ([]net.Addr, error) {
+	snapshot, err := networkSnapshot(interfaces, defaultInterface, func(iface net.Interface) ([]net.Addr, error) {
 		return iface.Addrs()
 	})
-	enrichPhysicalNetwork(&snapshot)
+	if err != nil {
+		return NetworkSnapshot{}, err
+	}
+	if err := enrichPhysicalNetwork(&snapshot); err != nil {
+		return NetworkSnapshot{}, err
+	}
 	return snapshot, nil
 }
 
@@ -2861,7 +2891,7 @@ func networkSnapshot(
 	interfaces []net.Interface,
 	defaultInterface string,
 	addresses func(net.Interface) ([]net.Addr, error),
-) NetworkSnapshot {
+) (NetworkSnapshot, error) {
 	snapshot := NetworkSnapshot{}
 	for _, networkInterface := range interfaces {
 		if networkInterface.Flags&net.FlagUp == 0 ||
@@ -2881,7 +2911,7 @@ func networkSnapshot(
 		link := PhysicalLink{Name: networkInterface.Name, Index: networkInterface.Index}
 		values, err := addresses(networkInterface)
 		if err != nil {
-			continue
+			return NetworkSnapshot{}, fmt.Errorf("read addresses for physical interface %q: %w", networkInterface.Name, err)
 		}
 		for _, value := range values {
 			prefix, err := netip.ParsePrefix(value.String())
@@ -2908,7 +2938,7 @@ func networkSnapshot(
 		}
 	}
 	slices.Sort(snapshot.IPv6Networks)
-	return snapshot
+	return snapshot, nil
 }
 
 func usablePhysicalInterface(name, defaultInterface string) bool {
@@ -2934,6 +2964,10 @@ func isPublicIPv6Address(address netip.Addr) bool {
 }
 
 func checkRemoteVersion(ctx context.Context, remote RemoteService) error {
+	// A changed network can leave the gateway unreachable. Admission must
+	// still run, but it must not consume the entire connection-attempt budget.
+	ctx, cancel := context.WithTimeout(ctx, configurationFetchTimeout)
+	defer cancel()
 	if checker, ok := remote.(interface{ CheckVersion(context.Context) error }); ok {
 		return checker.CheckVersion(ctx)
 	}

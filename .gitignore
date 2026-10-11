@@ -1,4 +1,7 @@
 /dist/
+/.dev/
+**/bin/
+**/obj/
 .DS_Store
 *.log
 /tmp/

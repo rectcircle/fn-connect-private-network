@@ -12,7 +12,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"sync"
-	"syscall"
 
 	"github.com/rectcircle/fn-connect-private-network/internal/ipc"
 	"github.com/rectcircle/fn-connect-private-network/internal/model"
@@ -188,16 +187,7 @@ func checkSecretPermissions(info os.FileInfo, directory bool) error {
 	if directory {
 		mode = 0o700
 	}
-	stat, ok := info.Sys().(*syscall.Stat_t)
-	// The production caller is the root-only privileged daemon. Tests use
-	// private temporary directories owned by the test process instead.
-	if !ok || stat.Uid != uint32(os.Geteuid()) ||
-		info.Mode().Perm() != mode ||
-		(directory && !info.IsDir()) ||
-		(!directory && !info.Mode().IsRegular()) {
-		return errors.New("credential storage permissions or owner are invalid")
-	}
-	return nil
+	return checkSecretMetadata(info, directory, mode)
 }
 
 func writeSecretAtomic(path string, value []byte) error {

@@ -4,6 +4,7 @@ import argparse
 import hashlib
 import json
 import pathlib
+from pathlib import PurePosixPath
 import re
 import subprocess
 import tempfile
@@ -32,6 +33,31 @@ def publish(directory, repository, make_public=False):
     manifest_name = f'release-{version}.json'
     sums_name = f'SHA256SUMS-{version}'
     manifest = json.loads((directory / manifest_name).read_text())
+    names = [a['file'] for a in manifest['artifacts']] + [manifest_name, sums_name]
+    if len(names) != len(set(names)) or any(pathlib.Path(n).name != n for n in names):
+        raise SystemExit('Invalid release asset names')
+    sources = {}
+    for artifact in manifest['artifacts']:
+        relative = PurePosixPath(artifact.get('path', artifact['file']))
+        if ('\\' in str(relative) or ':' in str(relative) or relative.is_absolute() or
+                not relative.parts or any(part in ('', '.', '..') for part in relative.parts)):
+            raise SystemExit('Invalid release artifact path: ' + str(relative))
+        source = (directory / pathlib.Path(*relative.parts)).resolve()
+        # `gh release download` flattens remote assets into its target directory;
+        # accept that layout when verifying/re-publishing an existing draft.
+        downloaded_asset = (directory / artifact['file']).resolve()
+        if not source.is_file() and downloaded_asset.is_file():
+            source = downloaded_asset
+        if not source.is_relative_to(directory):
+            raise SystemExit('Release artifact path escapes inventory directory: ' + str(relative))
+        sources[artifact['file']] = source
+    required_windows_assets = {
+        f'FnCPN-{version}-arm64-unsigned.msi',
+        f'FnCPN-{version}-x64-unsigned.msi',
+    }
+    if not required_windows_assets.issubset(sources):
+        missing = ', '.join(sorted(required_windows_assets - set(sources)))
+        raise SystemExit('Release inventory is missing required Windows MSI assets: ' + missing)
     commit = run('git', 'rev-parse', 'HEAD')
     if manifest['version'] != version or manifest['commit'] != commit:
         raise SystemExit('Release inventory does not match checkout')
@@ -44,14 +70,11 @@ def publish(directory, repository, make_public=False):
         remote = json.loads(run('gh', 'api', f"repos/{repository}/git/tags/{remote['sha']}"))['object']
     if remote['sha'] != commit:
         raise SystemExit('Remote release tag does not match checkout')
-    names = [a['file'] for a in manifest['artifacts']] + [manifest_name, sums_name]
-    if len(names) != len(set(names)) or any(pathlib.Path(n).name != n for n in names):
-        raise SystemExit('Invalid release asset names')
     expected_sums = ''.join(f"{a['sha256']}  {a['file']}\n" for a in manifest['artifacts'])
     if (directory / sums_name).read_text() != expected_sums:
         raise SystemExit('Checksum inventory does not match manifest')
     for artifact in manifest['artifacts']:
-        if hashlib.sha256((directory / artifact['file']).read_bytes()).hexdigest() != artifact['sha256']:
+        if hashlib.sha256(sources[artifact['file']].read_bytes()).hexdigest() != artifact['sha256']:
             raise SystemExit('Artifact checksum mismatch: ' + artifact['file'])
     # Distinguish not-found from auth/network errors before creating a release.
     releases = json.loads(run('gh', 'api', '--paginate', '--slurp', f'repos/{repository}/releases'))
@@ -71,7 +94,7 @@ def publish(directory, repository, make_public=False):
         draft = release['draft']
     if draft:
         run('gh', 'release', 'upload', tag, '--repo', repository, '--clobber',
-            *(str(directory / name) for name in names))
+            *(str(sources.get(name, directory / name)) for name in names))
     # Never mutate a public release. Re-runs succeed only if every byte matches.
     with tempfile.TemporaryDirectory(prefix='fncpn-release-verify-') as temporary:
         run('gh', 'release', 'download', tag, '--repo', repository, '--dir', temporary)
@@ -79,7 +102,8 @@ def publish(directory, repository, make_public=False):
         if {p.name for p in downloaded.iterdir()} != set(names):
             raise SystemExit('Unexpected or missing remote assets; release remains unpublished')
         for name in names:
-            if (downloaded / name).read_bytes() != (directory / name).read_bytes():
+            expected_source = sources.get(name, directory / name)
+            if (downloaded / name).read_bytes() != expected_source.read_bytes():
                 raise SystemExit('Remote asset differs: ' + name)
     if draft and make_public:
         run('gh', 'release', 'edit', tag, '--repo', repository, '--draft=false',
