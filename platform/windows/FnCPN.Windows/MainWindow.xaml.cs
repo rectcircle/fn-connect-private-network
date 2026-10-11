@@ -631,8 +631,6 @@ public partial class MainWindow : Window
                 SetOperationError(ex);
             }
             await CancelAuthorizationAsync(requestId);
-            if (generation == _authorizationGeneration && NeedsCertificateRepair(ex))
-                await OfferCertificateRepairAsync(fnId, token);
         }
         finally
         {
@@ -1197,38 +1195,9 @@ public partial class MainWindow : Window
             "PERMISSION_DENIED" => L("该账号权限不足，无法完成授权"),
             "UNAVAILABLE" or "TIMEOUT" => L("暂时无法连接 fnOS，请检查网络后重试"),
             "FAILED_PRECONDITION" when failure.RemoteCode == "TWO_FACTOR_REQUIRED" => L("该账号需要两步验证，当前版本暂不支持"),
-            "FAILED_PRECONDITION" when failure.RemoteCode == "ISRG_ROOT_X1_MISSING" => L("系统缺少 ISRG Root X1 根证书，无法验证 fnOS 的 HTTPS 连接。"),
             "FAILED_PRECONDITION" => DescribeFailure(failure),
             _ => DescribeFailure(failure)
         };
-    }
-
-    private static bool NeedsCertificateRepair(Exception exception)
-    {
-        var failure = exception is AuthorizationFailureException authorizationFailure ? authorizationFailure.Failure
-            : exception is IPCException ipcFailure ? ReadRemoteError(ipcFailure.Details) : null;
-        return failure is { Code: "FAILED_PRECONDITION", RemoteCode: "ISRG_ROOT_X1_MISSING", Operation: "native_session.connect" };
-    }
-
-    private async Task OfferCertificateRepairAsync(string fnId, CancellationToken token)
-    {
-        var answer = System.Windows.MessageBox.Show(this,
-            L("当前系统缺少 Let’s Encrypt 的 ISRG Root X1 根证书，无法验证 fnOS 的 HTTPS 连接。是否安装官方根证书到当前用户的证书库？这会影响当前用户下其他应用的证书验证。"),
-            L("安装官方根证书？"), MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No);
-        if (answer != MessageBoxResult.Yes || token.IsCancellationRequested) return;
-        try
-        {
-            LoginError.Text = L("正在安装并验证根证书…");
-            await IPC.CallAsync("install-isrg-root-x1", new { fnId, confirmed = true }, token);
-            _operationError = null;
-            UpdateDiagnosticsJson();
-            LoginError.Text = L("根证书已安装并验证，请重新输入密码并登录。");
-        }
-        catch (Exception error)
-        {
-            LoginError.Text = L("根证书安装或验证失败。") + " " + FormatException(error);
-            SetOperationError(error);
-        }
     }
 
     private static string LoginFailureForException(Exception exception)

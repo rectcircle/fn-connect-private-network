@@ -26,11 +26,12 @@ type AdminProxy struct {
 	CookieProvider func(string) ([]Cookie, error)
 	Logger         *slog.Logger
 
-	mu     sync.Mutex
-	ln     net.Listener
-	server *http.Server
-	base   *url.URL
-	token  string
+	mu                sync.Mutex
+	ln                net.Listener
+	server            *http.Server
+	base              *url.URL
+	token             string
+	upstreamTransport http.RoundTripper
 }
 
 // Start binds a local TCP listener (using ListenAddress, which may contain a
@@ -58,18 +59,19 @@ func (p *AdminProxy) Start() (*url.URL, error) {
 	if err != nil {
 		return nil, fmt.Errorf("admin proxy: listen: %w", err)
 	}
+	transport := p.upstreamTransport
+	if transport == nil {
+		transport = newFNOSTransport(&http.Transport{
+			Proxy: nil, MaxIdleConnsPerHost: 8, IdleConnTimeout: 90 * time.Second,
+			TLSHandshakeTimeout: 10 * time.Second,
+		})
+	}
 	proxy := &httputil.ReverseProxy{
 		Director:       p.director,
 		ModifyResponse: p.modifyResponse,
 		ErrorHandler:   p.errorHandler,
-		Transport: &http.Transport{
-			Proxy:               nil,
-			DisableKeepAlives:   false,
-			MaxIdleConnsPerHost: 8,
-			IdleConnTimeout:     90 * time.Second,
-			// The NAS endpoint is served over HTTPS; use the system root pool.
-			TLSHandshakeTimeout: 10 * time.Second,
-		},
+		// HTTPS verification stays in Go; the WebView uses loopback HTTP.
+		Transport: transport,
 	}
 	server := &http.Server{
 		Handler: http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {

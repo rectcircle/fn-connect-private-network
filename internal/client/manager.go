@@ -1635,10 +1635,10 @@ func probeAdminWebSession(ctx context.Context, fnID string, token string) error 
 	target := "https://" + fnID + ".fnos.net/app/fncpn/api/v1/admin/snapshot"
 	client := &http.Client{
 		Timeout: 15 * time.Second,
-		Transport: &http.Transport{
+		Transport: newFNOSTransport(&http.Transport{
 			Proxy:               nil,
 			TLSHandshakeTimeout: 10 * time.Second,
-		},
+		}),
 		CheckRedirect: func(*http.Request, []*http.Request) error {
 			return http.ErrUseLastResponse
 		},

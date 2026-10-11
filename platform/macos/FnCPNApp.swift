@@ -110,7 +110,6 @@ private final class IPCClient {
         defer { Darwin.close(descriptor) }
         try setTimeout(
             seconds: ["authorize-native", "watch-client-status"].contains(method) ? 310 :
-                method == "install-isrg-root-x1" ? 180 :
                 ["connect", "retry"].contains(method) ? 45 : 30,
             on: descriptor
         )
@@ -419,9 +418,7 @@ private func directSummary(_ direct: [String: Any]) -> String {
 
 private func loginFailureMessage(_ failure: [String: Any]?) -> String {
     guard let failure else { return "" }
-    if failure["remoteCode"] as? String == "ISRG_ROOT_X1_MISSING" {
-        return L("系统缺少 ISRG Root X1 根证书，无法验证 fnOS 的 HTTPS 连接。")
-    }
+
     switch failure["code"] as? String ?? "" {
     case "AUTH_REQUIRED":
         let operation = failure["operation"] as? String ?? ""
@@ -492,7 +489,6 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
     private var refreshPending = false
     private var waitingForLocalNetwork = false
     private var busy = false
-    private var certificateRepairMessage: String?
     private var loginInFlight = false
     private var editingServer = false
     private var savedFNID = ""
@@ -1115,7 +1111,6 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         pendingFNID = fnID
         passwordField.stringValue = ""
         loginInFlight = true
-        certificateRepairMessage = nil
         busy = true
         operationError = nil
         setupError.stringValue = ""
@@ -1149,43 +1144,6 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
             } catch {
                 DispatchQueue.main.async {
                     self?.operationFinished(.failure(error))
-                    self?.offerCertificateRepair(error, fnID: fnID)
-                }
-            }
-        }
-    }
-
-    private func offerCertificateRepair(_ error: Error, fnID: String) {
-        guard let failure = (error as NSError).userInfo["failure"] as? [String: Any],
-              failure["code"] as? String == "FAILED_PRECONDITION",
-              failure["operation"] as? String == "native_session.connect",
-              failure["remoteCode"] as? String == "ISRG_ROOT_X1_MISSING" else { return }
-        let alert = NSAlert()
-        alert.messageText = L("安装官方根证书？")
-        alert.informativeText = L("当前系统缺少 Let’s Encrypt 的 ISRG Root X1 根证书，无法验证 fnOS 的 HTTPS 连接。是否安装官方根证书到当前用户的证书库？这会影响当前用户下其他应用的证书验证。") + "\n\n" + L("macOS 可能要求输入登录密码以确认信任。")
-        alert.addButton(withTitle: L("取消"))
-        alert.addButton(withTitle: L("安装"))
-        guard alert.runModal() == .alertSecondButtonReturn else { return }
-        busy = true
-        certificateRepairMessage = L("正在安装并验证根证书…")
-        render()
-        setupError.stringValue = L("正在安装并验证根证书…")
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            do {
-                _ = try self?.ipc.call(method: "install-isrg-root-x1", params: ["fnId": fnID, "confirmed": true])
-                DispatchQueue.main.async {
-                    guard let self else { return }
-                    self.busy = false
-                    self.operationError = nil
-                    self.certificateRepairMessage = L("根证书已安装并验证，请重新输入密码并登录。")
-                    self.render()
-                    self.setupError.stringValue = L("根证书已安装并验证，请重新输入密码并登录。")
-                }
-            } catch {
-                DispatchQueue.main.async {
-                    self?.certificateRepairMessage = L("根证书安装或验证失败。") + " " + error.localizedDescription
-                    self?.operationFinished(.failure(error))
-                    self?.setupError.stringValue = L("根证书安装或验证失败。") + " " + error.localizedDescription
                 }
             }
         }
@@ -1199,7 +1157,6 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func presentLogin(fnID: String, username: String, requestID: String = "") {
-        certificateRepairMessage = nil
         showWindow()
         if !externalAuthorizationRequest.isEmpty && externalAuthorizationRequest != requestID {
             cancelExternalAuthorization()
@@ -1401,7 +1358,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         if displayed["lanOverlap"] as? Bool == true { messages.append(L("本地与 NAS 网段重叠，仅保留隧道内 NAS 路由")) }
         errorValue.string = messages.filter { !$0.isEmpty }.joined(separator: "\n")
         if errorValue.string.isEmpty { errorValue.string = L("无异常") }
-        setupError.stringValue = setup ? (certificateRepairMessage ?? (waitingForLocalNetwork ? L("正在等待局域网访问权限") : loginFailureMessage(status["lastError"] as? [String: Any]))) : ""
+        setupError.stringValue = setup ? (waitingForLocalNetwork ? L("正在等待局域网访问权限") : loginFailureMessage(status["lastError"] as? [String: Any])) : ""
         setupError.maximumNumberOfLines = 3
         setupError.toolTip = setupError.stringValue
         if busy || waitingForLocalNetwork { progress.startAnimation(nil) } else { progress.stopAnimation(nil) }

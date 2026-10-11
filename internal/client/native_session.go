@@ -450,7 +450,7 @@ func (c NativeSessionClient) dial(ctx context.Context, fnID string) (*websocket.
 	if c.Dial != nil {
 		connection, err := c.Dial(ctx, fnID)
 		if err != nil {
-			return nil, nativeConnectError(fnID, err)
+			return nil, nativeTransportError("connect", err)
 		}
 		connection.SetReadLimit(nativeRPCReadLimit)
 		return connection, nil
@@ -469,6 +469,7 @@ func (c NativeSessionClient) dial(ctx context.Context, fnID string) (*websocket.
 	connection, response, err := websocket.Dial(dialContext, target.String(), &websocket.DialOptions{
 		HTTPHeader: headers,
 		HTTPClient: &http.Client{
+			Transport:     newFNOSTransport(nil),
 			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 		},
 	})
@@ -476,7 +477,7 @@ func (c NativeSessionClient) dial(ctx context.Context, fnID string) (*websocket.
 		if response != nil && response.Body != nil {
 			response.Body.Close()
 		}
-		return nil, nativeConnectError(fnID, err)
+		return nil, nativeTransportError("connect", err)
 	}
 	connection.SetReadLimit(nativeRPCReadLimit)
 	return connection, nil

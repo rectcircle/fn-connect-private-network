@@ -53,6 +53,9 @@ func NewRemoteClient(
 		httpClient = &http.Client{Timeout: 30 * time.Second}
 	}
 	cloned := *httpClient
+	if cloned.Transport == nil {
+		cloned.Transport = newFNOSTransport(nil)
+	}
 	// A login redirect is not an API response. Do not forward NAS cookies to it.
 	cloned.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	cloned.Jar = nil

@@ -136,12 +136,6 @@ func (s *Service) Handle(
 	switch request.Method {
 	case MethodStatus:
 		return ipc.Success(request.ID, s.runtime.Status())
-	case "install-isrg-root-x1":
-		input, decodeErr := ipc.DecodeParams[certificateRepairRequest](request)
-		if decodeErr != nil {
-			return ipc.Failure(request.ID, decodeErr)
-		}
-		err = repairISRGRoot(ctx, input, probeCertificateTrust, installISRGRoot)
 	case MethodWatchStatus:
 		input, decodeErr := ipc.DecodeParams[StatusWatchRequest](request)
 		if decodeErr != nil {

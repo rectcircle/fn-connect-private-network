@@ -122,7 +122,7 @@ func (c DiscoveryClient) Discover(
 	)
 	client := c.HTTPClient
 	if client == nil {
-		client = &http.Client{Timeout: 15 * time.Second}
+		client = &http.Client{Timeout: 15 * time.Second, Transport: newFNOSTransport(nil)}
 	}
 	response, err := client.Do(request)
 	if err != nil {

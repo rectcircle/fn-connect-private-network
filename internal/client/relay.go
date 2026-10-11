@@ -415,6 +415,7 @@ func dialRelayOnce(
 			HTTPHeader:      headers,
 			CompressionMode: websocket.CompressionDisabled,
 			HTTPClient: &http.Client{
+				Transport:     newFNOSTransport(nil),
 				CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 			},
 		},

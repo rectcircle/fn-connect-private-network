@@ -108,7 +108,6 @@ internal static class IPC
     internal static TimeSpan TimeoutForMethod(string method) => method switch
     {
         "authorize-native" or "watch-client-status" => TimeSpan.FromSeconds(310),
-        "install-isrg-root-x1" => TimeSpan.FromSeconds(180),
         "connect" or "retry" => TimeSpan.FromSeconds(45),
         _ => TimeSpan.FromSeconds(30)
     };
