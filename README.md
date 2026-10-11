@@ -11,6 +11,8 @@
 
 原生登录不支持双重认证（2FA）。
 
+登录时若系统不信任 Let’s Encrypt 的 ISRG Root X1，FnCPN 会验证该根证书是否能修复当前 fnOS 证书链，并询问是否安装。仅在确认后，将内置、指纹固定的官方根证书安装到当前用户的 Windows 证书库或 macOS 钥匙串；macOS 可能要求登录密码。安装后重新验证 HTTPS，成功后重新输入 fnOS 密码登录。证书信任会影响当前用户下其他应用，卸载 FnCPN 时保留；其他 CA、过期证书和域名不匹配不适用此修复。
+
 ## 安装
 
 先安装 NAS 服务端，再安装对应客户端。安装包从 [GitHub Releases](https://github.com/rectcircle/fn-connect-private-network/releases) 下载，Windows 候选需选择 RC：

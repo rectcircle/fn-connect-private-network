@@ -226,3 +226,11 @@
 "启动 FnCPN 网络服务失败" = "Could not start the FnCPN network service.";
 "安装修复已完成，但 FnCPN 网络服务未能就绪。请查看诊断信息或重新启动 Windows。" = "Installer repair completed, but the FnCPN network service did not become ready. Review diagnostics or restart Windows.";
 "FnCPN 网络服务未能就绪。请查看诊断信息。" = "The FnCPN network service did not become ready. Review diagnostics.";
+"安装官方根证书？" = "Install the official root certificate?";
+"当前系统缺少 Let’s Encrypt 的 ISRG Root X1 根证书，无法验证 fnOS 的 HTTPS 连接。是否安装官方根证书到当前用户的证书库？这会影响当前用户下其他应用的证书验证。" = "The system is missing Let’s Encrypt’s ISRG Root X1 certificate and cannot verify the fnOS HTTPS connection. Install the official root certificate in your user certificate store? This affects certificate verification by other applications running as your user.";
+"系统缺少 ISRG Root X1 根证书，无法验证 fnOS 的 HTTPS 连接。" = "The system is missing ISRG Root X1 and cannot verify the fnOS HTTPS connection.";
+"正在安装并验证根证书…" = "Installing and verifying the root certificate…";
+"根证书已安装并验证，请重新输入密码并登录。" = "The root certificate is installed and verified. Enter your password again to sign in.";
+"根证书安装或验证失败。" = "Root certificate installation or verification failed.";
+"macOS 可能要求输入登录密码以确认信任。" = "macOS may ask for your login password to confirm trust.";
+"安装" = "Install";
