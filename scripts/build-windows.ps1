@@ -9,6 +9,8 @@ $projectRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $version = (Get-Content (Join-Path $projectRoot 'internal/version/VERSION') -Raw).Trim()
 # Windows Installer requires a numeric version; retain RC identity in binaries and filenames.
 $installerVersion = $version.Split('-')[0]
+# Microsoft documents pv > 0.0.0.0 as evidence of an installed Evergreen Runtime.
+$webView2InstallCondition = 'NOT Installed AND NOT ((WEBVIEW2_MACHINE_VERSION AND WEBVIEW2_MACHINE_VERSION > "0.0.0.0") OR (WEBVIEW2_USER_VERSION AND WEBVIEW2_USER_VERSION > "0.0.0.0"))'
 $revision = (& git -C $projectRoot rev-parse HEAD).Trim()
 $sourceStatus = (& git -C $projectRoot status --porcelain --untracked-files=all | Out-String).Trim()
 # Development documentation and CI definitions do not change package inputs.
@@ -1200,6 +1202,11 @@ foreach ($architecture in $architectures) {
     [void]$wxs.AppendLine("<Package Name=`"FnCPN`" Manufacturer=`"FnCPN`" Version=`"$(Escape-Xml $installerVersion)`" UpgradeCode=`"$serviceUpgrade`" Scope=`"perMachine`" InstallerVersion=`"500`" Compressed=`"yes`">")
     [void]$wxs.AppendLine('<ui:WixUI Id="WixUI_Minimal" /><WixVariable Id="WixUILicenseRtf" Value="$(var.LicenseRtf)" />')
     [void]$wxs.AppendLine('<Property Id="MSIDEPLOYMENTCOMPLIANT" Value="1" />')
+    # HKLM's 32-bit view is SOFTWARE\WOW6432Node on both supported architectures.
+    # HKCU\Software is shared; search the initiating user's runtime before elevation.
+    [void]$wxs.AppendLine('<Property Id="WEBVIEW2_MACHINE_VERSION" Secure="yes"><RegistrySearch Id="WebView2MachineSearch" Root="HKLM" Key="SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}" Name="pv" Type="raw" Bitness="always32" /></Property>')
+    [void]$wxs.AppendLine('<Property Id="WEBVIEW2_USER_VERSION" Secure="yes"><RegistrySearch Id="WebView2UserSearch" Root="HKCU" Key="SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}" Name="pv" Type="raw" Bitness="always64" /></Property>')
+    [void]$wxs.AppendLine('<UI><ProgressText Action="InstallWebView2Runtime" Message="Installing Microsoft WebView2 Runtime (internet connection required)..." /><ProgressText Action="StopAllUserDaemons" Message="Stopping FnCPN background processes..." /><ProgressText Action="CleanupNetwork" Message="Removing FnCPN tunnel addresses and routes..." /></UI>')
     [void]$wxs.AppendLine('<Property Id="WINDOWSBUILDNUMBER" Secure="yes"><RegistrySearch Id="WindowsBuildNumberSearch" Root="HKLM" Key="SOFTWARE\Microsoft\Windows NT\CurrentVersion" Name="CurrentBuildNumber" Type="raw" Bitness="always64" /></Property>')
     [void]$wxs.AppendLine('<Launch Condition="Installed OR (VersionNT64 AND MsiNTProductType = 1 AND WINDOWSBUILDNUMBER &gt;= 19045)" Message="FnCPN requires 64-bit Windows 10 22H2 or later (build 19045 or later)." />')
     [void]$wxs.AppendLine('<MajorUpgrade AllowSameVersionUpgrades="yes" Schedule="afterInstallInitialize" DowngradeErrorMessage="A newer FnCPN version is already installed." />')
@@ -1212,7 +1219,7 @@ foreach ($architecture in $architectures) {
     [void]$wxs.AppendLine('<CustomAction Id="PurgeCurrentUserData" FileRef="GoClient" ExeCommand="internal-purge-user --stop-daemon" Execute="deferred" Impersonate="yes" Return="check" />')
     [void]$wxs.AppendLine('<CustomAction Id="StopAllUserDaemons" BinaryRef="GoClientBinary" ExeCommand="internal-stop-daemons" Execute="deferred" Impersonate="no" Return="check" />')
     [void]$wxs.AppendLine('<CustomAction Id="CleanupNetwork" BinaryRef="GoClientBinary" ExeCommand="internal-cleanup --role client" Execute="deferred" Impersonate="no" Return="check" />')
-    [void]$wxs.AppendLine("<InstallExecuteSequence><Custom Action=`"InstallWebView2Runtime`" Before=`"InstallServices`" Condition=`"NOT Installed`" /><Custom Action=`"override Wix4CloseApplications_$wixArchShort`" Before=`"StopAllUserDaemons`" Condition=`"WIX_UPGRADE_DETECTED`" /><Custom Action=`"StopAllUserDaemons`" Before=`"InstallFiles`" Condition=`"WIX_UPGRADE_DETECTED`" /><Custom Action=`"CleanupNetwork`" Before=`"RemoveFiles`" Condition=`"REMOVE~=&quot;ALL&quot;`" /><Custom Action=`"PurgeCurrentUserData`" Before=`"RemoveFiles`" Condition=`"REMOVE~=&quot;ALL&quot; AND PURGE_CURRENT_USER_DATA=&quot;1&quot; AND NOT UPGRADINGPRODUCTCODE`" /></InstallExecuteSequence>")
+    [void]$wxs.AppendLine("<InstallExecuteSequence><Custom Action=`"InstallWebView2Runtime`" Before=`"InstallServices`" Condition=`"$(Escape-Xml $webView2InstallCondition)`" /><Custom Action=`"override Wix4CloseApplications_$wixArchShort`" Before=`"StopAllUserDaemons`" Condition=`"WIX_UPGRADE_DETECTED`" /><Custom Action=`"StopAllUserDaemons`" Before=`"InstallFiles`" Condition=`"WIX_UPGRADE_DETECTED`" /><Custom Action=`"CleanupNetwork`" Before=`"RemoveFiles`" Condition=`"REMOVE~=&quot;ALL&quot;`" /><Custom Action=`"PurgeCurrentUserData`" Before=`"RemoveFiles`" Condition=`"REMOVE~=&quot;ALL&quot; AND PURGE_CURRENT_USER_DATA=&quot;1&quot; AND NOT UPGRADINGPRODUCTCODE`" /></InstallExecuteSequence>")
     [void]$wxs.AppendLine('<StandardDirectory Id="ProgramFiles64Folder"><Directory Id="INSTALLFOLDER" Name="FnCPN-' + $architecture + '">')
     [void]$wxs.AppendLine('<Component Id="ClientService" Guid="*"><File Id="GoClient" Source="$(var.PayloadDir)\fncpn.exe" KeyPath="yes" />')
     [void]$wxs.AppendLine('<ServiceInstall Id="FnCPNServiceInstall" Name="FnCPNClient" DisplayName="FnCPN Network Service" Description="Configures the FnCPN WireGuard tunnel." Type="ownProcess" Start="auto" Account="LocalSystem" ErrorControl="normal" Arguments="client privileged-daemon"><util:ServiceConfig FirstFailureActionType="restart" SecondFailureActionType="restart" ThirdFailureActionType="restart" RestartServiceDelayInSeconds="5" ResetPeriodInDays="1"/></ServiceInstall>')

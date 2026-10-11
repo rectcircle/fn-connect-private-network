@@ -314,7 +314,7 @@ public partial class MainWindow : Window
             var standardOutput = bootstrap.StandardOutput.ReadToEndAsync();
             var standardError = bootstrap.StandardError.ReadToEndAsync();
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token);
-            timeout.CancelAfter(TimeSpan.FromSeconds(12));
+            timeout.CancelAfter(TimeSpan.FromSeconds(60));
             try { await bootstrap.WaitForExitAsync(timeout.Token); }
             catch (OperationCanceledException) when (!_lifetime.IsCancellationRequested)
             {

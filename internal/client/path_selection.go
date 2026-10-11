@@ -234,7 +234,7 @@ func (m *Manager) replaceNetwork(ctx context.Context) error {
 func directBudget(ctx context.Context) time.Duration {
 	budget := directPhaseTimeout
 	if deadline, ok := ctx.Deadline(); ok {
-		budget = min(budget, time.Until(deadline)-relayPhaseTimeout-privilegedCallTimeout)
+		budget = min(budget, time.Until(deadline)-relayPhaseTimeout-networkApplyTimeout-networkRemoveTimeout-10*time.Second)
 	}
 	return max(budget, 0)
 }

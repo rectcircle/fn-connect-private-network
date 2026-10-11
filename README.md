@@ -5,7 +5,7 @@
 ## 使用条件
 
 - Apple Silicon Mac，macOS 13 或更新版本。
-- Windows RC 客户端：Windows 10 22H2（build 19045）或更新的 ARM64/x64 系统，不支持 32 位或 Windows Server；目前日常功能实测通过的是 Windows 11 ARM64，原生 x64 和 Windows 10 待验收。
+- Windows 客户端：Windows 10 22H2（build 19045）或更新的 ARM64/x64 系统，不支持 32 位或 Windows Server；目前日常功能实测通过的是 Windows 11 ARM64，原生 x64 和 Windows 10 待验收。
 - 已启用 FN Connect 的 fnOS NAS，支持 x86_64 和 ARM64。
 - fnOS 用户账号。普通用户可以连接；安装软件和修改服务端网络设置需要管理员权限。
 
@@ -15,7 +15,7 @@ FnCPN 在自身的 fnOS HTTPS/WSS 连接中使用系统信任及内置、指纹�
 
 ## 安装
 
-先安装 NAS 服务端，再安装对应客户端。安装包从 [GitHub Releases](https://github.com/rectcircle/fn-connect-private-network/releases) 下载，Windows 候选需选择 RC：
+先安装 NAS 服务端，再安装对应客户端。安装包从 [GitHub Releases](https://github.com/rectcircle/fn-connect-private-network/releases) 下载：
 
 | 设备 | 选择的文件 |
 | --- | --- |
@@ -25,12 +25,12 @@ FnCPN 在自身的 fnOS HTTPS/WSS 连接中使用系统信任及内置、指纹�
 | Windows ARM64 | `FnCPN-<version>-arm64-unsigned.msi` |
 | Windows x64 | `FnCPN-<version>-x64-unsigned.msi` |
 
-### Windows：RC 安装
+### Windows：安装
 
 按 Windows 系统架构选择 MSI，双击安装并批准管理员权限。FnCPN EXE/MSI 未签名，
 系统可能提示未知发布者；仅安装信任的来源。缺少 WebView2 Runtime 时首次安装需要联网。
 安装完成后从开始菜单或桌面打开 FnCPN。普通卸载与重装保留用户配置和凭据。
-RC 按发布顺序安装，公开后的修复使用新的 RC 编号。验证范围见 [变更记录](CHANGELOG.md)。
+Windows 正式安装包从 1.0.4 开始提供；RC 按发布顺序安装，公开后的修复使用新的 RC 编号。验证范围见 [变更记录](CHANGELOG.md)。
 
 ### NAS
 

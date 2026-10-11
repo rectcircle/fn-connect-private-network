@@ -515,7 +515,7 @@ func (m *Manager) networkStatus(ctx context.Context) (model.ClientPrivilegedStat
 }
 
 func (m *Manager) removeNetwork(ctx context.Context) error {
-	stage, cancel := context.WithTimeout(ctx, privilegedCallTimeout)
+	stage, cancel := context.WithTimeout(ctx, networkRemoveTimeout)
 	defer cancel()
 	return m.privileged.Remove(stage)
 }

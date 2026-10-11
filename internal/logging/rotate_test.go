@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -141,7 +142,7 @@ func TestRotatingWriterKeepsWritingAfterRotationFailure(t *testing.T) {
 	}
 }
 
-func TestMultiWriterWritesFallbackBeforeFileFailure(t *testing.T) {
+func TestMultiWriterCopiesToConsoleDespiteFileFailure(t *testing.T) {
 	var fallback bytes.Buffer
 	writer := MultiWriter(failingWriter{}, &fallback)
 	if _, err := writer.Write([]byte("message")); err == nil {
@@ -159,3 +160,16 @@ func (failingWriter) Write([]byte) (int, error) {
 }
 
 var _ io.Writer = failingWriter{}
+
+type unavailableConsole struct{}
+
+func (unavailableConsole) Write([]byte) (int, error) { return 0, os.ErrInvalid }
+
+func TestProcessLogSurvivesUnavailableConsole(t *testing.T) {
+	var file bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(MultiWriter(&file, unavailableConsole{}), nil))
+	logger.Info("service log survives invalid stderr")
+	if !strings.Contains(file.String(), "service log survives invalid stderr") {
+		t.Fatal("persistent log was suppressed by console failure")
+	}
+}

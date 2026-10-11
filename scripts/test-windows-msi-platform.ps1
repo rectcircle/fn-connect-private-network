@@ -20,6 +20,31 @@ try {
     if ($session.DoAction('AppSearch') -ne 1) { throw 'AppSearch failed' }
     $build = (Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion').CurrentBuildNumber
     if ($session.Property('WINDOWSBUILDNUMBER') -ne $build) { throw 'MSI did not read the actual OS build' }
+    $view.Close()
+    [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($view)
+    $view = $database.OpenView('SELECT `Condition` FROM `InstallExecuteSequence` WHERE `Action` = ''InstallWebView2Runtime''')
+    $view.Execute()
+    $runtimeCondition = $view.Fetch().StringData(1)
+    if (-not $runtimeCondition.Contains('WEBVIEW2_MACHINE_VERSION') -or -not $runtimeCondition.Contains('WEBVIEW2_USER_VERSION')) { throw 'WebView2 installation is not conditional on runtime detection' }
+    foreach ($runtimeCase in @(
+        @{ Name='WebView2 missing'; Machine=''; User=''; Installed=''; Upgrade=''; Expected=1 },
+        @{ Name='WebView2 machine installed'; Machine='149.0.0.1'; User=''; Installed=''; Upgrade=''; Expected=0 },
+        @{ Name='WebView2 user installed'; Machine=''; User='149.0.0.1'; Installed=''; Upgrade=''; Expected=0 },
+        @{ Name='WebView2 empty registration'; Machine='0.0.0.0'; User=''; Installed=''; Upgrade=''; Expected=1 },
+        @{ Name='WebView2 both empty registrations'; Machine='0.0.0.0'; User='0.0.0.0'; Installed=''; Upgrade=''; Expected=1 },
+        @{ Name='WebView2 upgrade already installed'; Machine='149.0.0.1'; User=''; Installed=''; Upgrade='1'; Expected=0 },
+        @{ Name='WebView2 upgrade missing'; Machine=''; User=''; Installed=''; Upgrade='1'; Expected=1 },
+        @{ Name='WebView2 uninstall'; Machine=''; User=''; Installed='1'; Upgrade=''; Expected=0 }
+    )) {
+        $session.Property('WEBVIEW2_MACHINE_VERSION') = $runtimeCase.Machine
+        $session.Property('WEBVIEW2_USER_VERSION') = $runtimeCase.User
+        $session.Property('Installed') = $runtimeCase.Installed
+        $session.Property('WIX_UPGRADE_DETECTED') = $runtimeCase.Upgrade
+        if ($session.EvaluateCondition($runtimeCondition) -ne $runtimeCase.Expected) { throw "Failed: $($runtimeCase.Name)" }
+        Write-Host "PASS $Architecture $($runtimeCase.Name)"
+    }
+    $session.Property('Installed') = ''
+    $session.Property('WIX_UPGRADE_DETECTED') = ''
     # Hosted Windows runners use Server, which the product intentionally rejects.
     $hostExpected = if ($session.Property('VersionNT64') -and
         $session.Property('MsiNTProductType') -eq '1' -and [int]$build -ge 19045) { 1 } else { 0 }

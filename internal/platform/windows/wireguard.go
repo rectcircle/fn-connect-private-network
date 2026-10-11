@@ -48,9 +48,15 @@ func (r *WireGuardRuntime) Start(ctx context.Context, plan model.ClientPlan) (st
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.stopLocked()
+	started := time.Now()
 	tunnel, err := tun.CreateTUN("FnCPN", normalized.MTU)
+	r.logger.Info("Wintun adapter creation finished", "elapsed_ms", time.Since(started).Milliseconds(), "error", err)
 	if err != nil {
 		return "", fmt.Errorf("create Wintun adapter (verify the signed Wintun DLL is beside fncpn.exe): %w", err)
+	}
+	if err := ctx.Err(); err != nil {
+		_ = tunnel.Close()
+		return "", err
 	}
 	name, err := tunnel.Name()
 	if err != nil {

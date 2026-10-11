@@ -18,17 +18,18 @@ import (
 )
 
 type ClientEngine struct {
-	mu            sync.Mutex
-	runtime       *WireGuardRuntime
-	network       *NetworkConfigurator
-	logger        *slog.Logger
-	interfaceName string
-	ownerSID      string
-	ownerSession  uint32
-	degraded      bool
-	powerResumes  uint64
-	notify        func()
-	once          sync.Once
+	mu             sync.Mutex
+	runtime        *WireGuardRuntime
+	network        *NetworkConfigurator
+	logger         *slog.Logger
+	interfaceName  string
+	ownerSID       string
+	ownerSession   uint32
+	degraded       bool
+	powerResumes   atomic.Uint64
+	notify         func()
+	once           sync.Once
+	statusSnapshot atomic.Pointer[model.ClientPrivilegedStatus]
 }
 
 var consoleSessionChanges = make(chan struct{}, 1)
@@ -60,7 +61,7 @@ func (e *ClientEngine) Available() bool {
 func (e *ClientEngine) SetLifecycleNotifier(notify func()) {
 	e.mu.Lock()
 	e.notify = notify
-	pendingResume := e.powerResumes > 0
+	pendingResume := e.powerResumes.Load() > 0
 	e.mu.Unlock()
 	if pendingResume && notify != nil {
 		notify()
@@ -72,7 +73,7 @@ func (e *ClientEngine) SetLifecycleNotifier(notify func()) {
 // health across the process boundary.
 func (e *ClientEngine) NotifyPowerResume() {
 	e.mu.Lock()
-	e.powerResumes++
+	e.powerResumes.Add(1)
 	notify := e.notify
 	e.mu.Unlock()
 	if notify != nil {
@@ -83,9 +84,7 @@ func (e *ClientEngine) NotifyPowerResume() {
 // PowerResumeGeneration is included in privileged lifecycle responses, allowing
 // the user daemon to distinguish resume events from ordinary service changes.
 func (e *ClientEngine) PowerResumeGeneration() uint64 {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	return e.powerResumes
+	return e.powerResumes.Load()
 }
 
 func NotifyPowerResume() {
@@ -95,11 +94,28 @@ func NotifyPowerResume() {
 }
 
 func (e *ClientEngine) Status() model.ClientPrivilegedStatus {
-	e.mu.Lock()
+	// Driver calls can take seconds. Report the last completed operation while
+	// a mutation owns the lock instead of timing out unrelated health requests.
+	if !e.mu.TryLock() {
+		if status := e.statusSnapshot.Load(); status != nil {
+			return *status
+		}
+		return model.ClientPrivilegedStatus{}
+	}
 	defer e.mu.Unlock()
 	status := e.runtime.Status()
 	status.Degraded = status.Degraded || e.degraded
+	e.statusSnapshot.Store(&status)
 	return status
+}
+
+func (e *ClientEngine) publishStatusLocked() {
+	var status model.ClientPrivilegedStatus
+	if e.runtime != nil {
+		status = e.runtime.Status()
+	}
+	status.Degraded = status.Degraded || e.degraded
+	e.statusSnapshot.Store(&status)
 }
 
 func (e *ClientEngine) Recover(ctx context.Context) error {
@@ -133,6 +149,7 @@ func (e *ClientEngine) Apply(ctx context.Context, plan model.ClientPlan) error {
 	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	defer e.publishStatusLocked()
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
@@ -145,12 +162,17 @@ func (e *ClientEngine) Apply(ctx context.Context, plan model.ClientPlan) error {
 			return err
 		}
 	}
+	started := time.Now()
 	name, err := e.runtime.Start(ctx, normalized)
+	e.logger.Info("Windows tunnel runtime setup finished", "elapsed_ms", time.Since(started).Milliseconds(), "error", err)
 	if err != nil {
 		return err
 	}
 	e.interfaceName = name
-	if err := e.network.Apply(ctx, name, normalized); err != nil {
+	started = time.Now()
+	networkErr := e.network.Apply(ctx, name, normalized)
+	e.logger.Info("Windows addresses and routes setup finished", "elapsed_ms", time.Since(started).Milliseconds(), "error", networkErr)
+	if err := networkErr; err != nil {
 		cleanupErr := e.cleanupLocked(context.Background())
 		return errors.Join(err, cleanupErr)
 	}
@@ -169,10 +191,21 @@ func (e *ClientEngine) Apply(ctx context.Context, plan model.ClientPlan) error {
 func (e *ClientEngine) Remove(ctx context.Context) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	defer e.publishStatusLocked()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	return e.cleanupLocked(ctx)
 }
 
 func (e *ClientEngine) cleanupLocked(ctx context.Context) error {
+	started := time.Now()
+	defer func() {
+		e.publishStatusLocked()
+		if e.logger != nil {
+			e.logger.Info("Windows tunnel cleanup finished", "elapsed_ms", time.Since(started).Milliseconds(), "degraded", e.degraded)
+		}
+	}()
 	name := e.interfaceName
 	if name == "" && e.runtime != nil {
 		name = e.runtime.Status().Interface

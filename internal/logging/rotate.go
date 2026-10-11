@@ -188,5 +188,20 @@ func MultiWriter(file io.Writer, fallback io.Writer) io.Writer {
 	if fallback == nil {
 		return file
 	}
-	return io.MultiWriter(fallback, file)
+	return processLogWriter{file: file, fallback: fallback}
+}
+
+// The persistent log is authoritative. Windows services may have an invalid
+// stderr handle; losing the console copy must not suppress the file log.
+type processLogWriter struct {
+	file, fallback io.Writer
+}
+
+func (w processLogWriter) Write(payload []byte) (int, error) {
+	n, err := w.file.Write(payload)
+	_, _ = w.fallback.Write(payload)
+	if err == nil && n != len(payload) {
+		err = io.ErrShortWrite
+	}
+	return n, err
 }

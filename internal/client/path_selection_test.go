@@ -127,6 +127,90 @@ func TestHandshakeStatusCannotOutliveHandshakeBudget(t *testing.T) {
 	})
 }
 
+func TestSlowRelayApplyLeavesFullHandshakeBudget(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		m, p, n, _, _ := coordinationFixture(t)
+		p.reachable.Store(false)
+		m.localProbeConfig = &model.LocalProbeConfiguration{}
+		n.apply = func(ctx context.Context, plan model.ClientPlan) (model.ClientPrivilegedStatus, error) {
+			select {
+			case <-ctx.Done():
+				return model.ClientPrivilegedStatus{}, ctx.Err()
+			case <-time.After(12 * time.Second):
+			}
+			status := model.ClientPrivilegedStatus{Active: true, Interface: "utun9", ListenPort: 49152, MTU: plan.MTU}
+			n.mu.Lock()
+			n.status = status
+			n.mu.Unlock()
+			go func() {
+				time.Sleep(4 * time.Second)
+				n.mu.Lock()
+				defer n.mu.Unlock()
+				now := time.Now()
+				n.status.LastHandshake = &now
+			}()
+			return status, nil
+		}
+		if err := m.Connect(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		if m.Status().State != model.ClientRelay || n.applies.Load() != 1 {
+			t.Fatal("slow local setup caused reconnect instead of completing relay handshake")
+		}
+	})
+}
+
+func TestRelayRetryDoesNotExtendIPv6Cooldown(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		m, p, _, d, _ := coordinationFixture(t)
+		d.discover = func(context.Context) (Discovery, error) {
+			return Discovery{IPv6: []string{"240e::1"}}, nil
+		}
+		m.ipv6RouteChecker = func(context.Context, netip.Addr, int) bool { return true }
+		p.reachable.Store(false)
+		m.localProbeConfig = &model.LocalProbeConfiguration{}
+		expires := time.Now().Add(5 * time.Minute)
+		m.directRetryAfter = expires
+		if err := m.connect(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		time.Sleep(time.Second)
+		if err := m.connect(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		if !m.directRetryAfter.Equal(expires) {
+			t.Fatalf("cooldown moved from %v to %v without an IPv6 attempt", expires, m.directRetryAfter)
+		}
+	})
+}
+
+func TestSlowDirectApplyDoesNotConsumeNetworkProbeBudget(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		m, p, n, d, _ := coordinationFixture(t)
+		p.reachable.Store(false)
+		m.localProbeConfig = &model.LocalProbeConfiguration{}
+		d.discover = func(context.Context) (Discovery, error) {
+			return Discovery{IPv6: []string{"240e::1"}}, nil
+		}
+		m.ipv6RouteChecker = func(context.Context, netip.Addr, int) bool { return true }
+		n.apply = func(ctx context.Context, plan model.ClientPlan) (model.ClientPrivilegedStatus, error) {
+			select {
+			case <-ctx.Done():
+				return model.ClientPrivilegedStatus{}, ctx.Err()
+			case <-time.After(12 * time.Second):
+			}
+			now := time.Now()
+			return model.ClientPrivilegedStatus{Active: true, Interface: "utun9", ListenPort: 49152, MTU: plan.MTU, LastHandshake: &now}, nil
+		}
+		if err := m.Connect(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		if m.Status().State != model.ClientDirect || n.applies.Load() != 1 {
+			t.Fatal("slow driver setup incorrectly forced relay fallback")
+		}
+	})
+}
+
 type blockingStatusNetwork struct{}
 
 func (blockingStatusNetwork) Status(ctx context.Context) (model.ClientPrivilegedStatus, error) {

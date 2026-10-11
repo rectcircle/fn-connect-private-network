@@ -49,7 +49,7 @@ func ensureClientDaemonWithStarter(ctx context.Context, socket string, start fun
 	if err := start(); err != nil && !errors.Is(err, os.ErrExist) {
 		return err
 	}
-	deadline := time.Now().Add(8 * time.Second)
+	deadline := time.Now().Add(45 * time.Second)
 	for time.Now().Before(deadline) {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -57,7 +57,11 @@ func ensureClientDaemonWithStarter(ctx context.Context, socket string, start fun
 		if err := probe.Call(ctx, client.MethodStatus, nil, &status); err == nil {
 			return nil
 		}
-		time.Sleep(200 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(200 * time.Millisecond):
+		}
 	}
 	return model.NewError(model.ErrorUnavailable, "client daemon did not start; check the FnCPN service", true)
 }

@@ -11,8 +11,27 @@ import (
 	"time"
 
 	"github.com/rectcircle/fn-connect-private-network/internal/ipc"
+	"github.com/rectcircle/fn-connect-private-network/internal/model"
 	"github.com/rectcircle/fn-connect-private-network/internal/privileged"
 )
+
+func TestStatusDoesNotWaitForDriverMutation(t *testing.T) {
+	engine := NewClientEngine(slog.Default(), t.TempDir())
+	previous := model.ClientPrivilegedStatus{Active: true, Interface: "FnCPN", MTU: 1280}
+	engine.statusSnapshot.Store(&previous)
+	engine.mu.Lock()
+	defer engine.mu.Unlock()
+	done := make(chan model.ClientPrivilegedStatus, 1)
+	go func() { done <- engine.Status() }()
+	select {
+	case status := <-done:
+		if !status.Active || status.Interface != previous.Interface {
+			t.Fatalf("lost last completed status: %+v", status)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("status blocked behind driver mutation")
+	}
+}
 
 func TestNotifyConsoleSessionChangeCoalescesBursts(t *testing.T) {
 	for len(consoleSessionChanges) > 0 {

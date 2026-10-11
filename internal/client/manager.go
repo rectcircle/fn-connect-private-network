@@ -346,7 +346,13 @@ func (m *Manager) AuthorizeNative(
 	username string,
 	password string,
 ) error {
-	defer m.allowConnections()
+	authorized := false
+	defer func() {
+		m.allowConnections()
+		if authorized {
+			m.scheduleConnection(workReconcile)
+		}
+	}()
 	m.suspendConnections()
 	m.operation.Lock()
 	defer m.operation.Unlock()
@@ -378,9 +384,10 @@ func (m *Manager) AuthorizeNative(
 	if err != nil {
 		return m.fail(err)
 	}
-	if err := m.authorize(ctx, fnID, cookies); err != nil {
+	if err := m.authorizeSession(ctx, fnID, cookies, false); err != nil {
 		return err
 	}
+	authorized = true
 	m.refreshAdminWebSession(ctx, fnID, username, password, session.DeviceID)
 	return nil
 }
@@ -390,6 +397,10 @@ func (m *Manager) authorize(
 	fnID string,
 	cookies []Cookie,
 ) error {
+	return m.authorizeSession(ctx, fnID, cookies, true)
+}
+
+func (m *Manager) authorizeSession(ctx context.Context, fnID string, cookies []Cookie, connectSynchronously bool) error {
 	fnID, err := normalizeFNID(fnID)
 	if err != nil {
 		return model.WrapError(model.ErrorInvalidArgument, "invalid FN ID", false, err)
@@ -469,7 +480,7 @@ func (m *Manager) authorize(
 			logger.Info("existing device reused", "device_id", existing.DeviceID,
 				"address", configuration.ClientAddress)
 			logger.Info("authorization saved", "device_id", existing.DeviceID)
-			return m.connectWithConfig(ctx, *existing)
+			return m.connectAfterAuthorization(ctx, *existing, connectSynchronously)
 		}
 		registrationReason = "device_revoked"
 	}
@@ -517,7 +528,23 @@ func (m *Manager) authorize(
 	logger.Info("device registration completed", "device_id", config.DeviceID,
 		"address", configuration.ClientAddress)
 	logger.Info("authorization saved", "device_id", config.DeviceID)
-	return m.connectWithConfig(ctx, config)
+	return m.connectAfterAuthorization(ctx, config, connectSynchronously)
+}
+
+func (m *Manager) connectAfterAuthorization(ctx context.Context, config LocalConfig, synchronous bool) error {
+	if synchronous {
+		return m.connectWithConfig(ctx, config)
+	}
+	// Saved authorization is a successful login. The daemon coordinator resumes
+	// after AuthorizeNative releases the operation lock and owns tunnel setup.
+	// Its lifetime is independent of the login IPC request.
+	m.setStatus(model.ClientProbing, "", "", nil)
+	if m.connectionCoordinator() == nil {
+		// Embedded callers without Run retain connection behavior, but network
+		// failures belong to connection status rather than the login result.
+		_ = m.connectWithConfig(ctx, config)
+	}
+	return nil
 }
 
 func (m *Manager) Connect(ctx context.Context) error {
@@ -1460,9 +1487,13 @@ func (m *Manager) maintainHealth(ctx context.Context) {
 
 // Connection budgets are shared by manual and automatic attempts.
 const (
-	connectionAttemptTimeout  = 20 * time.Second
+	// Include cold driver setup, bounded DIRECT probing, and a complete relay fallback.
+	connectionAttemptTimeout  = 120 * time.Second
 	discoveryTimeout          = 3 * time.Second
-	directPhaseTimeout        = 6 * time.Second
+	directHandshakeBudget     = 6 * time.Second
+	directPhaseTimeout        = networkApplyTimeout + directHandshakeBudget
+	networkApplyTimeout       = 30 * time.Second
+	networkRemoveTimeout      = 15 * time.Second
 	privilegedCallTimeout     = 2 * time.Second
 	maxReconnectBackoff       = 60 * time.Second
 	configurationFetchTimeout = 3 * time.Second
@@ -1980,8 +2011,9 @@ func (m *Manager) connectWithOptionalConfiguration(
 		// Bound the complete direct phase so many stale addresses cannot starve relay.
 		directContext, cancelDirect := context.WithTimeout(ctx, directBudget(ctx))
 		defer cancelDirect()
+		handshakeRemaining := directHandshakeBudget
 		for _, address := range candidates {
-			if directContext.Err() != nil {
+			if directContext.Err() != nil || handshakeRemaining <= 0 {
 				break
 			}
 			plan := clientPlan(
@@ -2019,8 +2051,10 @@ func (m *Manager) connectWithOptionalConfiguration(
 				direct.LastError = model.PublicError(applyErr)
 				break
 			}
-			candidateContext, cancelCandidate := context.WithTimeout(directContext, 3*time.Second)
+			candidateContext, cancelCandidate := context.WithTimeout(directContext, min(3*time.Second, handshakeRemaining))
+			handshakeStarted := time.Now()
 			status, handshakeErr := m.waitForHandshake(candidateContext, status, started)
+			handshakeRemaining -= time.Since(handshakeStarted)
 			cancelCandidate()
 			if handshakeErr != nil {
 				direct.LastError = model.PublicError(model.WithOperation(handshakeErr, "direct.handshake"))
@@ -2058,7 +2092,7 @@ func (m *Manager) connectWithOptionalConfiguration(
 		}
 		direct.Reason = "handshake_failed"
 	}
-	if direct.Reason != "server_disabled" {
+	if direct.Reason != "server_disabled" && !time.Now().Before(m.directRetryAfter) {
 		// Also revisit empty/stale discovery results while the physical network is unchanged.
 		m.directRetryAfter = time.Now().Add(5 * time.Minute)
 		retryAfter := m.directRetryAfter
@@ -2079,11 +2113,11 @@ func (m *Manager) connectWithOptionalConfiguration(
 			return nil
 		}
 	}
-	relayContext, cancelRelay := context.WithTimeout(ctx, relayPhaseTimeout)
-	defer cancelRelay()
-	if err := m.replaceNetwork(relayContext); err != nil {
+	if err := m.replaceNetwork(ctx); err != nil {
 		return m.fail(err)
 	}
+	relayContext, cancelRelay := context.WithTimeout(ctx, relayPhaseTimeout)
+	defer cancelRelay()
 	logger.Info("relay path selected", "relay_url", model.SafeURL(relayURL))
 	endpoint, err := m.bridge.Start(relayContext, relayURL, func() ([]Cookie, error) {
 		return m.store.LoadCookies(config.FNID)
@@ -2107,7 +2141,7 @@ func (m *Manager) connectWithOptionalConfiguration(
 		1280,
 	)
 	started := time.Now()
-	status, err := m.applyPlan(relayContext, plan)
+	status, err := m.applyPlan(ctx, plan)
 	if err != nil {
 		m.bridge.Stop()
 		return m.fail(err)
@@ -2117,7 +2151,7 @@ func (m *Manager) connectWithOptionalConfiguration(
 		cleanupErr := m.removeNetwork(ctx)
 		return m.fail(errors.Join(err, cleanupErr))
 	}
-	status, err = m.waitForHandshake(relayContext, status, started)
+	status, err = m.waitForHandshake(ctx, status, started)
 	if err != nil {
 		m.bridge.Stop()
 		cleanupErr := m.removeNetwork(ctx)
@@ -2251,6 +2285,9 @@ func (m *Manager) applyPlan(
 	ctx context.Context,
 	plan model.ClientPlan,
 ) (model.ClientPrivilegedStatus, error) {
+	stage, cancel := context.WithTimeout(ctx, networkApplyTimeout)
+	defer cancel()
+	ctx = stage
 	logger := logging.FromContext(ctx, m.logger)
 	logger.Info("client network apply requested", "mode", plan.Mode, "address", plan.ClientAddress,
 		"route_count", len(plan.AllowedIPs), "mtu", plan.MTU)
@@ -2274,6 +2311,7 @@ func (m *Manager) waitForHandshake(
 	handshakeContext, cancelHandshake := context.WithTimeout(ctx, m.handshakeTimeout)
 	defer cancelHandshake()
 	ctx = handshakeContext
+	waitStarted := time.Now()
 	logger := logging.FromContext(ctx, m.logger)
 	logger.Info("WireGuard handshake waiting", "interface", status.Interface)
 	deadline := time.NewTimer(m.handshakeTimeout)
@@ -2285,7 +2323,7 @@ func (m *Manager) waitForHandshake(
 	for {
 		if status.LastHandshake != nil && !status.LastHandshake.Before(started) {
 			logger.Info("WireGuard handshake confirmed", "interface", status.Interface,
-				"handshake_at", *status.LastHandshake, "elapsed_ms", time.Since(started).Milliseconds())
+				"handshake_at", *status.LastHandshake, "elapsed_ms", time.Since(waitStarted).Milliseconds())
 			return status, nil
 		}
 		select {
@@ -2299,7 +2337,7 @@ func (m *Manager) waitForHandshake(
 			)
 		case <-slowWarning.C:
 			logger.Warn("WireGuard handshake still pending", "interface", status.Interface,
-				"elapsed_ms", time.Since(started).Milliseconds())
+				"elapsed_ms", time.Since(waitStarted).Milliseconds())
 		case <-ticker.C:
 			next, err := m.networkStatus(ctx)
 			if err != nil {

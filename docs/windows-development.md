@@ -94,7 +94,7 @@ bootstrapper 安装失败会令 MSI 安装失败。共享 Runtime 不会随 FnCP
 `%LOCALAPPDATA%\FnCPN`：
 
 ```powershell
-msiexec.exe /x .\FnCPN-1.0.4-rc.1-arm64-unsigned.msi PURGE_CURRENT_USER_DATA=1
+msiexec.exe /x .\FnCPN-1.0.4-arm64-unsigned.msi PURGE_CURRENT_USER_DATA=1
 ```
 
 该动作先请求停止当前用户的 Go daemon，再清理该用户的数据和日志；不会遍历或清理其他
@@ -103,13 +103,13 @@ WebView2 Runtime。ARM64 普通安装、候选替换、卸载后 CLI/协议/PATH
 已经实测通过；多用户、完整网络清理与异常安装事务仍待验收。
 
 Go Windows Service 在启动时幂等设置 SCM 故障恢复：首次失败 5 秒后重启，后续失败按 30 秒、
-60 秒重试，并对非崩溃失败启用恢复。升级时跨会话 daemon 停止、安装中断回滚仍是未完成项，
-发布前应在隔离环境完成这些异常场景验收。
+60 秒重试，并对非崩溃失败启用恢复。安装器已实现跨会话 daemon 停止；多用户会话下的
+停止行为与安装中断回滚仍需在隔离环境完成异常场景实机验收。
 
-## RC 发布前置步骤
+## 发布前置步骤
 
-1. 整理并审阅源码、CI、文档和版本资源，提交全部发布输入。当前版本为 `1.0.4-rc.1`；
-   确认该编号尚未公开，公开后只能递增 RC/PATCH。
+1. 整理并审阅源码、CI、文档和版本资源，提交全部发布输入。当前准备版本为 `1.0.4`；
+   确认该编号尚未公开，公开后只能递增 RC/PATCH。正式版必须重新构建并检查版本元数据，不能给 RC 包改名。
 2. 在准备提交上运行 Windows Go 测试/vet、本地化与版本同步检查、代理设置回归和双架构
    构建。macOS/fnOS 的测试与发布检查由相应 runner 执行；Windows 无法替代这些平台验收。
 3. 从发布提交创建对应 tag；Release workflow 先构建 draft。Windows runner 安装固定 WiX
@@ -119,7 +119,7 @@ Go Windows Service 在启动时幂等设置 SCM 故障恢复：首次失败 5 �
    与 SHA256SUMS。下载并核验实际资产；对 CI 生成的 ARM64 MSI 补一次安装/登录/连接抽验。
    本地开发 MSI 的验证不等同于 hosted runner 产物验收。
 5. 发布说明如实披露 Windows 11 ARM64 已验收、原生 x64/Windows 10 与异常场景待验证、
-   未签名、缺 Runtime 时需联网，以及当前 CLI 授权会唤起 UI。RC 不更新 Homebrew Cask。
+   未签名、缺 Runtime 时需联网，以及当前 CLI 授权会唤起 UI。RC 不更新 Homebrew Cask，正式版公开后由发布流水线更新 Cask。
 6. 完成 draft 验证后，使用同 tag 的 Release workflow 并设置 `publish=true` 公开；公开
    阶段复验并发布原 draft 字节，不用重建产物替换已经验收的 draft。
 

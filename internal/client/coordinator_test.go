@@ -2,6 +2,7 @@ package client
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"io"
 	"log/slog"
@@ -14,6 +15,48 @@ import (
 
 	"github.com/rectcircle/fn-connect-private-network/internal/model"
 )
+
+func TestNativeLoginSucceedsBeforeTunnelAndSurvivesLoginRequestEnd(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		m, p, n, _, _ := coordinationFixture(t)
+		m.authenticator = &fakeNativeAuthenticator{login: NativeSession{
+			Version: nativeSessionVersion, FNID: "home-nas", Username: "admin",
+			DeviceID: "native-device", Token: "token", LongToken: "long-token",
+			Secret: base64.StdEncoding.EncodeToString([]byte("native-secret")), UpdatedAt: time.Now(),
+		}}
+		stop := runCoordinated(t, m)
+		defer stop()
+		p.reachable.Store(false)
+		m.localProbeConfig = &model.LocalProbeConfiguration{}
+		entered, release := make(chan struct{}, 1), make(chan struct{})
+		var canceled atomic.Bool
+		n.apply = func(ctx context.Context, _ model.ClientPlan) (model.ClientPrivilegedStatus, error) {
+			entered <- struct{}{}
+			select {
+			case <-ctx.Done():
+				canceled.Store(true)
+				return model.ClientPrivilegedStatus{}, ctx.Err()
+			case <-release:
+				return model.ClientPrivilegedStatus{}, model.NewError(model.ErrorUnavailable, "test tunnel failure", true)
+			}
+		}
+		loginContext, cancelLogin := context.WithCancel(t.Context())
+		if err := m.AuthorizeNative(loginContext, "home-nas", "admin", "password"); err != nil {
+			t.Fatalf("successful authorization reported as login failure: %v", err)
+		}
+		cancelLogin()
+		synctest.Wait()
+		<-entered
+		if canceled.Load() {
+			t.Fatal("ending the login request canceled background tunnel setup")
+		}
+		close(release)
+		synctest.Wait()
+		if m.Status().LastError == nil {
+			t.Fatal("connection failure was not published in main-page status")
+		}
+	})
+}
 
 type coordinatedProbe struct {
 	snapshot  atomic.Pointer[NetworkSnapshot]
