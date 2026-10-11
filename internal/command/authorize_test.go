@@ -118,7 +118,13 @@ func authorizationTestSocket(t *testing.T) string {
 	if runtime.GOOS == "windows" {
 		return `\\.\pipe\FnCPN.CLI.Authorize.` + strconv.Itoa(os.Getpid()) + "." + strings.ReplaceAll(t.Name(), "/", ".")
 	}
-	return filepath.Join(t.TempDir(), "client.sock")
+	// macOS limits Unix socket paths; t.TempDir includes the long test name.
+	directory, err := os.MkdirTemp("", "fncpn-auth-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(directory) })
+	return filepath.Join(directory, "client.sock")
 }
 
 func waitForAuthorizationTestServer(t *testing.T, socket string) {

@@ -23,6 +23,7 @@ func TestPreparePrivilegedDataDirectoriesRejectsUserOwnedState(t *testing.T) {
 	if err := os.Mkdir(logDirectory, 0o700); err != nil {
 		t.Fatal(err)
 	}
+	setTestDirectoryUserOwner(t, serviceDirectory)
 	original, err := windows.GetNamedSecurityInfo(serviceDirectory, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION)
 	if err != nil {
 		t.Fatal(err)
@@ -51,6 +52,7 @@ func TestPrivilegedCleanupRejectsUserOwnedJournalBeforeRecovery(t *testing.T) {
 	if err := os.MkdirAll(logDirectory, 0o700); err != nil {
 		t.Fatal(err)
 	}
+	setTestDirectoryUserOwner(t, stateDirectory)
 	journal := filepath.Join(stateDirectory, "network-state.json")
 	contents := []byte(`{"interfaceName":"attacker-controlled"}`)
 	if err := os.WriteFile(journal, contents, 0o600); err != nil {
@@ -77,6 +79,20 @@ func TestPrivilegedCleanupRejectsUserOwnedJournalBeforeRecovery(t *testing.T) {
 	}
 	if string(after) != string(contents) {
 		t.Fatalf("cleanup preflight modified user-owned journal: got %q, want %q", after, contents)
+	}
+}
+
+// Elevated runners may create directories owned by Administrators. Explicitly
+// use the account SID so these tests exercise an untrusted user-owned tree.
+func setTestDirectoryUserOwner(t *testing.T, path string) {
+	t.Helper()
+	user, err := windows.GetCurrentProcessToken().GetTokenUser()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := windows.SetNamedSecurityInfo(path, windows.SE_FILE_OBJECT,
+		windows.OWNER_SECURITY_INFORMATION, user.User.Sid, nil, nil, nil); err != nil {
+		t.Fatal(err)
 	}
 }
 
