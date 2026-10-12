@@ -288,3 +288,5 @@ macOS 客户端默认位置为 `~/Library/Logs/FnCPN/client.log.crash`，特权�
 runtime 原文绕过业务脱敏，可能包含 panic 值与堆栈参数；仅作为本地私有排障文件，
 分享前需检查，不应直接拼入用户的脱敏诊断输出。普通业务错误、已恢复的 panic 和
 进程启动失败仍需检查业务日志或服务管理器输出。崩溃捕获不恢复执行，也不改变退出码。
+
+版本不兼容的诊断包含 `releaseURL`，指向需要升级一端的对应 GitHub Release（保留完整 RC 版本）。macOS 和 Windows 的诊断详情支持选中文字复制；完整诊断复制也保留下载链接。同 MINOR 的 PATCH 差异不会触发版本不兼容。fnOS 应用描述提供该安装包版本的 Release 下载入口。

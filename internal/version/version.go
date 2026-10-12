@@ -66,6 +66,11 @@ func Check(client, server string) error {
 	}
 	e := model.NewError(model.ErrorVersionIncompatible, "client and server versions are incompatible", false)
 	e.ClientVersion, e.ServerVersion, e.UpgradeTarget = client, server, target
+	releaseVersion := client
+	if target == "client" {
+		releaseVersion = server
+	}
+	e.ReleaseURL = "https://github.com/rectcircle/fn-connect-private-network/releases/tag/v" + releaseVersion
 	return e
 }
 

@@ -39,6 +39,7 @@ const (
 )
 
 type Error struct {
+	ReleaseURL    string    `json:"releaseURL,omitempty"`
 	ClientVersion string    `json:"clientVersion,omitempty"`
 	ServerVersion string    `json:"serverVersion,omitempty"`
 	UpgradeTarget string    `json:"upgradeTarget,omitempty"`

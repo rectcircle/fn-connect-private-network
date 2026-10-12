@@ -1,6 +1,7 @@
 package version
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -25,6 +26,17 @@ func TestCompatibility(t *testing.T) {
 			e := model.AsError(err)
 			if !IsFailure(err) || e.Code != model.ErrorVersionIncompatible || e.Retryable || e.UpgradeTarget != tc.target || e.ClientVersion != tc.client || e.ServerVersion != tc.server {
 				t.Fatalf("unexpected failure: %+v", e)
+			}
+			releaseVersion := tc.client
+			if tc.target == "client" {
+				releaseVersion = tc.server
+			}
+			want := "https://github.com/rectcircle/fn-connect-private-network/releases/tag/v" + releaseVersion
+			encoded, marshalErr := json.Marshal(model.PublicError(err))
+			var copied model.Error
+			decodeErr := json.Unmarshal(encoded, &copied)
+			if marshalErr != nil || decodeErr != nil || copied.ReleaseURL != want {
+				t.Fatalf("download link lost in public diagnostics: %s (%v, %v)", encoded, marshalErr, decodeErr)
 			}
 		})
 	}

@@ -159,7 +159,10 @@ internal sealed record RemoteError(
     string? RequestId = null,
     string? UpgradeTarget = null,
     string? ClientVersion = null,
-    string? ServerVersion = null);
+    string? ServerVersion = null)
+{
+    public string? ReleaseURL { get; init; }
+}
 internal sealed record ClientStatus(string State, string? Path, string? Interface, int Mtu, DateTimeOffset? LastHandshake, RemoteError? LastError, bool LocalNetworkWaiting, string? LocalNetworkAccess);
 internal sealed record Diagnostics(ClientStatus Status, string? FnId, string? Username, string? ClientAddress, string? NasAddress, bool Administrator, bool PrivilegedAvailable, bool PrivilegedActive, bool PrivilegedDegraded, string? NetworkInterface, string? NetworkFingerprint, string? HandshakeAge, int Mtu, bool LanOverlap, string? RoutePolicy, DirectDiagnostics Direct, RemoteError[]? Errors = null);
 internal sealed record DirectDiagnostics(bool LocalPublicIPv6, int CandidateCount, int AttemptCount, string? Endpoint, string? Reason, RemoteError? LastError);

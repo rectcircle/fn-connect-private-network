@@ -39,7 +39,7 @@ build_target() {
     cp "${ASSET_DIR}/ICON_256.PNG" "$stage/ICON_256.PNG"
     cp "${ASSET_DIR}/DesktopIcon64.png" "$stage/app/ui/images/icon_64.png"
     cp "${ASSET_DIR}/DesktopIcon256.png" "$stage/app/ui/images/icon_256.png"
-    sed -e "s/^platform=.*/platform=${platform}/" -e "s/^version=.*/version=${VERSION}/" "$stage/manifest" > "$stage/manifest.tmp"
+    sed -e "s/^platform=.*/platform=${platform}/" -e "s/^version=.*/version=${VERSION}/" -e "s|https://github.com/rectcircle/fn-connect-private-network/releases/tag/v[^ ]*|https://github.com/rectcircle/fn-connect-private-network/releases/tag/v${VERSION}|" "$stage/manifest" > "$stage/manifest.tmp"
     mv "$stage/manifest.tmp" "$stage/manifest"
 
     (

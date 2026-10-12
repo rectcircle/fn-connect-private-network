@@ -612,6 +612,11 @@ function Assert-WindowsFnIdNormalization([string]$AssemblyPath, [string]$Product
     $remoteErrorConstructor = $remoteErrorType.GetConstructors([Reflection.BindingFlags]'Instance,Public,NonPublic') |
         Where-Object { $_.GetParameters().Count -eq 10 } | Select-Object -First 1
     if ($null -eq $remoteErrorConstructor) { throw 'WPF remote-error constructor shape was not found' }
+    $releaseLink = 'https://github.com/rectcircle/fn-connect-private-network/releases/tag/v1.2.0-rc.1'
+    $versionFailure = $remoteErrorConstructor.Invoke([object[]]@('VERSION_INCOMPATIBLE', 'version mismatch', $null, $null, $null, $null, $null, 'server', '1.2.0-rc.1', '1.0.4'))
+    $remoteErrorType.GetProperty('ReleaseURL').SetValue($versionFailure, $releaseLink)
+    $downloadMessage = $describeFailure.Invoke($null, [object[]]@($versionFailure))
+    if (-not $downloadMessage.Contains($releaseLink)) { throw 'Version diagnostics lost the release download link' }
     $currentFailure = $remoteErrorConstructor.Invoke([object[]]@('UNAVAILABLE', 'service unavailable', $null, 'diagnose.privileged', $null, $null, $null, $null, $null, $null))
     foreach ($status in @(
         $statusConstructor.Invoke([object[]]@('RELAY', $null, $null, 0, $null, $currentFailure, $false, $null))

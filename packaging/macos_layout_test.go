@@ -139,6 +139,9 @@ extension AppDelegate {
                     check(setupButton.bounds.width >= setupButton.intrinsicContentSize.width, "login button title clipped")
                     check(primaryButton.bounds.width >= primaryButton.intrinsicContentSize.width, "action title clipped")
                     check(errorValue.string.count > 500, "long diagnostics must not be truncated")
+                    check(errorValue.isSelectable && !errorValue.isEditable, "diagnostics must support selection and copy")
+                    let download = "https://github.com/rectcircle/fn-connect-private-network/releases/tag/v1.2.0-rc.1"
+                    check(describeFailure(["code": "VERSION_INCOMPATIBLE", "upgradeTarget": "server", "clientVersion": "1.2.0-rc.1", "serverVersion": "1.0.4", "releaseURL": download]).contains(download), "version failure must show release download")
                     check(primaryButton.title == (state == "AUTH_REQUIRED" ? L("重新登录") :
                         ["DIRECT", "RELAY"].contains(state) ? L("断开连接") : L("连接")), "contextual action")
                     check(!content.hasAmbiguousLayout, "root layout ambiguity")

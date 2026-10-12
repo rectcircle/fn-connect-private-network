@@ -20,6 +20,11 @@ failed = False
 for path, (pattern, replacement) in updates.items():
     before = path.read_text(encoding='utf-8')
     after, count = re.subn(pattern, replacement, before)
+    if path.name == 'manifest':
+        after, desc_count = re.subn(r'(?m)^desc=.*$',
+            f'desc=通过 FN Connect 自动建立 WireGuard 异地私有网络。 / Automatically connect private networks with WireGuard via FN Connect. 下载 / Download: https://github.com/rectcircle/fn-connect-private-network/releases/tag/v{version}', after)
+        if desc_count != 1:
+            raise SystemExit('Missing description in fnOS manifest')
     if path == plist_path:
         after, product_count = re.subn(r'(<key>FnCPNProductVersion</key>\s*<string>)[^<]+(</string>)', rf'\g<1>{version}\g<2>', after)
         if product_count != 1:

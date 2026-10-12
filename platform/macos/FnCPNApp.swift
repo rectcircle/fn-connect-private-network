@@ -72,7 +72,12 @@ private func describeFailure(_ failure: [String: Any]?) -> String {
     if let code = failure["remoteCode"] as? String { parts.append("remote \(code)") }
     if let detail = failure["detail"] as? String { parts.append(detail) }
     if let id = failure["requestId"] as? String { parts.append("request \(id)") }
-    return failureSummary(failure) + "\n" + L("详细信息") + ": " + parts.joined(separator: ": ")
+    var result = failureSummary(failure) + "\n" + L("详细信息") + ": " + parts.joined(separator: ": ")
+    if failure["code"] as? String == "VERSION_INCOMPATIBLE",
+       let url = failure["releaseURL"] as? String, !url.isEmpty {
+        result += "\n" + L("版本下载：{0}", url)
+    }
+    return result
 }
 
 private func normalizeFNID(_ input: String) -> String? {
@@ -518,6 +523,21 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        let menu = NSMenu()
+        let appMenu = NSMenu(title: "FnCPN")
+        appMenu.addItem(withTitle: L("退出"), action: #selector(quit), keyEquivalent: "q").target = self
+        let appItem = NSMenuItem(title: "FnCPN", action: nil, keyEquivalent: "")
+        appItem.submenu = appMenu
+        menu.addItem(appItem)
+        let edit = NSMenu(title: L("编辑"))
+        edit.addItem(withTitle: L("剪切"), action: #selector(NSText.cut(_:)), keyEquivalent: "x")
+        edit.addItem(withTitle: L("粘贴"), action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+        edit.addItem(withTitle: L("复制"), action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+        edit.addItem(withTitle: L("全选"), action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+        let item = NSMenuItem(title: L("编辑"), action: nil, keyEquivalent: "")
+        item.submenu = edit
+        menu.addItem(item)
+        NSApp.mainMenu = menu
         let content = makeContent()
         window = NSWindow(
             contentRect: content.frame,

@@ -232,5 +232,11 @@ internal static partial class AppStrings
         ["启动 FnCPN 网络服务失败"] = "Could not start the FnCPN network service.",
         ["安装修复已完成，但 FnCPN 网络服务未能就绪。请查看诊断信息或重新启动 Windows。"] = "Installer repair completed, but the FnCPN network service did not become ready. Review diagnostics or restart Windows.",
         ["FnCPN 网络服务未能就绪。请查看诊断信息。"] = "The FnCPN network service did not become ready. Review diagnostics.",
+        ["版本下载：{0}"] = "Download version: {0}",
+        ["编辑"] = "Edit",
+        ["复制"] = "Copy",
+        ["全选"] = "Select All",
+        ["剪切"] = "Cut",
+        ["粘贴"] = "Paste",
     };
 }

@@ -1433,7 +1433,10 @@ public partial class MainWindow : Window
         if (!string.IsNullOrWhiteSpace(failure.Detail)) details.Add(failure.Detail);
         if (!string.IsNullOrWhiteSpace(failure.RequestId)) details.Add($"request {failure.RequestId}");
         if (failure.Code == "VERSION_INCOMPATIBLE") details.Add($"client {failure.ClientVersion ?? "?"}, server {failure.ServerVersion ?? "?"}");
-        return summary + "\n" + L("详细信息") + ": " + string.Join(": ", details);
+        var result = summary + "\n" + L("详细信息") + ": " + string.Join(": ", details);
+        if (failure.Code == "VERSION_INCOMPATIBLE" && !string.IsNullOrWhiteSpace(failure.ReleaseURL))
+            result += "\n" + L("版本下载：{0}", failure.ReleaseURL);
+        return result;
     }
 
     private static string DirectLabel(string? reason) => reason switch
