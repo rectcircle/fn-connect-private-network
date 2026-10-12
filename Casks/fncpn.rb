@@ -1,16 +1,16 @@
 cask "fncpn" do
-  version "1.0.4"
-  sha256 "3d0212a9e0f59f76e2c662f702250477d6ca11e8bac4890b89f19bb7674e108a"
+  version "1.0.5"
+  arch arm: "arm64", intel: "x64"
+  sha256 arm: "faabddf7d991717a12a71a88ba227a744e3d729e5e70db8c97c461c14220adc8", intel: "d2a7eceb10cb10f87ac70a2f59f5e3565178d4c0ed982d777410a4eac3f0fb5b"
 
-  url "https://github.com/rectcircle/fn-connect-private-network/releases/download/v#{version}/FnCPN-#{version}-arm64-unsigned.pkg"
+  url "https://github.com/rectcircle/fn-connect-private-network/releases/download/v#{version}/fncpn-#{version}-macos-#{arch}-unsigned.pkg"
   name "FnCPN"
   desc "Private networking for fnOS through FN Connect"
   homepage "https://github.com/rectcircle/fn-connect-private-network"
 
-  depends_on arch: :arm64
   depends_on macos: :ventura
 
-  pkg "FnCPN-#{version}-arm64-unsigned.pkg"
+  pkg "fncpn-#{version}-macos-#{arch}-unsigned.pkg"
 
   uninstall script: {
     executable: "/Library/PrivilegedHelperTools/cn.rectcircle.fncpn/uninstall.sh",
