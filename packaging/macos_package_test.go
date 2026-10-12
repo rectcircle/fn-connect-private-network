@@ -85,7 +85,7 @@ func TestMacOSPackageArchiveOwnership(t *testing.T) {
 				"DIST_DIR="+dist, "VERSION=1.0.0-rc.1", "PACKAGE_VERSION=1.0.0", "ARCH=fixture",
 			)
 			output, err := command.CombinedOutput()
-			pkg := filepath.Join(dist, "FnCPN-1.0.0-rc.1-fixture-unsigned.pkg")
+			pkg := filepath.Join(dist, "fncpn-1.0.0-rc.1-macos-fixture-unsigned.pkg")
 			if test.failure != "" {
 				if err == nil || !bytes.Contains(output, []byte(test.failure)) {
 					t.Fatalf("bad ownership was not rejected: %v\n%s", err, output)

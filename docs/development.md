@@ -37,9 +37,9 @@ FPK 构建要求通过 `FNPACK` 或 `PATH` 显式提供 `fnpack`，不依赖本�
 首次初始化默认使用 `10.253.203.0/24` 和 `54789/UDP`；冲突时
 服务端保持管理页面可用，由管理员修改后重试。
 
-- `FnCPN-<version>-arm64-unsigned.pkg`：Apple Silicon macOS 客户端。
-- `fncpn-<version>-x86.fpk`：x86_64 fnOS 服务端。
-- `fncpn-<version>-arm.fpk`：ARM64 fnOS 服务端。
+- `fncpn-<version>-macos-arm64-unsigned.pkg`：Apple Silicon macOS 客户端。
+- `fncpn-<version>-fnos-x64.fpk`：x86_64 fnOS 服务端。
+- `fncpn-<version>-fnos-arm64.fpk`：ARM64 fnOS 服务端。
 
 ### 图标生成
 
@@ -100,3 +100,5 @@ PKG Cask 安装使用系统 installer，卸载先运行项目脚本做网络清�
 版本/build number、固定 App 路径、签名、许可证与 SHA256，完成安装及基础连接确认后公开。
 归档正式产物、commit、工具版本和脱敏的协议/数据样本，不归档真实私钥、凭据或 Cookie。
 发布前将 CHANGELOG 的准备条目整理为对应版本说明，公开后补记实际发布日期并更新 README 的公开状态；后续修复递增 PATCH。
+
+安装包命名使用小写 `fncpn-<version>-<os>-<arch>[-unsigned].<extension>`，系统为 `macos`、`windows`、`fnos`，架构为 `arm64`、`x64`。fnOS manifest 内的 `x86`/`arm` 平台标识保持不变，仅对外文件名统一。`release-<version>.json` 与 `SHA256SUMS-<version>` 为发布清单和校验和，沿用现有名称。已公开安装包不改名，Homebrew 生成器支持历史文件名。

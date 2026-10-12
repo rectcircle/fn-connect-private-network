@@ -94,7 +94,7 @@ bootstrapper 安装失败会令 MSI 安装失败。共享 Runtime 不会随 FnCP
 `%LOCALAPPDATA%\FnCPN`：
 
 ```powershell
-msiexec.exe /x .\FnCPN-1.0.4-arm64-unsigned.msi PURGE_CURRENT_USER_DATA=1
+msiexec.exe /x .\fncpn-1.0.4-windows-arm64-unsigned.msi PURGE_CURRENT_USER_DATA=1
 ```
 
 该动作先请求停止当前用户的 Go daemon，再清理该用户的数据和日志；不会遍历或清理其他

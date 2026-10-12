@@ -16,7 +16,9 @@ if release['isDraft'] or release['isPrerelease']:
 manifest = json.loads(subprocess.check_output(['gh', 'release', 'download', 'v' + version, '--repo', repository, '--pattern', f'release-{version}.json', '--output', '-'], text=True))
 if manifest['version'] != version:
     raise SystemExit('Manifest version mismatch')
-artifact = next(a for a in manifest['artifacts'] if a['file'] == f'FnCPN-{version}-arm64-unsigned.pkg')
+candidate_names = [f'fncpn-{version}-macos-arm64-unsigned.pkg', f'FnCPN-{version}-arm64-unsigned.pkg']
+artifact = next(a for name in candidate_names for a in manifest['artifacts'] if a['file'] == name)
+package_template = artifact['file'].replace(version, '#{version}')
 sha = artifact['sha256']
 if not re.fullmatch('[0-9a-f]{64}', sha):
     raise SystemExit('Invalid checksum')
@@ -25,7 +27,7 @@ body = '''cask "TOKEN" do
   version "VERSION"
   sha256 "SHA256"
 
-  url "https://github.com/rectcircle/fn-connect-private-network/releases/download/v#{version}/FnCPN-#{version}-arm64-unsigned.pkg"
+  url "https://github.com/rectcircle/fn-connect-private-network/releases/download/v#{version}/PACKAGE_FILENAME"
   name "FnCPN"
   desc "Private networking for fnOS through FN Connect"
   homepage "https://github.com/rectcircle/fn-connect-private-network"
@@ -33,7 +35,7 @@ body = '''cask "TOKEN" do
   depends_on arch: :arm64
   depends_on macos: :ventura
 
-  pkg "FnCPN-#{version}-arm64-unsigned.pkg"
+  pkg "PACKAGE_FILENAME"
 
   uninstall script: {
     executable: "/Library/PrivilegedHelperTools/cn.rectcircle.fncpn/uninstall.sh",
@@ -52,7 +54,7 @@ body = '''cask "TOKEN" do
   EOS
 end
 '''
-for key, value in [('TOKEN', token), ('VERSION', version), ('SHA256', sha)]:
+for key, value in [('TOKEN', token), ('VERSION', version), ('SHA256', sha), ('PACKAGE_FILENAME', package_template)]:
     body = body.replace(key, value)
 path = pathlib.Path('Casks') / (token + '.rb')
 path.parent.mkdir(exist_ok=True)

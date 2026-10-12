@@ -7,7 +7,7 @@ class ReleaseInventoryTest(unittest.TestCase):
         for architecture in ('arm64', 'x64'):
             candidate = root / 'windows' / architecture
             candidate.mkdir(parents=True)
-            package = f'FnCPN-{version}-{architecture}-unsigned.msi'
+            package = f'fncpn-{version}-windows-{architecture}-unsigned.msi'
             contents = f'{architecture} package'.encode()
             (candidate / package).write_bytes(contents)
             (candidate / 'build-manifest.json').write_text(json.dumps({
@@ -23,11 +23,11 @@ class ReleaseInventoryTest(unittest.TestCase):
     def test_inventory_is_exact_and_release_cannot_be_overwritten(self):
         with tempfile.TemporaryDirectory() as directory:
             root = pathlib.Path(directory)
-            names = ['FnCPN-1.0.0-arm64-unsigned.pkg', 'fncpn-1.0.0-arm.fpk', 'fncpn-1.0.0-x86.fpk']
+            names = ['fncpn-1.0.0-macos-arm64-unsigned.pkg', 'fncpn-1.0.0-fnos-arm64.fpk', 'fncpn-1.0.0-fnos-x64.fpk']
             for name in names:
                 (root / name).write_bytes(b'package')
             self.create_windows_candidates(root)
-            (root / 'fncpn-0.1.0-arm.fpk').write_bytes(b'historical')
+            (root / 'fncpn-0.1.0-fnos-arm64.fpk').write_bytes(b'historical')
             command = [sys.executable, str(SCRIPT), str(root), '1.0.0', 'commit', 'arm64']
             environment = dict(os.environ, RELEASE='1')
             empty_path = root / 'empty-bin'
@@ -36,9 +36,9 @@ class ReleaseInventoryTest(unittest.TestCase):
             subprocess.run(command, env=environment, check=True, capture_output=True)
             before = (root / 'release-1.0.0.json').read_bytes()
             record = json.loads(before)
-            all_names = names + ['FnCPN-1.0.0-arm64-unsigned.msi', 'FnCPN-1.0.0-x64-unsigned.msi']
+            all_names = names + ['fncpn-1.0.0-windows-arm64-unsigned.msi', 'fncpn-1.0.0-windows-x64-unsigned.msi']
             self.assertEqual([a['file'] for a in record['artifacts']], all_names)
-            self.assertEqual(record['artifacts'][3]['path'], 'windows/arm64/FnCPN-1.0.0-arm64-unsigned.msi')
+            self.assertEqual(record['artifacts'][3]['path'], 'windows/arm64/fncpn-1.0.0-windows-arm64-unsigned.msi')
             self.assertEqual(record['build']['windowsArchitectures'], ['arm64', 'x64'])
             self.assertEqual(record['commit'], 'commit')
             self.assertEqual(record['build']['go'], 'unavailable')
@@ -57,7 +57,7 @@ class ReleaseInventoryTest(unittest.TestCase):
         ):
             with self.subTest(message=message), tempfile.TemporaryDirectory() as directory:
                 root = pathlib.Path(directory)
-                for name in ('FnCPN-1.0.0-arm64-unsigned.pkg', 'fncpn-1.0.0-arm.fpk', 'fncpn-1.0.0-x86.fpk'):
+                for name in ('fncpn-1.0.0-macos-arm64-unsigned.pkg', 'fncpn-1.0.0-fnos-arm64.fpk', 'fncpn-1.0.0-fnos-x64.fpk'):
                     (root / name).write_bytes(b'package')
                 self.create_windows_candidates(root)
                 manifest_path = root / 'windows/arm64/build-manifest.json'

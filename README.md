@@ -19,11 +19,11 @@ FnCPN 在自身的 fnOS HTTPS/WSS 连接中使用系统信任及内置、指纹�
 
 | 设备 | 选择的文件 |
 | --- | --- |
-| x86_64 NAS | `fncpn-<version>-x86.fpk` |
-| ARM64 NAS | `fncpn-<version>-arm.fpk` |
-| Apple Silicon Mac | `FnCPN-<version>-arm64-unsigned.pkg` |
-| Windows ARM64 | `FnCPN-<version>-arm64-unsigned.msi` |
-| Windows x64 | `FnCPN-<version>-x64-unsigned.msi` |
+| x86_64 NAS | `fncpn-<version>-fnos-x64.fpk` |
+| ARM64 NAS | `fncpn-<version>-fnos-arm64.fpk` |
+| Apple Silicon Mac | `fncpn-<version>-macos-arm64-unsigned.pkg` |
+| Windows ARM64 | `fncpn-<version>-windows-arm64-unsigned.msi` |
+| Windows x64 | `fncpn-<version>-windows-x64-unsigned.msi` |
 
 ### Windows：安装
 
@@ -44,8 +44,8 @@ Windows 正式安装包从 1.0.4 开始提供；RC 按发布顺序安装，公�
 例如，安装下载到「下载」目录的包（将文件名替换为实际版本）：
 
 ```bash
-/usr/bin/xattr -d com.apple.quarantine "$HOME/Downloads/FnCPN-<version>-arm64-unsigned.pkg"
-open "$HOME/Downloads/FnCPN-<version>-arm64-unsigned.pkg"
+/usr/bin/xattr -d com.apple.quarantine "$HOME/Downloads/fncpn-<version>-macos-arm64-unsigned.pkg"
+open "$HOME/Downloads/fncpn-<version>-macos-arm64-unsigned.pkg"
 ```
 
 按安装器提示输入管理员密码。安装完成后打开 App：

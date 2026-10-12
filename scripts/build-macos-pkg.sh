@@ -13,7 +13,7 @@ if [ "$ARCH" != arm64 ] || [ "$(uname -m)" != arm64 ]; then
   echo "The macOS release requires an Apple Silicon build host and arm64 target" >&2; exit 1
 fi
 if [ "${RELEASE:-0}" = 1 ]; then
- for artifact in "${DIST_DIR}/FnCPN-${VERSION}-${ARCH}-unsigned.pkg"; do
+ for artifact in "${DIST_DIR}/fncpn-${VERSION}-macos-${ARCH}-unsigned.pkg"; do
   if [ -e "$artifact" ]; then echo "Refusing to replace release artifact: $artifact" >&2; exit 1; fi
  done
 fi
@@ -120,7 +120,7 @@ fi
 ln -s "/Library/PrivilegedHelperTools/cn.rectcircle.fncpn/fncpn" \
   "${PAYLOAD}/usr/local/bin/fncpn"
 
-OUTPUT="${DIST_DIR}/FnCPN-${VERSION}-${ARCH}-unsigned.pkg"
+OUTPUT="${DIST_DIR}/fncpn-${VERSION}-macos-${ARCH}-unsigned.pkg"
 RAW_OUTPUT="${BUILD_DIR}/raw.pkg"
 EXPANDED_PACKAGE="${BUILD_DIR}/expanded"
 BOM_LIST="${BUILD_DIR}/bom.list"

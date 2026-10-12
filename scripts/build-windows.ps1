@@ -1248,7 +1248,7 @@ foreach ($architecture in $architectures) {
     $licenseRtf = Join-Path $stage 'License.rtf'
     $licenseText = (Get-Content (Join-Path $projectRoot 'LICENSE') -Raw).Replace('\', '\\').Replace('{', '\{').Replace('}', '\}').Replace("`r", '').Replace("`n", '\par ' )
     [IO.File]::WriteAllText($licenseRtf, ('{\rtf1\ansi ' + $licenseText + '}'), [Text.Encoding]::ASCII)
-    $msi = Join-Path $stage "FnCPN-$version-$architecture-unsigned.msi"
+    $msi = Join-Path $stage "fncpn-$version-windows-$architecture-unsigned.msi"
     Invoke-Checked $wix @('-acceptEula', 'wix7', 'build', $source, '-arch', $architecture, '-ext', $wixUtilExtension, '-ext', $wixUiExtension, '-d', "LicenseRtf=$licenseRtf", '-d', "PayloadDir=$payload", '-o', $msi, '-intermediatefolder', (Join-Path $stage 'wix-obj'))
     Assert-MsiUpgradeMetadata $msi $architecture $installerVersion
     $recoveryValidationSource = Join-Path $stage 'RecoveryValidation.wxs'

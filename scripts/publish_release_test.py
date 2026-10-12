@@ -30,7 +30,7 @@ class PublicationTest(unittest.TestCase):
                 for architecture in ('arm64', 'x64'):
                     if architecture == missing_architecture:
                         continue
-                    name = f'FnCPN-{version}-{architecture}-unsigned.msi'
+                    name = f'fncpn-{version}-windows-{architecture}-unsigned.msi'
                     source = out / name if flattened else out / 'windows' / architecture / name
                     source.parent.mkdir(parents=True, exist_ok=True)
                     source.write_bytes(architecture.encode())
@@ -59,7 +59,7 @@ class PublicationTest(unittest.TestCase):
                     if args[:2] == ('gh', 'api') and '/git/ref/' in args[-1]:
                         return json.dumps({'object': {'type': 'commit', 'sha': 'commit'}})
                     if args[:2] == ('gh', 'api'):
-                        return json.dumps([[] if draft is None else [{'tag_name': 'v' + version, 'draft': draft}]])
+                        return json.dumps([[] if draft is None else [{'tag_name': 'v' + version, 'draft': draft, 'assets': [{'name': f'FnCPN-{version}-arm64-unsigned.msi'}]}]])
                     if args[:3] == ('gh', 'release', 'view') and 'isDraft,assets' in args:
                         return json.dumps({'isDraft': True, 'assets': []})
                     if args[:3] == ('gh', 'release', 'download'):
@@ -69,7 +69,7 @@ class PublicationTest(unittest.TestCase):
                         for p in (out / f'release-{version}.json', out / f'SHA256SUMS-{version}'):
                             (target / p.name).write_bytes(p.read_bytes())
                         if corrupt:
-                            (target / f'FnCPN-{version}-arm64-unsigned.msi').write_bytes(b'corrupt')
+                            (target / f'fncpn-{version}-windows-arm64-unsigned.msi').write_bytes(b'corrupt')
                     return 'https://example.invalid/release'
 
                 with patch.object(publisher, 'run', run):
@@ -78,6 +78,8 @@ class PublicationTest(unittest.TestCase):
                             publisher.publish(out, 'owner/repo', publish)
                     else:
                         publisher.publish(out, 'owner/repo', publish)
+                deletions = [c for c in calls if c[:3] == ('gh', 'release', 'delete-asset')]
+                self.assertEqual(len(deletions), 1 if draft is True else 0)
                 uploads = [c for c in calls if c[:3] == ('gh', 'release', 'upload')]
                 if uploads:
                     self.assertTrue(all(str(source.resolve()) in uploads[0] for source in sources.values()))
@@ -136,7 +138,7 @@ class PublicationTest(unittest.TestCase):
                 out.mkdir()
                 artifacts = []
                 for architecture in ('arm64', 'x64'):
-                    name = f'FnCPN-1.0.0-{architecture}-unsigned.msi'
+                    name = f'fncpn-1.0.0-windows-{architecture}-unsigned.msi'
                     payload = root / name
                     payload.write_bytes(architecture.encode())
                     sha = hashlib.sha256(architecture.encode()).hexdigest()

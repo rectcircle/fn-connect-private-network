@@ -52,8 +52,8 @@ def publish(directory, repository, make_public=False):
             raise SystemExit('Release artifact path escapes inventory directory: ' + str(relative))
         sources[artifact['file']] = source
     required_windows_assets = {
-        f'FnCPN-{version}-arm64-unsigned.msi',
-        f'FnCPN-{version}-x64-unsigned.msi',
+        f'fncpn-{version}-windows-arm64-unsigned.msi',
+        f'fncpn-{version}-windows-x64-unsigned.msi',
     }
     if not required_windows_assets.issubset(sources):
         missing = ', '.join(sorted(required_windows_assets - set(sources)))
@@ -95,6 +95,14 @@ def publish(directory, repository, make_public=False):
     if draft:
         run('gh', 'release', 'upload', tag, '--repo', repository, '--clobber',
             *(str(sources.get(name, directory / name)) for name in names))
+        # A private draft may replace its legacy installer names. Public assets
+        # remain immutable; unrelated files still fail the exact inventory check.
+        legacy = {f'FnCPN-{version}-arm64-unsigned.pkg',
+                  f'FnCPN-{version}-arm64-unsigned.msi', f'FnCPN-{version}-x64-unsigned.msi',
+                  f'fncpn-{version}-arm.fpk', f'fncpn-{version}-x86.fpk'}
+        for asset in release.get('assets', []):
+            if asset['name'] in legacy and asset['name'] not in names:
+                run('gh', 'release', 'delete-asset', tag, asset['name'], '--repo', repository, '--yes')
     # Never mutate a public release. Re-runs succeed only if every byte matches.
     with tempfile.TemporaryDirectory(prefix='fncpn-release-verify-') as temporary:
         run('gh', 'release', 'download', tag, '--repo', repository, '--dir', temporary)

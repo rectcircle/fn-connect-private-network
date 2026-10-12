@@ -6,7 +6,7 @@ root = pathlib.Path(root)
 target = root / f"release-{version}.json"
 if os.environ.get("RELEASE") == "1" and target.exists():
     raise SystemExit(f"Release already recorded: {target}")
-names = [f"FnCPN-{version}-{arch}-unsigned.pkg", f"fncpn-{version}-arm.fpk", f"fncpn-{version}-x86.fpk"]
+names = [f"fncpn-{version}-macos-{arch}-unsigned.pkg", f"fncpn-{version}-fnos-arm64.fpk", f"fncpn-{version}-fnos-x64.fpk"]
 artifacts = [{"file": name, "sha256": hashlib.sha256((root / name).read_bytes()).hexdigest()} for name in names]
 
 # Windows packages are built on Windows so WPF, WiX, and PE validation use the
@@ -20,7 +20,7 @@ for windows_arch in ("arm64", "x64"):
         build = json.loads(manifest_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as error:
         raise SystemExit(f"Missing or invalid Windows {windows_arch} build manifest: {error}")
-    package_name = f"FnCPN-{version}-{windows_arch}-unsigned.msi"
+    package_name = f"fncpn-{version}-windows-{windows_arch}-unsigned.msi"
     if build.get("productVersion") != version or build.get("commit") != revision:
         raise SystemExit(f"Windows {windows_arch} build does not match release version and commit")
     if build.get("architecture") != windows_arch or build.get("workingTreeDirty") is not False or build.get("signed") is not False:

@@ -92,9 +92,9 @@ jobs:
         with:
           name: windows-release-candidates-${{ inputs.tag || github.ref_name }}
           path: |
-            dist/windows/arm64/FnCPN-*-arm64-unsigned.msi
+            dist/windows/arm64/fncpn-*-windows-arm64-unsigned.msi
             dist/windows/arm64/build-manifest.json
-            dist/windows/x64/FnCPN-*-x64-unsigned.msi
+            dist/windows/x64/fncpn-*-windows-x64-unsigned.msi
             dist/windows/x64/build-manifest.json
           if-no-files-found: error
   release:

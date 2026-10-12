@@ -33,7 +33,7 @@ class CaskChannelTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             try:
                 os.chdir(temporary)
-                replies = [json.dumps({'isDraft': False, 'isPrerelease': False}), json.dumps({'version': '1.0.0', 'artifacts': [{'file': 'FnCPN-1.0.0-arm64-unsigned.pkg', 'sha256': 'a' * 64}]})]
+                replies = [json.dumps({'isDraft': False, 'isPrerelease': False}), json.dumps({'version': '1.0.0', 'artifacts': [{'file': 'fncpn-1.0.0-macos-arm64-unsigned.pkg', 'sha256': 'a' * 64}]})]
                 with patch('sys.argv', [str(SCRIPT), '1.0.0']), patch('subprocess.check_output', side_effect=replies), contextlib.redirect_stdout(io.StringIO()):
                     runpy.run_path(str(SCRIPT), run_name='__main__')
                 self.assertEqual([p.name for p in pathlib.Path('Casks').iterdir()], ['fncpn.rb'])
@@ -42,6 +42,23 @@ class CaskChannelTest(unittest.TestCase):
                 self.assertIn('version "1.0.0"', text)
                 self.assertIn('sha256 "' + 'a' * 64 + '"', text)
                 self.assertNotIn('fncpn-rc', text)
+            finally:
+                os.chdir(previous)
+
+    def test_historical_public_release_retains_legacy_filename(self):
+        previous = pathlib.Path.cwd()
+        with tempfile.TemporaryDirectory() as temporary:
+            try:
+                os.chdir(temporary)
+                replies = [json.dumps({'isDraft': False, 'isPrerelease': False}), json.dumps({'version': '1.0.0', 'artifacts': [{'file': 'FnCPN-1.0.0-arm64-unsigned.pkg', 'sha256': 'a' * 64}]})]
+                with patch('sys.argv', [str(SCRIPT), '1.0.0']), patch('subprocess.check_output', side_effect=replies), contextlib.redirect_stdout(io.StringIO()):
+                    runpy.run_path(str(SCRIPT), run_name='__main__')
+                self.assertEqual([p.name for p in pathlib.Path('Casks').iterdir()], ['fncpn.rb'])
+                text = pathlib.Path('Casks/fncpn.rb').read_text()
+                self.assertIn('cask "fncpn"', text)
+                self.assertIn('version "1.0.0"', text)
+                self.assertIn('sha256 "' + 'a' * 64 + '"', text)
+                self.assertIn('FnCPN-#{version}-arm64-unsigned.pkg', text)
             finally:
                 os.chdir(previous)
 

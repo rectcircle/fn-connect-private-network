@@ -9,7 +9,7 @@ trap 'rm -rf "$BUILD_DIR"' EXIT
 DIST_DIR="${DIST_DIR:-${ROOT_DIR}/dist}"
 source "${ROOT_DIR}/scripts/release-version.sh"
 if [ "${RELEASE:-0}" = 1 ]; then
- for artifact in "${DIST_DIR}/fncpn-${VERSION}-x86.fpk" "${DIST_DIR}/fncpn-${VERSION}-arm.fpk"; do
+ for artifact in "${DIST_DIR}/fncpn-${VERSION}-fnos-x64.fpk" "${DIST_DIR}/fncpn-${VERSION}-fnos-arm64.fpk"; do
   if [ -e "$artifact" ]; then echo "Refusing to replace release artifact: $artifact" >&2; exit 1; fi
  done
 fi
@@ -30,6 +30,7 @@ resolve_fnpack() {
 build_target() {
     local platform="$1"
     local goarch="$2"
+    local release_arch="$3"
     local stage="${BUILD_DIR}/fnos-${platform}"
     rm -rf "$stage"
     mkdir -p "$stage/app/server" "$stage/app/ui/images" "$DIST_DIR"
@@ -61,7 +62,7 @@ build_target() {
         echo "fnpack produced no package for ${platform}" >&2
         return 1
     fi
-    mv "$artifact" "${DIST_DIR}/fncpn-${VERSION}-${platform}.fpk"
+    mv "$artifact" "${DIST_DIR}/fncpn-${VERSION}-fnos-${release_arch}.fpk"
 }
 
 FNPACK_BIN="$(resolve_fnpack)"
@@ -73,7 +74,7 @@ if [ "$(uname -s)" = "Darwin" ]; then
 fi
 
 (cd "$ROOT_DIR" && go test ./...)
-build_target x86 amd64
-build_target arm arm64
+build_target x86 amd64 x64
+build_target arm arm64 arm64
 
 ls -lh "${DIST_DIR}/fncpn-${VERSION}-"*.fpk
