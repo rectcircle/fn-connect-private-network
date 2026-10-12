@@ -62,12 +62,15 @@ func TestRelayReconnectLogsAndReportsPermanentRejection(t *testing.T) {
 func TestRelayReconnectSuccessIsLogged(t *testing.T) {
 	var attempts atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Count the request before Accept sends the handshake response: the client
+		// can report reconnection before this handler resumes after Accept.
+		attempt := attempts.Add(1)
 		connection, err := websocket.Accept(w, r, nil)
 		if err != nil {
 			return
 		}
 		defer connection.CloseNow()
-		if attempts.Add(1) == 1 {
+		if attempt == 1 {
 			_ = connection.Close(websocket.StatusGoingAway, "reconnect fixture")
 			return
 		}
