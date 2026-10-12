@@ -1435,7 +1435,7 @@ public partial class MainWindow : Window
         if (failure.Code == "VERSION_INCOMPATIBLE") details.Add($"client {failure.ClientVersion ?? "?"}, server {failure.ServerVersion ?? "?"}");
         var result = summary + "\n" + L("详细信息") + ": " + string.Join(": ", details);
         if (failure.Code == "VERSION_INCOMPATIBLE" && !string.IsNullOrWhiteSpace(failure.ReleaseURL))
-            result += "\n" + L("版本下载：{0}", failure.ReleaseURL);
+            result += "\n" + string.Format(L("版本下载：{0}"), failure.ReleaseURL);
         return result;
     }
 

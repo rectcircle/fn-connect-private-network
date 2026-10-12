@@ -1204,9 +1204,14 @@ foreach ($architecture in $architectures) {
     $serviceUpgrade = '{9E9B33D6-B243-4AA7-A054-B9F3E28A80A4}'
     $wxs = [Text.StringBuilder]::new()
     [void]$wxs.AppendLine('<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs" xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util" xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui">')
-    [void]$wxs.AppendLine("<Package Name=`"FnCPN`" Manufacturer=`"FnCPN`" Version=`"$(Escape-Xml $installerVersion)`" UpgradeCode=`"$serviceUpgrade`" Scope=`"perMachine`" InstallerVersion=`"500`" Compressed=`"yes`">")
+    [void]$wxs.AppendLine("<Package Name=`"FnCPN`" Manufacturer=`"rectcircle`" Version=`"$(Escape-Xml $installerVersion)`" UpgradeCode=`"$serviceUpgrade`" Scope=`"perMachine`" InstallerVersion=`"500`" Compressed=`"yes`">")
     [void]$wxs.AppendLine('<ui:WixUI Id="WixUI_Minimal" /><WixVariable Id="WixUILicenseRtf" Value="$(var.LicenseRtf)" />')
     [void]$wxs.AppendLine('<Property Id="MSIDEPLOYMENTCOMPLIANT" Value="1" />')
+    [void]$wxs.AppendLine('<Property Id="ARPCONTACT" Value="rectcircle" />')
+    [void]$wxs.AppendLine('<Property Id="ARPHELPLINK" Value="https://github.com/rectcircle/fn-connect-private-network/issues" />')
+    [void]$wxs.AppendLine('<Property Id="ARPURLINFOABOUT" Value="https://github.com/rectcircle/fn-connect-private-network" />')
+    [void]$wxs.AppendLine('<Property Id="ARPURLUPDATEINFO" Value="https://github.com/rectcircle/fn-connect-private-network/releases" />')
+    [void]$wxs.AppendLine('<Property Id="ARPCOMMENTS" Value="Contact: rectcircle96@gmail.com" />')
     # HKLM's 32-bit view is SOFTWARE\WOW6432Node on both supported architectures.
     # HKCU\Software is shared; search the initiating user's runtime before elevation.
     [void]$wxs.AppendLine('<Property Id="WEBVIEW2_MACHINE_VERSION" Secure="yes"><RegistrySearch Id="WebView2MachineSearch" Root="HKLM" Key="SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}" Name="pv" Type="raw" Bitness="always32" /></Property>')

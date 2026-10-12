@@ -13,6 +13,7 @@
 - macOS 诊断详情补齐标准复制和全选快捷键；Windows 诊断详情支持选择并复制文字。
 - 版本不兼容时，诊断详情提供需要升级一端的对应 GitHub Release 下载链接；完整诊断复制保留链接，支持 RC 版本。
 - fnOS 应用描述提供安装包对应版本的 GitHub Release 下载链接，随打包版本同步更新。
+- 安装包作者统一为 rectcircle，联系邮箱为 rectcircle96@gmail.com；补齐 fnOS、Windows 和 macOS 的项目官网及作者元数据。
 
 ### 升级与验证范围
 

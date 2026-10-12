@@ -12,6 +12,14 @@
   <string>cn.rectcircle.fncpn</string>
   <key>CFBundleInfoDictionaryVersion</key>
   <string>6.0</string>
+  <key>NSHumanReadableCopyright</key>
+  <string>Copyright (c) 2026 rectcircle</string>
+  <key>FnCPNAuthor</key>
+  <string>rectcircle</string>
+  <key>FnCPNSupportEmail</key>
+  <string>rectcircle96@gmail.com</string>
+  <key>FnCPNHomepage</key>
+  <string>https://github.com/rectcircle/fn-connect-private-network</string>
   <key>CFBundleName</key>
   <string>FnCPN</string>
   <key>CFBundleIconFile</key>

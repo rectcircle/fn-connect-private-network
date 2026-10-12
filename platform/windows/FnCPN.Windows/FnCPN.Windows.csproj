@@ -7,6 +7,12 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>FnCPN</AssemblyName>
+    <Product>FnCPN</Product>
+    <Authors>rectcircle</Authors>
+    <Company>rectcircle</Company>
+    <Copyright>Copyright (c) 2026 rectcircle</Copyright>
+    <PackageProjectUrl>https://github.com/rectcircle/fn-connect-private-network</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/rectcircle/fn-connect-private-network</RepositoryUrl>
     <RootNamespace>FnCPN.Windows</RootNamespace>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
