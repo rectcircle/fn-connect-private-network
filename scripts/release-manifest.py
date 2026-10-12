@@ -6,7 +6,7 @@ root = pathlib.Path(root)
 target = root / f"release-{version}.json"
 if os.environ.get("RELEASE") == "1" and target.exists():
     raise SystemExit(f"Release already recorded: {target}")
-names = [f"fncpn-{version}-macos-{arch}-unsigned.pkg", f"fncpn-{version}-fnos-arm64.fpk", f"fncpn-{version}-fnos-x64.fpk"]
+names = [f"fncpn-{version}-macos-arm64-unsigned.pkg", f"fncpn-{version}-macos-x64-unsigned.pkg", f"fncpn-{version}-fnos-arm64.fpk", f"fncpn-{version}-fnos-x64.fpk"]
 artifacts = [{"file": name, "sha256": hashlib.sha256((root / name).read_bytes()).hexdigest()} for name in names]
 
 # Windows packages are built on Windows so WPF, WiX, and PE validation use the
@@ -52,6 +52,7 @@ metadata = {"version": version, "commit": revision,
                       "deploymentTarget": os.environ.get("MACOSX_DEPLOYMENT_TARGET", "13.0"),
                       "fnpackVersion": "1.2.3",
                       "windowsSourceFingerprint": windows_fingerprint,
+                      "macosArchitectures": ["arm64", "x64"],
                       "windowsArchitectures": ["arm64", "x64"]}}
 with target.open("x" if os.environ.get("RELEASE") == "1" else "w") as output:
     output.write(json.dumps(metadata, indent=2) + "\n")

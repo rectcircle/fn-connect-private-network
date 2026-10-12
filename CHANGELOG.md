@@ -10,6 +10,7 @@
 
 ### Fixed
 
+- 提供 Intel x64 macOS 安装包，Homebrew 按 Mac 架构选择 arm64/x64 包；最低 macOS 版本仍为 13。Intel 实机安装与网络功能待验收。
 - macOS 诊断详情补齐标准复制和全选快捷键；Windows 诊断详情支持选择并复制文字。
 - 版本不兼容时，诊断详情提供需要升级一端的对应 GitHub Release 下载链接；完整诊断复制保留链接，支持 RC 版本。
 - fnOS 应用描述提供安装包对应版本的 GitHub Release 下载链接，随打包版本同步更新。

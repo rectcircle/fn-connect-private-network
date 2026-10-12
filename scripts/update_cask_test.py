@@ -45,6 +45,26 @@ class CaskChannelTest(unittest.TestCase):
             finally:
                 os.chdir(previous)
 
+    def test_dual_architecture_release_selects_matching_package(self):
+        previous = pathlib.Path.cwd()
+        with tempfile.TemporaryDirectory() as temporary:
+            try:
+                os.chdir(temporary)
+                replies = [json.dumps({'isDraft': False, 'isPrerelease': False}), json.dumps({'version': '1.0.0', 'artifacts': [{'file': 'fncpn-1.0.0-macos-arm64-unsigned.pkg', 'sha256': 'a' * 64}, {'file': 'fncpn-1.0.0-macos-x64-unsigned.pkg', 'sha256': 'b' * 64}]})]
+                with patch('sys.argv', [str(SCRIPT), '1.0.0']), patch('subprocess.check_output', side_effect=replies), contextlib.redirect_stdout(io.StringIO()):
+                    runpy.run_path(str(SCRIPT), run_name='__main__')
+                self.assertEqual([p.name for p in pathlib.Path('Casks').iterdir()], ['fncpn.rb'])
+                text = pathlib.Path('Casks/fncpn.rb').read_text()
+                self.assertIn('cask "fncpn"', text)
+                self.assertIn('version "1.0.0"', text)
+                self.assertIn('sha256 arm: "' + 'a' * 64 + '", intel: "' + 'b' * 64 + '"', text)
+                self.assertIn('macos-#{arch}-unsigned.pkg', text)
+                self.assertLess(text.index('arch arm:'), text.index('  url '))
+                self.assertNotIn('depends_on arch:', text)
+                self.assertNotIn('fncpn-rc', text)
+            finally:
+                os.chdir(previous)
+
     def test_historical_public_release_retains_legacy_filename(self):
         previous = pathlib.Path.cwd()
         with tempfile.TemporaryDirectory() as temporary:

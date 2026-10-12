@@ -4,7 +4,7 @@
 
 ## 使用条件
 
-- Apple Silicon Mac，macOS 13 或更新版本。
+- Apple Silicon 或 Intel Mac，macOS 13 或更新版本。
 - Windows 客户端：Windows 10 22H2（build 19045）或更新的 ARM64/x64 系统，不支持 32 位或 Windows Server；目前日常功能实测通过的是 Windows 11 ARM64，原生 x64 和 Windows 10 待验收。
 - 已启用 FN Connect 的 fnOS NAS，支持 x86_64 和 ARM64。
 - fnOS 用户账号。普通用户可以连接；安装软件和修改服务端网络设置需要管理员权限。
@@ -22,6 +22,7 @@ FnCPN 在自身的 fnOS HTTPS/WSS 连接中使用系统信任及内置、指纹�
 | x86_64 NAS | `fncpn-<version>-fnos-x64.fpk` |
 | ARM64 NAS | `fncpn-<version>-fnos-arm64.fpk` |
 | Apple Silicon Mac | `fncpn-<version>-macos-arm64-unsigned.pkg` |
+| Intel Mac | `fncpn-<version>-macos-x64-unsigned.pkg` |
 | Windows ARM64 | `fncpn-<version>-windows-arm64-unsigned.msi` |
 | Windows x64 | `fncpn-<version>-windows-x64-unsigned.msi` |
 
@@ -76,7 +77,7 @@ Homebrew 校验下载包，然后通过 `sudo` 调用系统命令行安装器，
 
 ### 自行编译
 
-如果不信任预编译安装包，请先审查源码，再从选定的发布 tag 自行构建。macOS 构建需要 Apple Silicon Mac、Go 1.27、Python 3 和 Xcode/Swift 工具链。
+如果不信任预编译安装包，请先审查源码，再从选定的发布 tag 自行构建。macOS 构建需要 Mac、Go 1.27、Python 3 和 Xcode/Swift 工具链。
 
 ```bash
 git clone https://github.com/rectcircle/fn-connect-private-network.git

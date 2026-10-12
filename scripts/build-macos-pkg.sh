@@ -9,9 +9,11 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DIST_DIR="${DIST_DIR:-${ROOT_DIR}/dist}"
 source "${ROOT_DIR}/scripts/release-version.sh"
 ARCH="${ARCH:-arm64}"
-if [ "$ARCH" != arm64 ] || [ "$(uname -m)" != arm64 ]; then
-  echo "The macOS release requires an Apple Silicon build host and arm64 target" >&2; exit 1
-fi
+case "$ARCH" in
+  arm64) GO_ARCH=arm64; MACH_ARCH=arm64 ;;
+  x64) GO_ARCH=amd64; MACH_ARCH=x86_64 ;;
+  *) echo "Unsupported macOS architecture: $ARCH (expected arm64 or x64)" >&2; exit 1 ;;
+esac
 if [ "${RELEASE:-0}" = 1 ]; then
  for artifact in "${DIST_DIR}/fncpn-${VERSION}-macos-${ARCH}-unsigned.pkg"; do
   if [ -e "$artifact" ]; then echo "Refusing to replace release artifact: $artifact" >&2; exit 1; fi
@@ -28,7 +30,7 @@ if [ "$(uname -s)" != "Darwin" ]; then
   echo "macOS package must be built on macOS" >&2
   exit 1
 fi
-for tool in go python3 swiftc pkgbuild pkgutil plutil codesign bsdtar lsbom mkbom gzip iconutil otool; do
+for tool in go python3 swiftc pkgbuild pkgutil plutil codesign bsdtar lsbom mkbom gzip iconutil otool lipo; do
   command -v "$tool" >/dev/null || {
     echo "missing build dependency: $tool" >&2
     exit 1
@@ -52,7 +54,7 @@ iconutil -c icns "${ASSET_DIR}/AppIcon.iconset"
 (
   cd "$ROOT_DIR"
   go test ./...
-  CGO_ENABLED=1 GOOS=darwin GOARCH="$ARCH" go build \
+  CGO_ENABLED=1 GOOS=darwin GOARCH="$GO_ARCH" CC="clang -arch $MACH_ARCH" go build \
     -trimpath \
     -ldflags "-s -w -X github.com/rectcircle/fn-connect-private-network/internal/version.Revision=${REVISION}" \
     -o "${TOOL_DIR}/fncpn" \
@@ -60,7 +62,7 @@ iconutil -c icns "${ASSET_DIR}/AppIcon.iconset"
 )
 
 swiftc \
-  -target "${ARCH}-apple-macos${MACOSX_DEPLOYMENT_TARGET}" \
+  -target "${MACH_ARCH}-apple-macos${MACOSX_DEPLOYMENT_TARGET}" \
   -O \
   -parse-as-library \
   -framework AppKit \
@@ -70,6 +72,11 @@ swiftc \
   "${ROOT_DIR}/platform/macos/FnCPNApp.swift" \
   -o "${APP_DIR}/Contents/MacOS/FnCPN"
 
+for binary in "${APP_DIR}/Contents/MacOS/FnCPN" "${TOOL_DIR}/fncpn"; do
+  if [ "$(lipo -archs "$binary")" != "$MACH_ARCH" ]; then
+    echo "Unexpected Mach-O architecture: $binary" >&2; exit 1
+  fi
+done
 minos="$(otool -l "${APP_DIR}/Contents/MacOS/FnCPN" | awk '/minos/{print $2; exit}')"
 if [ "$minos" != "$MACOSX_DEPLOYMENT_TARGET" ]; then
   echo "Swift binary minimum macOS $minos differs from deployment target $MACOSX_DEPLOYMENT_TARGET" >&2

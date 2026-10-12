@@ -19,7 +19,10 @@ if manifest['version'] != version:
 candidate_names = [f'fncpn-{version}-macos-arm64-unsigned.pkg', f'FnCPN-{version}-arm64-unsigned.pkg']
 artifact = next(a for name in candidate_names for a in manifest['artifacts'] if a['file'] == name)
 package_template = artifact['file'].replace(version, '#{version}')
+intel = next((a for a in manifest['artifacts'] if a['file'] == f'fncpn-{version}-macos-x64-unsigned.pkg'), None)
 sha = artifact['sha256']
+if intel is not None and not re.fullmatch('[0-9a-f]{64}', intel.get('sha256', '')):
+    raise SystemExit('Invalid Intel checksum')
 if not re.fullmatch('[0-9a-f]{64}', sha):
     raise SystemExit('Invalid checksum')
 token = 'fncpn'
@@ -56,6 +59,11 @@ end
 '''
 for key, value in [('TOKEN', token), ('VERSION', version), ('SHA256', sha), ('PACKAGE_FILENAME', package_template)]:
     body = body.replace(key, value)
+if intel is not None:
+    body = body.replace('  sha256 "' + sha + '"', '  sha256 arm: "' + sha + '", intel: "' + intel['sha256'] + '"')
+    body = body.replace('  depends_on arch: :arm64\n', '')
+    body = body.replace('  version "' + version + '"', '  version "' + version + '"\n  arch arm: "arm64", intel: "x64"')
+    body = body.replace(package_template, 'fncpn-#{version}-macos-#{arch}-unsigned.pkg')
 path = pathlib.Path('Casks') / (token + '.rb')
 path.parent.mkdir(exist_ok=True)
 path.write_text(body)

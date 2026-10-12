@@ -38,6 +38,7 @@ FPK 构建要求通过 `FNPACK` 或 `PATH` 显式提供 `fnpack`，不依赖本�
 服务端保持管理页面可用，由管理员修改后重试。
 
 - `fncpn-<version>-macos-arm64-unsigned.pkg`：Apple Silicon macOS 客户端。
+- `fncpn-<version>-macos-x64-unsigned.pkg`：Intel macOS 客户端。
 - `fncpn-<version>-fnos-x64.fpk`：x86_64 fnOS 服务端。
 - `fncpn-<version>-fnos-arm64.fpk`：ARM64 fnOS 服务端。
 
@@ -102,3 +103,5 @@ PKG Cask 安装使用系统 installer，卸载先运行项目脚本做网络清�
 发布前将 CHANGELOG 的准备条目整理为对应版本说明，公开后补记实际发布日期并更新 README 的公开状态；后续修复递增 PATCH。
 
 安装包命名使用小写 `fncpn-<version>-<os>-<arch>[-unsigned].<extension>`，系统为 `macos`、`windows`、`fnos`，架构为 `arm64`、`x64`。fnOS manifest 内的 `x86`/`arm` 平台标识保持不变，仅对外文件名统一。`release-<version>.json` 与 `SHA256SUMS-<version>` 为发布清单和校验和，沿用现有名称。已公开安装包不改名，Homebrew 生成器支持历史文件名。
+
+macOS 发布在 Apple Silicon runner 上构建 arm64 和 x64 两套 PKG，Swift 使用 `arm64`/`x86_64` target，Go 使用 `arm64`/`amd64` 并指定 cgo clang 架构。打包前校验 App 和 helper 的 Mach-O 架构。Intel 原生运行验证仍需 Intel Mac，不以交叉构建代替实机验收。
