@@ -24,12 +24,9 @@ func TestClientCLIConfirmationAndJSONContract(t *testing.T) {
 		startCLIContractServer(t, socket, handler)
 
 		var stdout, stderr strings.Builder
-		err := runClientCommandWithAuthorizationOpener(context.Background(), []string{
+		err := runClientCommand(context.Background(), []string{
 			"forget", "--socket", socket,
-		}, Environment{Stdout: &stdout, Stderr: &stderr}, func(context.Context, string, string) error {
-			t.Fatal("forget unexpectedly attempted to open authorization UI")
-			return nil
-		})
+		}, Environment{Stdout: &stdout, Stderr: &stderr})
 		if err == nil || !strings.Contains(err.Error(), "forget requires --yes") {
 			t.Fatalf("unconfirmed forget error = %v, want explicit confirmation requirement", err)
 		}
@@ -44,12 +41,9 @@ func TestClientCLIConfirmationAndJSONContract(t *testing.T) {
 		startCLIContractServer(t, socket, handler)
 
 		var stdout, stderr strings.Builder
-		err := runClientCommandWithAuthorizationOpener(context.Background(), []string{
+		err := runClientCommand(context.Background(), []string{
 			"forget", "--yes", "--socket", socket,
-		}, Environment{Stdout: &stdout, Stderr: &stderr}, func(context.Context, string, string) error {
-			t.Fatal("forget unexpectedly attempted to open authorization UI")
-			return nil
-		})
+		}, Environment{Stdout: &stdout, Stderr: &stderr})
 		if err != nil || stdout.String() != "PAUSED\n" {
 			t.Fatalf("confirmed forget = (%v, %q), want (nil, PAUSED); stderr=%q", err, stdout.String(), stderr.String())
 		}
@@ -59,12 +53,9 @@ func TestClientCLIConfirmationAndJSONContract(t *testing.T) {
 
 		stdout.Reset()
 		stderr.Reset()
-		err = runClientCommandWithAuthorizationOpener(context.Background(), []string{
+		err = runClientCommand(context.Background(), []string{
 			"status", "--json", "--socket", socket,
-		}, Environment{Stdout: &stdout, Stderr: &stderr}, func(context.Context, string, string) error {
-			t.Fatal("status unexpectedly attempted to open authorization UI")
-			return nil
-		})
+		}, Environment{Stdout: &stdout, Stderr: &stderr})
 		var status model.ClientStatus
 		if err != nil || json.Unmarshal([]byte(stdout.String()), &status) != nil || status.State != model.ClientPaused {
 			t.Fatalf("status --json = (%v, %q), want valid JSON with PAUSED state; stderr=%q", err, stdout.String(), stderr.String())

@@ -63,6 +63,7 @@ fnOS
 | Package | 职责 | 输入 / 输出 |
 |---|---|---|
 | `internal/model` | 客户端状态、服务端配置、设备、网络计划和稳定错误码 | 跨业务边界共享的数据契约 |
+| `internal/peer` | 已认证的本地进程身份及其 context 传递 | IPC 识别的本地调用方身份 → 权限边界 |
 | `internal/client` | 授权、配置同步、自动选路、连接状态机和 WSS bridge | 用户意图 + 网络事件 → 客户端状态 |
 | `internal/server` | 服务端设置、设备、地址池、HTTP API、中继和配置版本 | 管理请求 → 服务端期望状态 |
 | `internal/ipc` | framed JSON、请求响应和本地 Unix Socket 通讯 | 本地进程请求 ↔ 结构化响应 |

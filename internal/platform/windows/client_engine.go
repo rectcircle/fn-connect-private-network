@@ -10,8 +10,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/rectcircle/fn-connect-private-network/internal/ipc"
 	"github.com/rectcircle/fn-connect-private-network/internal/model"
+	"github.com/rectcircle/fn-connect-private-network/internal/peer"
 	"github.com/rectcircle/fn-connect-private-network/internal/privileged"
 	wgconfig "github.com/rectcircle/fn-connect-private-network/internal/wireguard"
 	"golang.org/x/sys/windows"
@@ -143,7 +143,7 @@ func (e *ClientEngine) Apply(ctx context.Context, plan model.ClientPlan) error {
 	if !e.Available() {
 		return model.NewError(model.ErrorUnavailable, "Windows Wintun network engine is unavailable", false)
 	}
-	identity, ok := ipc.PeerIdentityFromContext(ctx)
+	identity, ok := peer.IdentityFromContext(ctx)
 	if !ok {
 		return model.NewError(model.ErrorPermissionDenied, "only the active local console session may configure the tunnel", false)
 	}

@@ -4,28 +4,19 @@ import (
 	"context"
 
 	"github.com/rectcircle/fn-connect-private-network/internal/model"
+	"github.com/rectcircle/fn-connect-private-network/internal/peer"
 )
 
-type PeerIdentity struct {
-	UID           uint32
-	GID           uint32
-	PID           int
-	SID           string
-	SessionID     uint32
-	Authenticated bool
-}
+type PeerIdentity = peer.Identity
 
 type Authorizer func(context.Context, PeerIdentity) error
 
-type peerContextKey struct{}
-
 func WithPeerIdentity(ctx context.Context, identity PeerIdentity) context.Context {
-	return context.WithValue(ctx, peerContextKey{}, identity)
+	return peer.WithIdentity(ctx, identity)
 }
 
 func PeerIdentityFromContext(ctx context.Context) (PeerIdentity, bool) {
-	identity, ok := ctx.Value(peerContextKey{}).(PeerIdentity)
-	return identity, ok
+	return peer.IdentityFromContext(ctx)
 }
 
 func RejectPeer(message string) error {

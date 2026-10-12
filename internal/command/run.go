@@ -1,6 +1,7 @@
 package command
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -14,6 +15,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"syscall"
 	"time"
 
@@ -27,10 +29,11 @@ import (
 )
 
 type Environment struct {
-	Stdin   io.Reader
-	Stdout  io.Writer
-	Stderr  io.Writer
-	Version string
+	Stdin        io.Reader
+	Stdout       io.Writer
+	Stderr       io.Writer
+	Version      string
+	ReadPassword func() ([]byte, error)
 }
 
 func Run(ctx context.Context, arguments []string, environment Environment) int {
@@ -296,20 +299,6 @@ func runClientCommand(
 	arguments []string,
 	environment Environment,
 ) error {
-	return runClientCommandWithAuthorizationOpener(
-		ctx,
-		arguments,
-		environment,
-		platform.OpenAuthorization,
-	)
-}
-
-func runClientCommandWithAuthorizationOpener(
-	ctx context.Context,
-	arguments []string,
-	environment Environment,
-	openAuthorization func(context.Context, string, string) error,
-) error {
 	flags := flag.NewFlagSet(arguments[0], flag.ContinueOnError)
 	flags.SetOutput(environment.Stderr)
 	socket := flags.String("socket", defaultClientSocket(), "client daemon socket")
@@ -342,6 +331,11 @@ func runClientCommandWithAuthorizationOpener(
 				err,
 			)
 		}
+		username, password, err := readAuthorizationCredentials(environment)
+		if err != nil {
+			return err
+		}
+		defer clear(password)
 		var pending client.AuthorizationResult
 		if err := ipcClient.Call(
 			ctx,
@@ -361,18 +355,26 @@ func runClientCommandWithAuthorizationOpener(
 				2*time.Second,
 			)
 			defer cancel()
-			cancelClient := ipc.Client{
-				SocketPath: *socket,
-				Timeout:    2 * time.Second,
-			}
+			cancelClient := ipc.Client{SocketPath: *socket, Timeout: 2 * time.Second}
 			_ = cancelClient.Call(
 				cancelContext,
 				client.MethodAuthorizationCancel,
-				client.AuthorizationRequest{RequestID: pending.RequestID},
+				client.AuthorizationCancelRequest{RequestID: pending.RequestID},
 				nil,
 			)
 		}()
-		if err := openAuthorization(ctx, fnID, pending.RequestID); err != nil {
+		ipcClient.Timeout = 5*time.Minute + 10*time.Second
+		if err := ipcClient.Call(
+			ctx,
+			client.MethodAuthorizeNative,
+			client.NativeAuthorization{
+				RequestID: pending.RequestID,
+				FNID:      fnID,
+				Username:  username,
+				Password:  string(password),
+			},
+			nil,
+		); err != nil {
 			return err
 		}
 		waitContext, cancel := context.WithTimeout(ctx, 5*time.Minute)
@@ -431,6 +433,32 @@ func runClientCommandWithAuthorizationOpener(
 	}
 	_, err := fmt.Fprintln(environment.Stdout, status.State)
 	return err
+}
+
+func readAuthorizationCredentials(environment Environment) (string, []byte, error) {
+	readPassword := environment.ReadPassword
+	if readPassword == nil {
+		readPassword = readTerminalPassword
+	}
+	reader := bufio.NewReader(environment.Stdin)
+	if _, err := fmt.Fprint(environment.Stderr, "fnOS username: "); err != nil {
+		return "", nil, err
+	}
+	username, err := reader.ReadString('\n')
+	if err != nil && len(username) == 0 {
+		return "", nil, fmt.Errorf("read fnOS username: %w", err)
+	}
+	username = strings.TrimSuffix(strings.TrimSuffix(username, "\n"), "\r")
+	if _, err := fmt.Fprint(environment.Stderr, "fnOS password: "); err != nil {
+		return "", nil, err
+	}
+	password, err := readPassword()
+	_, _ = fmt.Fprintln(environment.Stderr)
+	if err != nil {
+		clear(password)
+		return "", nil, fmt.Errorf("read fnOS password: %w", err)
+	}
+	return username, password, nil
 }
 
 func runClientProcess(

@@ -122,7 +122,7 @@ fncpn retry
 fncpn diagnose --json
 ```
 
-`fncpn authorize <fn-id>` 当前会打开 App 登录页并等待授权结果，不是终端密码交互。
+`fncpn authorize <fn-id>` 会在终端交互输入 fnOS 用户名和密码。密码输入时不回显，并只通过本机 IPC 临时发送给 client daemon；命令不会打开 FnCPN App。
 
 ## 更新与卸载
 

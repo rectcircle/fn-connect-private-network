@@ -9,8 +9,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/rectcircle/fn-connect-private-network/internal/ipc"
 	"github.com/rectcircle/fn-connect-private-network/internal/model"
+	"github.com/rectcircle/fn-connect-private-network/internal/peer"
 	"github.com/rectcircle/fn-connect-private-network/internal/wireguard"
 )
 
@@ -124,7 +124,7 @@ func (e *ClientEngine) Apply(
 			return err
 		}
 	}
-	if identity, ok := ipc.PeerIdentityFromContext(ctx); ok && identity.UID != 0 {
+	if identity, ok := peer.IdentityFromContext(ctx); ok && identity.UID != 0 {
 		consoleUID, err := currentConsoleUID()
 		if err != nil || identity.UID != consoleUID {
 			return model.NewError(

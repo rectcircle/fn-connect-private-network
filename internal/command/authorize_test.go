@@ -3,7 +3,6 @@ package command
 import (
 	"bytes"
 	"context"
-	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -18,98 +17,45 @@ import (
 	"github.com/rectcircle/fn-connect-private-network/internal/model"
 )
 
-func TestAuthorizeCommandWaitsForUIResultAndCancelsIncompleteLaunch(t *testing.T) {
-	cases := []struct {
-		name          string
-		openResult    string
-		wantState     string
-		wantCode      model.ErrorCode
-		wantOutput    string
-		wantOpenError bool
-		cancelCaller  bool
-	}{
-		{name: "success", openResult: "succeeded", wantOutput: "authorized\n"},
-		{name: "user canceled", openResult: "canceled", wantState: "canceled", wantCode: model.ErrorCanceled},
-		{name: "caller canceled", wantState: "canceled", wantCode: model.ErrorCanceled, cancelCaller: true},
-		{name: "UI launch failed", wantState: "canceled", wantOpenError: true},
+func TestAuthorizeCommandUsesTerminalCredentialsAndWaitsForDaemon(t *testing.T) {
+	socket := authorizationTestSocket(t)
+	handler := &authorizationCommandHandler{changed: make(chan struct{})}
+	serverCtx, stopServer := context.WithCancel(context.Background())
+	serverDone := make(chan error, 1)
+	go func() {
+		serverDone <- (ipc.Server{SocketPath: socket, Handler: handler}).Serve(serverCtx)
+	}()
+	waitForAuthorizationTestServer(t, socket)
+	t.Cleanup(func() {
+		stopServer()
+		select {
+		case err := <-serverDone:
+			if err != nil {
+				t.Errorf("authorization test IPC server: %v", err)
+			}
+		case <-time.After(3 * time.Second):
+			t.Error("authorization test IPC server did not stop")
+		}
+	})
+
+	var stdout, stderr bytes.Buffer
+	err := runClientCommand(context.Background(), []string{
+		"authorize", "--socket", socket, "home-nas",
+	}, Environment{
+		Stdin:        strings.NewReader("alice\n"),
+		Stdout:       &stdout,
+		Stderr:       &stderr,
+		ReadPassword: func() ([]byte, error) { return []byte("secret password"), nil },
+	})
+	if err != nil || stdout.String() != "authorized\n" {
+		t.Fatalf("authorize result = (%v, %q); stderr=%q", err, stdout.String(), stderr.String())
 	}
-
-	for _, testCase := range cases {
-		t.Run(testCase.name, func(t *testing.T) {
-			socket := authorizationTestSocket(t)
-			handler := &authorizationCommandHandler{changed: make(chan struct{})}
-			serverCtx, stopServer := context.WithCancel(context.Background())
-			serverDone := make(chan error, 1)
-			go func() {
-				serverDone <- (ipc.Server{
-					SocketPath: socket,
-					Handler:    handler,
-				}).Serve(serverCtx)
-			}()
-			waitForAuthorizationTestServer(t, socket)
-			t.Cleanup(func() {
-				stopServer()
-				select {
-				case err := <-serverDone:
-					if err != nil {
-						t.Errorf("authorization test IPC server: %v", err)
-					}
-				case <-time.After(3 * time.Second):
-					t.Error("authorization test IPC server did not stop")
-				}
-			})
-
-			openCalls := 0
-			commandContext, cancelCommand := context.WithCancel(context.Background())
-			t.Cleanup(cancelCommand)
-			openAuthorization := func(ctx context.Context, fnID, requestID string) error {
-				openCalls++
-				if fnID != "home-nas" || requestID != handler.requestID {
-					t.Errorf("authorization launch got fnID=%q requestID=%q", fnID, requestID)
-				}
-				if testCase.wantOpenError {
-					return errors.New("shell association failed")
-				}
-				if testCase.cancelCaller {
-					cancelCommand()
-					return nil
-				}
-				handler.complete(testCase.openResult)
-				return nil
-			}
-
-			var stdout, stderr bytes.Buffer
-			err := runClientCommandWithAuthorizationOpener(commandContext, []string{
-				"authorize", "--socket", socket, "home-nas",
-			}, Environment{Stdout: &stdout, Stderr: &stderr}, openAuthorization)
-			if openCalls != 1 {
-				t.Fatalf("authorization UI launches = %d, want 1; err=%v stderr=%q", openCalls, err, stderr.String())
-			}
-			if testCase.wantOutput != "" {
-				if err != nil || stdout.String() != testCase.wantOutput {
-					t.Fatalf("authorize result = (%v, %q), want (nil, %q); stderr=%q", err, stdout.String(), testCase.wantOutput, stderr.String())
-				}
-				if got := handler.currentState(); got != testCase.openResult {
-					t.Fatalf("authorization state = %q, want %q", got, testCase.openResult)
-				}
-				return
-			}
-			if testCase.wantOpenError {
-				if err == nil || !strings.Contains(err.Error(), "shell association failed") {
-					t.Fatalf("authorize error = %v, want shell association failure", err)
-				}
-				if got := handler.currentState(); got != testCase.wantState {
-					t.Fatalf("authorization state after UI launch failure = %q, want %q", got, testCase.wantState)
-				}
-				return
-			}
-			if err == nil || model.AsError(err).Code != testCase.wantCode {
-				t.Fatalf("authorize error = %v, want code %q; stderr=%q", err, testCase.wantCode, stderr.String())
-			}
-			if got := handler.currentState(); got != testCase.wantState {
-				t.Fatalf("authorization state = %q, want %q", got, testCase.wantState)
-			}
-		})
+	if got := handler.currentState(); got != "succeeded" {
+		t.Fatalf("authorization state = %q, want succeeded", got)
+	}
+	username, password := handler.credentials()
+	if username != "alice" || password != "secret password" {
+		t.Fatalf("daemon credentials = (%q, %q), want terminal values", username, password)
 	}
 }
 
@@ -147,6 +93,8 @@ type authorizationCommandHandler struct {
 	mu        sync.Mutex
 	requestID string
 	state     string
+	username  string
+	password  string
 	changed   chan struct{}
 }
 
@@ -190,6 +138,20 @@ func (h *authorizationCommandHandler) Handle(ctx context.Context, request ipc.Re
 		result := h.resultLocked()
 		h.mu.Unlock()
 		return ipc.Success(request.ID, result)
+	case client.MethodAuthorizeNative:
+		input, err := ipc.DecodeParams[client.NativeAuthorization](request)
+		if err != nil {
+			return ipc.Failure(request.ID, err)
+		}
+		h.mu.Lock()
+		if input.RequestID != h.requestID || input.FNID != "home-nas" {
+			h.mu.Unlock()
+			return ipc.Failure(request.ID, model.NewError(model.ErrorInvalidArgument, "unexpected authorization input", false))
+		}
+		h.username, h.password = input.Username, input.Password
+		h.mu.Unlock()
+		h.complete("succeeded")
+		return ipc.Success(request.ID, model.ClientStatus{State: model.ClientUnconfigured})
 	case client.MethodAuthorizationWait:
 		var input client.AuthorizationRequest
 		if decoded, err := ipc.DecodeParams[client.AuthorizationRequest](request); err != nil {
@@ -235,6 +197,12 @@ func (h *authorizationCommandHandler) currentState() string {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	return h.state
+}
+
+func (h *authorizationCommandHandler) credentials() (string, string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.username, h.password
 }
 
 func (h *authorizationCommandHandler) resultLocked() client.AuthorizationResult {

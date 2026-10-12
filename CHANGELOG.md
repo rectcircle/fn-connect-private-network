@@ -6,6 +6,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- `fncpn authorize <fn-id>` now collects the fnOS username and a no-echo terminal password, then authorizes through the existing client daemon IPC. The command no longer opens the FnCPN app; the IPC protocol and stored data are unchanged.
+
 ## [1.0.6] - 2026-10-12
 
 ### Fixed

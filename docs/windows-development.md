@@ -119,7 +119,7 @@ Go Windows Service 在启动时幂等设置 SCM 故障恢复：首次失败 5 �
    与 SHA256SUMS。下载并核验实际资产；对 CI 生成的 ARM64 MSI 补一次安装/登录/连接抽验。
    本地开发 MSI 的验证不等同于 hosted runner 产物验收。
 5. 发布说明如实披露 Windows 11 ARM64 已验收、原生 x64/Windows 10 与异常场景待验证、
-   未签名、缺 Runtime 时需联网，以及当前 CLI 授权会唤起 UI。RC 不更新 Homebrew Cask，正式版公开后由发布流水线更新 Cask。
+   未签名及缺 Runtime 时需联网。RC 不更新 Homebrew Cask，正式版公开后由发布流水线更新 Cask。
 6. 完成 draft 验证后，使用同 tag 的 Release workflow 并设置 `publish=true` 公开；公开
    阶段复验并发布原 draft 字节，不用重建产物替换已经验收的 draft。
 
