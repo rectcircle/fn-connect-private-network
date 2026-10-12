@@ -486,7 +486,10 @@ public partial class MainWindow : Window
             return;
         }
 
-        IdentityText.Text = value.FnId;
+        IdentityText.Text = string.IsNullOrWhiteSpace(value.Username)
+            ? value.FnId
+            : $"{value.FnId} · {value.Username}";
+        IdentityText.ToolTip = IdentityText.Text;
         var needsLogin = NeedsLogin(value.Status);
         StateText.Text = ConnectionStatusLabel(value.Status, needsLogin, _loginLifetime is not null);
         PathText.Text = PathLabel(value.Status.Path);

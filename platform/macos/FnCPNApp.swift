@@ -1278,7 +1278,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         diagnostics = value
         waitingForLocalNetwork = (value["status"] as? [String: Any])?["localNetworkWaiting"] as? Bool == true
         savedFNID = value["fnId"] as? String ?? ""
-        savedUsername = value["username"] as? String ?? savedUsername
+        savedUsername = value["username"] as? String ?? ""
         let status = value["status"] as? [String: Any] ?? [:]
         if pendingFNID.isEmpty && ConnectionPresentation(status).connected && status["lastError"] == nil {
             operationError = nil
@@ -1334,8 +1334,10 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         menuAction?.isEnabled = !busy
         reloginMenuItem?.isHidden = presentation.needsLogin
         reloginMenuItem?.isEnabled = !busy
-        serverValue.stringValue = fnID
-        serverValue.toolTip = fnID
+        let username = diagnostics["username"] as? String ?? ""
+        let identity = username.isEmpty ? fnID : "\(fnID) · \(username)"
+        serverValue.stringValue = identity
+        serverValue.toolTip = identity
         statusValue.stringValue = waitingForLocalNetwork ? L("正在等待局域网访问权限") :
             busy && loginInFlight ? L("正在登录") : presentation.title
         statusValue.textColor = presentation.needsLogin ? .systemOrange :
