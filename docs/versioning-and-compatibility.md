@@ -24,16 +24,14 @@
 
 每次正式发布应提供对应版本的 client 与 server 产物；用户可以分别安装、升级两端。
 同一次发布使用相同编号，不要求用户安装的两端编号相同。
-Git tag 使用 `vMAJOR.MINOR.PATCH`，发布候选版使用 `vMAJOR.MINOR.PATCH-rc.N`（N 为不带前导零的非负整数）。
-未公开的草稿可修改 commit、重建、替换资产及重试失败上传；公开的 RC 与正式版本及其产物不可覆盖。
-公开 RC 的修复递增 RC 编号，正式版本的兼容修复递增 PATCH。RC 不自动获得正式兼容性保证。
-产品版本支持纯数字正式版和 `-rc.N` 后缀；不支持其他预发布后缀或 build metadata。
-远程准入仅使用核心 MAJOR/MINOR，不比较 RC 编号，不新增准入条件。
-macOS 的 `CFBundleShortVersionString` 与 PKG 版本使用核心数字版本；`FnCPNProductVersion`、CLI、
-fnOS manifest 和发布文件名保留完整 RC 版本。App 展示与本地组件一致性校验使用完整产品版本，
-`CFBundleVersion` 使用递增构建号。RC 到正式版仍需重新构建和验收正式元数据，不能仅给 RC 包改名。
-macOS build number、Git commit 等用于构建追溯，不参与远程兼容性判定。
-RC 仅通过 GitHub Releases 手动下载覆盖安装；Homebrew 统一使用 `fncpn`，只更新公开稳定版，RC 不更新 Cask。
+Git tag 使用 `vMAJOR.MINOR.PATCH`，产品版本只使用纯数字版本，不再创建 RC。
+推送版本 tag 构建 GitHub Release 草稿；草稿用于下载验证，不自动公开。
+未公开的草稿可修改 commit、重建、替换资产及重试失败上传；公开的版本及其产物不可覆盖。
+公开版本的兼容修复递增 PATCH。公开已有草稿只修改发布状态，不重建或上传产物。
+macOS 的 `CFBundleShortVersionString`、PKG、CLI、fnOS manifest 和发布文件名使用同一产品版本。
+`CFBundleVersion` 使用递增构建号。build number、Git commit 用于构建追溯，不参与远程兼容性判定。
+历史 RC 版本字符串仍可识别，仅用于已有版本的诊断，不再作为发布通道。
+Homebrew 使用 `fncpn`，只跟随公开版本。
 
 ## 2. 唯一的远程版本准入规则
 

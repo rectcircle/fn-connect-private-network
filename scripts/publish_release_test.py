@@ -14,7 +14,7 @@ spec.loader.exec_module(publisher)
 
 
 class PublicationTest(unittest.TestCase):
-    def exercise(self, draft, corrupt=False, publish=True, version="1.0.0-rc.1", flattened=False, missing_architecture=None):
+    def exercise(self, draft, corrupt=False, publish=True, version="1.0.0", flattened=False, missing_architecture=None):
         with tempfile.TemporaryDirectory() as temporary:
             root = pathlib.Path(temporary)
             previous = pathlib.Path.cwd()
@@ -47,11 +47,11 @@ class PublicationTest(unittest.TestCase):
                         notes_path = pathlib.Path(args[args.index('--notes-file') + 1])
                         self.assertEqual(notes_path.read_text(), 'Current release changes.\n')
                         self.assertIn('--draft', args)
-                        self.assertEqual('--prerelease' in args, '-rc.' in version)
+                        self.assertNotIn('--prerelease', args)
                     if args[:3] == ('gh', 'release', 'edit'):
                         self.assertIn('--draft=false', args)
-                        self.assertIn('--latest=false' if '-rc.' in version else '--latest', args)
-                        self.assertNotIn('--latest' if '-rc.' in version else '--latest=false', args)
+                        self.assertIn('--latest', args)
+                        self.assertNotIn('--latest=false', args)
                     if args[:2] == ('git', 'status'):
                         return ''
                     if args[0] == 'git':
@@ -79,7 +79,7 @@ class PublicationTest(unittest.TestCase):
                     else:
                         publisher.publish(out, 'owner/repo', publish)
                 deletions = [c for c in calls if c[:3] == ('gh', 'release', 'delete-asset')]
-                self.assertEqual(len(deletions), 1 if draft is True else 0)
+                self.assertEqual(len(deletions), 1 if draft is True and not publish else 0)
                 uploads = [c for c in calls if c[:3] == ('gh', 'release', 'upload')]
                 if uploads:
                     self.assertTrue(all(str(source.resolve()) in uploads[0] for source in sources.values()))
@@ -97,20 +97,18 @@ class PublicationTest(unittest.TestCase):
             with self.assertRaisesRegex(SystemExit, 'Missing release notes'):
                 publisher.release_notes('1.0.0')
 
-    def test_first_release_is_created_as_prerelease_draft(self):
-        self.assertEqual(self.exercise(None), ['create', 'upload', 'edit'])
+    def test_first_release_is_created_as_draft(self):
+        self.assertEqual(self.exercise(None, publish=False), ['create', 'upload'])
 
-    def test_first_stable_release_is_a_draft_then_latest(self):
-        self.assertEqual(self.exercise(None, version='1.0.0'), ['create', 'upload', 'edit'])
+    def test_publication_requires_existing_draft(self):
+        with self.assertRaisesRegex(SystemExit, 'existing release draft'):
+            self.exercise(None)
 
-    def test_stable_remote_corruption_prevents_publication(self):
-        self.assertEqual(self.exercise(True, corrupt=True, version='1.0.0'), ['upload'])
+    def test_publication_never_uploads_or_deletes_assets(self):
+        self.assertEqual(self.exercise(True), ['edit'])
 
-    def test_draft_can_be_replaced_and_published(self):
-        self.assertEqual(self.exercise(True), ['upload', 'edit'])
-
-    def test_corrupt_remote_stays_unpublished(self):
-        self.assertEqual(self.exercise(True, corrupt=True), ['upload'])
+    def test_corrupt_remote_stays_unpublished_without_asset_mutation(self):
+        self.assertEqual(self.exercise(True, corrupt=True), [])
 
     def test_public_release_is_verified_without_mutation(self):
         self.assertEqual(self.exercise(False), [])

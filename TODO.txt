@@ -1,5 +1,3 @@
-解决 windows 代码中大量为了测试而测试的代码，很多意义不大我感觉。很冗长。
-
 CLI authorize 改为纯命令行交互（macOS、Windows）：
 - 当前 fncpn authorize <fn-id> 会通过 fncpn:// 唤起 App 登录页，CLI 只等待结果，缺少终端授权能力。
 - 预期在终端输入用户名和密码，密码不回显，复用 daemon 的认证能力，无须启动 App 或依赖图形界面。
@@ -8,4 +6,8 @@ CLI authorize 改为纯命令行交互（macOS、Windows）：
 - 两平台行为一致，App 自身登录继续正常；命令参数和兼容处理实施时按版本契约确定。
 - 当前仅记录，尚未实现。现有 CLI 唤起 UI 的成功授权与取消已实测通过。
 
-解决 UI 框架占用大问题
+解决 windows UI 框架占用大问题：docs/windows-ui-roadmap.md
+
+上架 fnos 应用商店
+
+上架微软应用商店

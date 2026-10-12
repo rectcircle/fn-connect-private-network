@@ -5,7 +5,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Existing version tag (stable or RC)
+        description: Existing version tag (vMAJOR.MINOR.PATCH)
         required: true
         type: string
       publish:
@@ -19,6 +19,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   windows-build:
+    if: ${{ !inputs.publish }}
     runs-on: windows-2025
     permissions:
       contents: read
@@ -98,6 +99,7 @@ jobs:
             dist/windows/x64/build-manifest.json
           if-no-files-found: error
   release:
+    if: ${{ !inputs.publish }}
     needs: windows-build
     runs-on: macos-15
     env:
@@ -108,7 +110,6 @@ jobs:
       DIST_DIR: ${{ github.workspace }}/dist
       GH_TOKEN: ${{ github.token }}
       RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
-      MAKE_PUBLIC: ${{ inputs.publish || false }}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -139,25 +140,34 @@ jobs:
       - name: Build release draft
         if: ${{ !inputs.publish }}
         run: ./scripts/build-all.sh
-      - name: Download existing draft for publication
-        if: inputs.publish
-        run: |
-          mkdir -p "$DIST_DIR"
-          gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --dir "$DIST_DIR"
       - uses: actions/upload-artifact@v4
         with:
           name: candidate-${{ inputs.tag || github.ref_name }}
           path: dist/
           if-no-files-found: error
-      - name: Upload and verify release
+      - name: Upload and verify release draft
+        run: python3 scripts/publish-release.py "$DIST_DIR"
+  publish:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.publish }}
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_TAG: ${{ inputs.tag }}
+      DIST_DIR: ${{ github.workspace }}/dist
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.tag }}
+          fetch-depth: 0
+      - name: Verify tag and download existing draft
         run: |
-          if [ "$MAKE_PUBLIC" = true ]; then
-            python3 scripts/publish-release.py "$DIST_DIR" --publish
-          else
-            python3 scripts/publish-release.py "$DIST_DIR"
-          fi
+          test "$RELEASE_TAG" = "v$(cat internal/version/VERSION)"
+          test "$(git rev-parse HEAD)" = "$(git rev-parse "$RELEASE_TAG^{commit}")"
+          mkdir -p "$DIST_DIR"
+          gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --dir "$DIST_DIR"
+      - name: Verify existing assets and make release public
+        run: python3 scripts/publish-release.py "$DIST_DIR" --publish
       - name: Update public stable release cask
-        if: ${{ inputs.publish && !contains(env.RELEASE_TAG, '-rc.') }}
         run: |
           VERSION="$(cat internal/version/VERSION)"
           git fetch origin main

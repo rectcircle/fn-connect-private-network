@@ -6,14 +6,14 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--check', action='store_true')
 args = parser.parse_args()
 version = (root / 'internal/version/VERSION').read_text().strip()
-if not re.fullmatch(r'(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-rc\.(0|[1-9][0-9]*))?', version):
+if not re.fullmatch(r'(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)', version):
     raise SystemExit('Invalid product version')
-core_version = version.split("-", 1)[0]
+core_version = version
 updates = {
     root / 'packaging/fnos/manifest': (r'(?m)^version=.*$', f'version={version}'),
     root / 'packaging/macos/Info.plist': (r'(<key>CFBundleShortVersionString</key>\s*<string>)[^<]+(</string>)', rf'\g<1>{core_version}\g<2>'),
 }
-# The installer version is numeric; the product version retains the RC identity.
+# All package metadata uses the same numeric product version.
 plist_path = root / 'packaging/macos/Info.plist'
 
 failed = False

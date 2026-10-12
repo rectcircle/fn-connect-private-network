@@ -29,6 +29,8 @@ def release_notes(version):
 def publish(directory, repository, make_public=False):
     directory = pathlib.Path(directory).resolve()
     version = pathlib.Path('internal/version/VERSION').read_text().strip()
+    if not re.fullmatch(r'(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)', version):
+        raise SystemExit('Invalid product version; expected MAJOR.MINOR.PATCH')
     tag = 'v' + version
     manifest_name = f'release-{version}.json'
     sums_name = f'SHA256SUMS-{version}'
@@ -79,20 +81,20 @@ def publish(directory, repository, make_public=False):
     # Distinguish not-found from auth/network errors before creating a release.
     releases = json.loads(run('gh', 'api', '--paginate', '--slurp', f'repos/{repository}/releases'))
     release = next((r for page in releases for r in page if r['tag_name'] == tag), None)
+    if release is None and make_public:
+        raise SystemExit("Publication requires an existing release draft")
     if release is None:
         with tempfile.TemporaryDirectory(prefix='fncpn-release-notes-') as temporary:
             notes = pathlib.Path(temporary) / 'notes.md'
             notes.write_text(release_notes(version))
             args = ['gh', 'release', 'create', tag, '--repo', repository, '--verify-tag', '--draft',
                     '--title', f'FnCPN {version}', '--notes-file', str(notes)]
-            if '-rc.' in version:
-                args.append('--prerelease')
             run(*args)
         release = json.loads(run('gh', 'release', 'view', tag, '--repo', repository, '--json', 'isDraft,assets'))
         draft = release['isDraft']
     else:
         draft = release['draft']
-    if draft:
+    if draft and not make_public:
         run('gh', 'release', 'upload', tag, '--repo', repository, '--clobber',
             *(str(sources.get(name, directory / name)) for name in names))
         # A private draft may replace its legacy installer names. Public assets
@@ -115,7 +117,7 @@ def publish(directory, repository, make_public=False):
                 raise SystemExit('Remote asset differs: ' + name)
     if draft and make_public:
         run('gh', 'release', 'edit', tag, '--repo', repository, '--draft=false',
-            '--latest=false' if '-rc.' in version else '--latest')
+            '--latest')
     print(run('gh', 'release', 'view', tag, '--repo', repository, '--json', 'url', '--jq', '.url'))
 
 

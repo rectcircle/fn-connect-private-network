@@ -45,7 +45,7 @@ def tool(*command):
         return "unavailable"
     return result.stdout.strip() if result.returncode == 0 else "unavailable"
 metadata = {"version": version, "commit": revision,
-            "channel": "rc" if "-rc." in version else "stable",
+            "channel": "stable",
             "artifacts": artifacts,
             "build": {"go": tool("go", "version"), "xcode": tool("xcodebuild", "-version"),
                       "sdk": tool("xcrun", "--show-sdk-version"), "arch": arch,

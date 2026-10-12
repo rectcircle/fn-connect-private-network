@@ -16,7 +16,7 @@ SCRIPT = pathlib.Path(__file__).with_name('update-cask.py').resolve()
 class CaskChannelTest(unittest.TestCase):
     def test_rc_rejected_before_network_or_file_changes(self):
         with patch('sys.argv', [str(SCRIPT), '1.1.0-rc.1']), patch('subprocess.check_output') as network:
-            with self.assertRaisesRegex(SystemExit, 'stable X.Y.Z'):
+            with self.assertRaisesRegex(SystemExit, 'X.Y.Z'):
                 runpy.run_path(str(SCRIPT), run_name='__main__')
             network.assert_not_called()
 

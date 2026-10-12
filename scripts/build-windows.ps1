@@ -7,7 +7,7 @@ $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 $projectRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $version = (Get-Content (Join-Path $projectRoot 'internal/version/VERSION') -Raw).Trim()
-# Windows Installer requires a numeric version; retain RC identity in binaries and filenames.
+# Windows Installer uses the same numeric product version.
 $installerVersion = $version.Split('-')[0]
 # Microsoft documents pv > 0.0.0.0 as evidence of an installed Evergreen Runtime.
 $webView2InstallCondition = 'NOT Installed AND NOT ((WEBVIEW2_MACHINE_VERSION AND WEBVIEW2_MACHINE_VERSION > "0.0.0.0") OR (WEBVIEW2_USER_VERSION AND WEBVIEW2_USER_VERSION > "0.0.0.0"))'
@@ -612,8 +612,8 @@ function Assert-WindowsFnIdNormalization([string]$AssemblyPath, [string]$Product
     $remoteErrorConstructor = $remoteErrorType.GetConstructors([Reflection.BindingFlags]'Instance,Public,NonPublic') |
         Where-Object { $_.GetParameters().Count -eq 10 } | Select-Object -First 1
     if ($null -eq $remoteErrorConstructor) { throw 'WPF remote-error constructor shape was not found' }
-    $releaseLink = 'https://github.com/rectcircle/fn-connect-private-network/releases/tag/v1.2.0-rc.1'
-    $versionFailure = $remoteErrorConstructor.Invoke([object[]]@('VERSION_INCOMPATIBLE', 'version mismatch', $null, $null, $null, $null, $null, 'server', '1.2.0-rc.1', '1.0.4'))
+    $releaseLink = 'https://github.com/rectcircle/fn-connect-private-network/releases/tag/v1.2.0'
+    $versionFailure = $remoteErrorConstructor.Invoke([object[]]@('VERSION_INCOMPATIBLE', 'version mismatch', $null, $null, $null, $null, $null, 'server', '1.2.0', '1.0.4'))
     $remoteErrorType.GetProperty('ReleaseURL').SetValue($versionFailure, $releaseLink)
     $downloadMessage = $describeFailure.Invoke($null, [object[]]@($versionFailure))
     if (-not $downloadMessage.Contains($releaseLink)) { throw 'Version diagnostics lost the release download link' }

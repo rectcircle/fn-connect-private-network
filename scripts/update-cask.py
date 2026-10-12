@@ -8,7 +8,7 @@ import sys
 
 version = sys.argv[1]
 if not re.fullmatch(r'(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)', version):
-    raise SystemExit('Homebrew accepts stable X.Y.Z versions only; download RC packages manually')
+    raise SystemExit('Homebrew accepts X.Y.Z versions only')
 repository = 'rectcircle/fn-connect-private-network'
 release = json.loads(subprocess.check_output(['gh', 'release', 'view', 'v' + version, '--repo', repository, '--json', 'isDraft,isPrerelease'], text=True))
 if release['isDraft'] or release['isPrerelease']:
