@@ -13,7 +13,7 @@
 - 提供 Intel x64 macOS 安装包，Homebrew 按 Mac 架构选择 arm64/x64 包；最低 macOS 版本仍为 13。Intel 实机安装与网络功能待验收。
 - macOS 诊断详情补齐标准复制和全选快捷键；Windows 诊断详情支持选择并复制文字。
 - 版本不兼容时，诊断详情提供需要升级一端的对应 GitHub Release 下载链接；完整诊断复制保留链接，支持 RC 版本。
-- fnOS 应用描述提供安装包对应版本的 GitHub Release 下载链接，随打包版本同步更新。
+- fnOS 应用描述和页面提供对应版本的 GitHub Release 下载链接；页面显示当前服务端版本，管理员与普通用户均可查看。
 - 安装包文件名统一为小写 `fncpn-<version>-<os>-<arch>`，明确标识 macOS、Windows、fnOS 和 arm64/x64；未签名客户端保留 `unsigned` 标记。
 - 安装包作者统一为 rectcircle，联系邮箱为 rectcircle96@gmail.com；补齐 fnOS、Windows 和 macOS 的项目官网及作者元数据。
 

@@ -49,6 +49,8 @@
     }
     main { width: min(1040px, calc(100% - 32px)); margin: 0 auto; padding: 24px 0 40px; }
     header { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 18px; }
+    .release-info { width: min(1040px, calc(100% - 32px)); margin: 16px auto 24px; color: var(--muted); overflow-wrap: anywhere; }
+    .release-info a { color: var(--primary); }
     h1 { margin: 0; font-size: 22px; font-weight: 650; }
     h2 { margin: 0; font-size: 15px; font-weight: 650; }
     .status { display: flex; align-items: center; gap: 8px; color: var(--muted); }
@@ -181,6 +183,10 @@
       <div class="error" id="deviceError" role="alert"></div>
     </section>
   </main>
+  <footer class="release-info" id="releaseInfo">
+    <div><span data-i18n="服务端版本">服务端版本</span>: <span id="serverVersion">__FNCPN_SERVER_VERSION__</span></div>
+    <div><span data-i18n="对应版本下载">对应版本下载</span>: <a id="releaseDownload" href="__FNCPN_RELEASE_URL__" target="_blank" rel="noopener noreferrer">__FNCPN_RELEASE_URL__</a></div>
+  </footer>
   <dialog id="confirmation" aria-labelledby="confirmationTitle" aria-describedby="confirmationMessage">
     <h2 id="confirmationTitle"></h2>
     <p class="confirmation-message" id="confirmationMessage"></p>
@@ -424,7 +430,9 @@
   "复制": "Copy",
   "全选": "Select All",
   "剪切": "Cut",
-  "粘贴": "Paste"
+  "粘贴": "Paste",
+  "服务端版本": "Server version",
+  "对应版本下载": "Download this version"
 };
     const language = (globalThis.navigator?.languages?.[0] || globalThis.navigator?.language || 'en')
       .toLowerCase().startsWith('zh') ? 'zh-CN' : 'en';

@@ -8,8 +8,10 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"github.com/rectcircle/fn-connect-private-network/internal/version"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -713,4 +715,25 @@ func (s *blockingNetworkStatus) Status(
 
 func apiTestPublicKey() string {
 	return base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{7}, 32))
+}
+
+func TestIndexReleaseMetadataDoesNotRequireAdministrator(t *testing.T) {
+	store, err := OpenService(t.TempDir(), testNetwork{}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := NewHTTPHandler(store, nil)
+	for _, user := range []string{"", "ordinary-user", "admin"} {
+		request := httptest.NewRequest(http.MethodGet, "/app/fncpn", nil)
+		request.Header.Set("X-Trim-Userid", user)
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		page := response.Body.String()
+		if response.Code != http.StatusOK || !strings.Contains(page, "https://github.com/rectcircle/fn-connect-private-network/releases/tag/v"+version.Current) || !strings.Contains(page, `id="serverVersion">`+version.Current) || strings.Contains(page, "__FNCPN_SERVER_VERSION__") {
+			t.Fatalf("missing version metadata for %q: status=%d", user, response.Code)
+		}
+		if strings.Index(page, `id="releaseInfo"`) < strings.Index(page, "</main>") {
+			t.Fatal("release metadata must remain outside the restricted management panel")
+		}
+	}
 }

@@ -2,6 +2,8 @@ package server
 
 import (
 	"embed"
+	"github.com/rectcircle/fn-connect-private-network/internal/version"
+	"html"
 	"io/fs"
 	"net/http"
 	"strings"
@@ -27,7 +29,13 @@ func serveIndex(writer http.ResponseWriter, request *http.Request) {
 		"Content-Security-Policy",
 		"default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'",
 	)
-	_, _ = writer.Write(content)
+	// Render public product metadata independently of administrator APIs.
+	// The footer remains visible when the management panel is access-denied.
+	page := strings.NewReplacer(
+		"__FNCPN_SERVER_VERSION__", html.EscapeString(version.Current),
+		"__FNCPN_RELEASE_URL__", html.EscapeString("https://github.com/rectcircle/fn-connect-private-network/releases/tag/v"+version.Current),
+	).Replace(string(content))
+	_, _ = writer.Write([]byte(page))
 }
 
 func stripGatewayPrefix(next http.Handler) http.Handler {

@@ -238,5 +238,7 @@ internal static partial class AppStrings
         ["全选"] = "Select All",
         ["剪切"] = "Cut",
         ["粘贴"] = "Paste",
+        ["服务端版本"] = "Server version",
+        ["对应版本下载"] = "Download this version",
     };
 }
