@@ -22,7 +22,7 @@ for path, (pattern, replacement) in updates.items():
     after, count = re.subn(pattern, replacement, before)
     if path.name == 'manifest':
         after, desc_count = re.subn(r'(?m)^desc=.*$',
-            f'desc=<div style="user-select:text;-webkit-user-select:text"><p>通过 FN Connect 自动建立 WireGuard 异地私有网络。</p><p>Automatically connect private networks with WireGuard via FN Connect.</p><p><a href="https://github.com/rectcircle/fn-connect-private-network/releases/tag/v{version}" target="_blank" rel="noopener noreferrer">下载 macOS / Windows 客户端 · Download clients (v{version})</a></p></div>', after)
+            f'desc=<p>通过 FN Connect 自动建立 WireGuard 异地私有网络。</p><p>Automatically connect private networks with WireGuard via FN Connect.</p><p><a href="https://github.com/rectcircle/fn-connect-private-network/releases/tag/v{version}" target="_blank" rel="noopener noreferrer">下载 macOS / Windows 客户端 · Download clients (v{version})</a></p>', after)
         if desc_count != 1:
             raise SystemExit('Missing description in fnOS manifest')
     if path == plist_path:
