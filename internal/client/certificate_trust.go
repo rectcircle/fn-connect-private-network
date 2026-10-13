@@ -77,6 +77,9 @@ func newFNOSTransportWithRoot(base *http.Transport, root *x509.Certificate, root
 	roots.AddCert(root)
 	config.RootCAs = roots
 	transport.fnos.TLSClientConfig = config
+	// A custom TLS config otherwise disables HTTP/2, even if ALPN still
+	// advertises h2 (for example after cloning an already-used transport).
+	transport.fnos.ForceAttemptHTTP2 = true
 	return transport
 }
 

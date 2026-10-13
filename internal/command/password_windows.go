@@ -16,8 +16,8 @@ func readTerminalPassword() ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("authorize requires an interactive terminal: %w", err)
 	}
-	mode, err := windows.GetConsoleMode(input)
-	if err != nil {
+	var mode uint32
+	if err := windows.GetConsoleMode(input, &mode); err != nil {
 		return nil, fmt.Errorf("authorize requires an interactive terminal: %w", err)
 	}
 	if err := windows.SetConsoleMode(input, mode&^enableEchoInput); err != nil {

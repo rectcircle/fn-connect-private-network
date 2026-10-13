@@ -1,7 +1,9 @@
 # Windows 下一版本 UI 优化方向
 
-决策日期：2026-10-10。状态：方案已确定，计划在下一个 Windows 版本实施；具体产品版本号待定。
-本文记录后续开发方向，当前 WPF 实现与安装包尚未迁移。
+决策日期：2026-10-10。实现更新：2026-10-13。
+原生 C++ Win32 UI、独立构建/准备/本地化/测试链路与双架构 MSI 已实现。
+CI/Release 使用原生入口。原生 UI 实测通过后，旧 WPF 源码与专用脚本已移除。
+自动化验证和实机发布验收分开记录，构建通过不代表真实网络、升级和所有系统均已验收。
 
 ## 已确定的方案
 
@@ -74,6 +76,15 @@ Windows 11 的现有安装限制是当前版本的策略，不能作为新 UI �
 对照旧候选记录安装包大小、完整安装占用、首次/后续启动时间、托盘常驻内存和管理后台打开后的开销。
 Windows 10 x64、Windows 11 原生 x64 和原生 ARM64 分别验收；仿真结果单独标注。
 
+### 实施进度
+
+- [x] 建立 `platform/windows` 原生 Win32/CMake 可执行目标；使用系统标准控件和 Per-Monitor V2 manifest，不启用 WPF/WinForms。
+- [x] 实现 IPC v4 校验、诊断详情、授权等待/取消与代次隔离、状态订阅、连接/断开/重试/继续远程、自启动与服务修复。
+- [x] 实现用户/session 单实例、受保护的 URI/二次启动转交、托盘、Explorer 恢复、关闭驻留与显式退出。
+- [x] 集成共享 Evergreen WebView2、同源导航与弹窗边界、外链处理、认证失效提示和关闭时释放。
+- [x] 独立原生双架构 MSI、开发准备与 smoke；CI/Release 选择原生入口，payload 无 WPF/.NET UI 运行时。旧链路已移除。
+- [ ] 发布环境验收：真实 NAS/网络、旧 WPF 安装升级/回滚/卸载、多用户、Windows 10 与原生 x64、Narrator/高对比度/多屏 DPI、完整启动及内存基准。当前自动化与隔离窗口检查不能替代这些结果。
+
 ## 版本与数据约束
 
 遵守 [版本管理与兼容性](versioning-and-compatibility.md)。UI 实现替换本身不要求升级 MAJOR，
@@ -89,3 +100,10 @@ Windows 10 x64、Windows 11 原生 x64 和原生 ARM64 分别验收；仿真结�
 - [Win32 WebView2 官方入门](https://learn.microsoft.com/en-us/microsoft-edge/webview2/gettingstarted)
 - [高 DPI 开发](https://learn.microsoft.com/en-us/windows/win32/hidpi/high-dpi-desktop-application-development-on-windows)
 - [UI Automation 标准控件代理](https://learn.microsoft.com/en-us/windows/win32/winauto/uiauto-clientsideprovider)
+
+### 本次本地验证
+
+Windows 11 ARM64：Go 全量测试与 vet、原生 ARM64/x64 编译、CTest、MSI 元数据/平台条件、
+中英文本地化检查；x64 程序在 ARM64 上运行属于仿真。隔离窗口的 UIA 可识别 FN Connect ID、
+用户名、密码和登录按钮。未操作当前安装的旧客户端或其连接，也未公开发布。
+详细入口见 [Windows 开发](windows-development.md#原生与-wpf-对照)。

@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<WixLocalization xmlns="http://wixtoolset.org/schemas/v4/wxl" Culture="en-US" Codepage="65001">
+  <String Id="ProductLanguage" Value="1033" />
+  <String Id="LaunchApplication" Value="Open FnCPN now" />
+  <String Id="InstallWebView2" Value="Installing Microsoft WebView2 Runtime (internet connection required)..." />
+  <String Id="StopDaemons" Value="Stopping FnCPN background processes..." />
+  <String Id="CleanupNetwork" Value="Removing FnCPN tunnel addresses and routes..." />
+  <String Id="WindowsRequirement" Value="FnCPN requires 64-bit Windows 10 22H2 or later (build 19045 or later)." />
+  <String Id="NewerVersionInstalled" Value="A newer FnCPN version is already installed." />
+  <String Id="ServiceName" Value="FnCPN Network Service" />
+  <String Id="ServiceDescription" Value="Configures the FnCPN WireGuard tunnel." />
+</WixLocalization>

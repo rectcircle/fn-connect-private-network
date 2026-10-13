@@ -1334,7 +1334,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         menuAction?.isEnabled = !busy
         reloginMenuItem?.isHidden = presentation.needsLogin
         reloginMenuItem?.isEnabled = !busy
-        let username = diagnostics["username"] as? String ?? ""
+        let username = savedUsername.trimmingCharacters(in: .whitespacesAndNewlines)
         let identity = username.isEmpty ? fnID : "\(fnID) · \(username)"
         serverValue.stringValue = identity
         serverValue.toolTip = identity

@@ -32,21 +32,9 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: "10.0.x"
-      - name: Verify Windows UI localization coverage
+      - name: Check Windows source, localization, setup and Go
         shell: pwsh
-        run: ./scripts/check-windows-localization.ps1
-      - name: Verify shared generated localization catalogs
-        run: python scripts/sync-localizations.py --check
-      - name: Verify generated product versions and proxy setup regression
-        shell: pwsh
-        run: |
-          python scripts/sync-version.py --check
-          if ($LASTEXITCODE -ne 0) { throw 'Generated product versions are stale' }
-          ./scripts/test-setup-windows-proxy.ps1
-      - name: Test all Go packages on Windows
-        run: go test ./...
-      - name: Vet all Go packages on Windows
-        run: go vet ./...
+        run: ./scripts/check-windows.ps1 -SkipPackage
       - name: Install pinned WiX and official Wintun payload
         shell: pwsh
         run: |
@@ -79,5 +67,7 @@ jobs:
           $webview2Signature = Get-AuthenticodeSignature $webview2Cache
           if ($webview2Signature.Status -ne 'Valid' -or $webview2Signature.SignerCertificate.Subject -notlike '*Microsoft Corporation*') { throw 'Invalid Microsoft WebView2 bootstrapper signature' }
           Copy-Item -LiteralPath $webview2Cache -Destination $webview2
-      - name: Build ARM64 and x64 self-contained clients and MSI packages
+      - name: Build ARM64 and x64 native Win32 clients and MSI packages
         run: ./scripts/build-windows.ps1
+      - name: Native UI and MSI smoke (x64)
+        run: ./scripts/windows/test-ui-smoke.ps1 -Architecture x64

@@ -25,9 +25,9 @@ func TestNativeClientIPCVersionsMatchGoProtocol(t *testing.T) {
 		regex *regexp.Regexp
 	}{
 		{
-			name:  "Windows WPF",
-			path:  filepath.Join(root, "platform", "windows", "FnCPN.Windows", "IPC.cs"),
-			regex: regexp.MustCompile(`internal const int ProtocolVersion = ([0-9]+);`),
+			name:  "Windows native UI",
+			path:  filepath.Join(root, "platform", "windows", "main.cpp"),
+			regex: regexp.MustCompile(`constexpr int kIpcVersion = ([0-9]+);`),
 		},
 		{
 			name:  "macOS app",
@@ -56,19 +56,19 @@ func TestNativeClientIPCVersionsMatchGoProtocol(t *testing.T) {
 	}
 }
 
-func TestWindowsWPFErrorCodesMatchGoModel(t *testing.T) {
+func TestWindowsNativeUIErrorCodesMatchGoModel(t *testing.T) {
 	_, sourceFile, _, ok := runtime.Caller(0)
 	if !ok {
 		t.Fatal("locate IPC test source")
 	}
 	root := filepath.Clean(filepath.Join(filepath.Dir(sourceFile), "..", ".."))
-	path := filepath.Join(root, "platform", "windows", "FnCPN.Windows", "IPC.cs")
+	path := filepath.Join(root, "platform", "windows", "main.cpp")
 	contents, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read Windows IPC implementation: %v", err)
 	}
-	codeSwitch := regexp.MustCompile(`(?s)private static bool IsKnownErrorCode\(string code\) => code switch\s*\{(.*?)\n\s*\};`).FindSubmatch(contents)
-	if len(codeSwitch) != 2 {
+	codeSet := regexp.MustCompile(`(?s)static const std::unordered_set<std::wstring> known\s*\{(.*?)\n\s*\};`).FindSubmatch(contents)
+	if len(codeSet) != 2 {
 		t.Fatal("Windows IPC error-code validator was not found")
 	}
 	codes := []model.ErrorCode{
@@ -91,7 +91,7 @@ func TestWindowsWPFErrorCodesMatchGoModel(t *testing.T) {
 		model.ErrorDiscoveryFailed,
 	}
 	for _, code := range codes {
-		if !strings.Contains(string(codeSwitch[1]), `"`+string(code)+`"`) {
+		if !strings.Contains(string(codeSet[1]), `L"`+string(code)+`"`) {
 			t.Errorf("Windows IPC error-code validator does not recognize Go model code %q", code)
 		}
 	}

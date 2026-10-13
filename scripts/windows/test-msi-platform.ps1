@@ -1,9 +1,11 @@
 #Requires -Version 5.1
-param([ValidateSet('arm64', 'x64')][string]$Architecture = 'arm64')
+param([ValidateSet('arm64', 'x64')][string]$Architecture = 'arm64', [string]$PackageRoot)
 $ErrorActionPreference = 'Stop'
-$root = Split-Path -Parent $PSScriptRoot
-$manifest = Get-Content "$root/dist/windows/$Architecture/build-manifest.json" -Raw | ConvertFrom-Json
-$path = Join-Path "$root/dist/windows/$Architecture" $manifest.artifacts[0].path
+$root = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
+if (-not $PackageRoot) { $PackageRoot = Join-Path $root 'dist/windows-native' }
+$PackageRoot = [IO.Path]::GetFullPath($PackageRoot)
+$manifest = Get-Content "$PackageRoot/$Architecture/build-manifest.json" -Raw | ConvertFrom-Json
+$path = Join-Path "$PackageRoot/$Architecture" $manifest.artifacts[0].path
 $installer = New-Object -ComObject WindowsInstaller.Installer
 $session = $null; $view = $null; $database = $null
 try {

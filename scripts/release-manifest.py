@@ -9,7 +9,7 @@ if os.environ.get("RELEASE") == "1" and target.exists():
 names = [f"fncpn-{version}-macos-arm64-unsigned.pkg", f"fncpn-{version}-macos-x64-unsigned.pkg", f"fncpn-{version}-fnos-arm64.fpk", f"fncpn-{version}-fnos-x64.fpk"]
 artifacts = [{"file": name, "sha256": hashlib.sha256((root / name).read_bytes()).hexdigest()} for name in names]
 
-# Windows packages are built on Windows so WPF, WiX, and PE validation use the
+# Windows packages are built on Windows so Win32, WiX, and PE validation use the
 # native toolchain. Only their exact package and evidence manifest cross into
 # the macOS release job; validate that both came from this same clean tag.
 windows_fingerprint = None

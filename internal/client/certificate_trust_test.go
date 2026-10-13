@@ -21,6 +21,33 @@ import (
 	"github.com/coder/websocket"
 )
 
+func TestAdminProbeHTTP2WithCustomTrust(t *testing.T) {
+	root, certificate := trustFixture(t, false, x509.ExtKeyUsageServerAuth)
+	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.ProtoMajor != 2 {
+			t.Errorf("management request used %s, want HTTP/2", r.Proto)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	server.EnableHTTP2 = true
+	server.TLS = &tls.Config{Certificates: []tls.Certificate{certificate}}
+	server.StartTLS()
+	defer server.Close()
+	base := &http.Transport{
+		TLSClientConfig: &tls.Config{NextProtos: []string{"h2", "http/1.1"}},
+		DialContext: func(ctx context.Context, network, _ string) (net.Conn, error) {
+			return (&net.Dialer{}).DialContext(ctx, network, server.Listener.Addr().String())
+		},
+	}
+	transport := newFNOSTransportWithRoot(base, root, nil)
+	defer transport.CloseIdleConnections()
+	err := probeAdminWebSessionWithClient(context.Background(), &http.Client{Transport: transport, Timeout: 5 * time.Second},
+		"https://nas.fnos.net/app/fncpn/api/v1/admin/snapshot", "test-session")
+	if err != nil {
+		t.Fatalf("HTTP/2 management probe: %v", err)
+	}
+}
+
 func trustFixture(t *testing.T, expired bool, usage x509.ExtKeyUsage) (*x509.Certificate, tls.Certificate) {
 	t.Helper()
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)

@@ -10,6 +10,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/rectcircle/fn-connect-private-network/internal/ipc"
 	"github.com/rectcircle/fn-connect-private-network/internal/model"
 	"github.com/rectcircle/fn-connect-private-network/internal/peer"
 	"github.com/rectcircle/fn-connect-private-network/internal/privileged"

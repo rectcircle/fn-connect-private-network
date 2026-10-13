@@ -1,6 +1,6 @@
 ﻿#Requires -Version 5.1
 [CmdletBinding()]
-param([string]$ProjectRoot, [switch]$SkipSmoke)
+param([string]$ProjectRoot, [switch]$SkipSmoke, [switch]$IncludeServerTools, [switch]$IncludeReleaseTools)
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -89,11 +89,13 @@ function Find-Tool([string]$Name, [string[]]$Candidates) {
     return $null
 }
 
-function Install-WingetPackage([string]$Id) {
+function Install-WingetPackage([string]$Id, [string]$Override = '') {
     $winget = Find-Tool 'winget.exe' @()
     if (-not $winget) { throw '缺少 App Installer / WinGet，无法安装系统前置组件。' }
     Write-SetupLog '安装' "通过 WinGet 安装缺失组件：$Id；系统组件可能弹出 UAC。"
-    & $winget install --id $Id --exact --source winget --silent --disable-interactivity --accept-package-agreements --accept-source-agreements 2>&1 |
+    $arguments = @('install', '--id', $Id, '--exact', '--source', 'winget', '--silent', '--disable-interactivity', '--accept-package-agreements', '--accept-source-agreements')
+    if ($Override) { $arguments += @('--override', $Override) }
+    & $winget @arguments 2>&1 |
         ForEach-Object { Write-SetupLog '输出' "$_" }
     $code = $LASTEXITCODE
     if ($code -eq 3010) {
@@ -170,8 +172,10 @@ try {
     $script:restartRequired = $false
     Write-SetupLog '开始' "平台=$hostArch；项目=$ProjectRoot；日志=$logFile"
 
-    Invoke-Stage 'Git、Python、Node 和 Windows SDK' {
-        foreach ($entry in @(@('git.exe', '--version', 'Git.Git'), @('python.exe', '--version', 'Python.Python.3.13'), @('node.exe', '--version', 'OpenJS.NodeJS.LTS'))) {
+    Invoke-Stage 'Git、Python、CMake、MSVC 和 Windows SDK' {
+        $tools = @(@('git.exe', '--version', 'Git.Git'), @('python.exe', '--version', 'Python.Python.3.13'))
+        if ($IncludeServerTools) { $tools += ,@('node.exe', '--version', 'OpenJS.NodeJS.LTS') }
+        foreach ($entry in $tools) {
             $tool = Find-Tool $entry[0] @()
             if (-not $tool) {
                 Install-WingetPackage $entry[2]
@@ -179,8 +183,23 @@ try {
                 if (-not $tool) { throw "安装后仍无法找到 $($entry[0])。" }
             }
             Invoke-Tool $tool @($entry[1])
+            if ($entry[0] -eq 'node.exe') { $script:node = $tool }
             Write-SetupLog '已安装' $tool
         }
+        $script:cmake = Find-Tool 'cmake.exe' @()
+        if (-not $script:cmake) { Install-WingetPackage 'Kitware.CMake'; $script:cmake = Find-Tool 'cmake.exe' @() }
+        if (-not $script:cmake) { throw 'CMake is required for the native Windows UI.' }
+        $cmakeVersion = & $script:cmake --version
+        if ($LASTEXITCODE -ne 0 -or "$cmakeVersion" -notmatch 'cmake version (\d+\.\d+\.\d+)' -or [version]$Matches[1] -lt [version]'3.27.0') { throw 'CMake >= 3.27 is required; update CMake and rerun setup.' }
+        Write-SetupLog '已安装' "CMake：$script:cmake"
+        $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio/Installer/vswhere.exe'
+        $compiler = if (Test-Path -LiteralPath $vswhere) { & $vswhere -latest -version '[17.0,18.0)' -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 Microsoft.VisualStudio.Component.VC.Tools.ARM64 -property installationPath }
+        if (-not $compiler) {
+            Install-WingetPackage 'Microsoft.VisualStudio.2022.BuildTools' '--wait --passive --norestart --add Microsoft.VisualStudio.Workload.VCTools --add Microsoft.VisualStudio.Component.VC.Tools.ARM64 --includeRecommended'
+            $compiler = & $vswhere -latest -version '[17.0,18.0)' -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 Microsoft.VisualStudio.Component.VC.Tools.ARM64 -property installationPath
+            if (-not $compiler) { throw 'Add the MSVC x64/x86 and ARM64 tools to Visual Studio 2022, then rerun setup.' }
+        }
+        Write-SetupLog '已安装' "MSVC x64/ARM64：$compiler"
         $kits = Join-Path ${env:ProgramFiles(x86)} 'Windows Kits\10\bin'
         $signTools = @(Get-ChildItem -LiteralPath $kits -Filter signtool.exe -Recurse -ErrorAction SilentlyContinue)
         if ($signTools.Count -eq 0) {
@@ -239,7 +258,7 @@ try {
 
     Invoke-Stage 'Go 模块代理探测与完整依赖下载' { Initialize-GoModuleProxy }
 
-    Invoke-Stage 'GitHub CLI 2.102.0' {
+    if ($IncludeReleaseTools) { Invoke-Stage 'GitHub CLI 2.102.0' {
         $ghDirectory = Join-Path $programs 'GitHub CLI'
         $script:gh = Find-Tool 'gh.exe' @((Join-Path $ghDirectory 'bin\gh.exe'), 'C:\Program Files\GitHub CLI\gh.exe')
         if ($script:gh) { Write-SetupLog '已安装' $script:gh }
@@ -252,6 +271,8 @@ try {
         }
         Invoke-Tool $script:gh @('--version')
         Add-UserPath (Split-Path -Parent $script:gh)
+    }
+
     }
 
     Invoke-Stage '独立 PowerShell 7.6.6' {
@@ -352,15 +373,22 @@ try {
         }
     }
 
+    Invoke-Stage 'WebView2 原生 SDK 还原' {
+        $nativeSource = Join-Path $ProjectRoot 'platform/windows'
+        $nativePackages = Join-Path $ProjectRoot '.dev/native-ui-nuget'
+        $nativeSdkRoot = Join-Path $nativePackages 'microsoft.web.webview2/1.0.4258.31'
+        Invoke-Tool $script:dotnet @('restore', (Join-Path $nativeSource 'WebView2SDK.csproj'), "-p:RestorePackagesPath=$nativePackages")
+        if (-not (Test-Path -LiteralPath (Join-Path $nativeSdkRoot 'build/native/include/WebView2.h'))) { throw 'WebView2 native SDK restore is incomplete.' }
+    }
+
     if (-not $SkipSmoke) {
-        Invoke-Stage 'ARM64/x64 编译与 MSI 打包验证' {
+        Invoke-Stage 'ARM64/x64 原生 UI、Go 与 MSI 构建验证' {
             $smoke = Join-Path $devRoot 'smoke'
             $output = Join-Path $ProjectRoot 'dist\smoke'
             $null = New-Item -ItemType Directory -Force -Path $smoke, $output
-            $wpfProject = Join-Path $smoke 'WpfSmoke\WpfSmoke.csproj'
-            if (-not (Test-Path $wpfProject)) { Invoke-Tool $script:dotnet @('new', 'wpf', '--framework', 'net10.0', '--name', 'WpfSmoke', '--output', (Split-Path -Parent $wpfProject)) }
-            [IO.File]::WriteAllText($wpfProject, '<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><OutputType>WinExe</OutputType><TargetFramework>net10.0-windows</TargetFramework><UseWPF>true</UseWPF><UseWindowsForms>true</UseWindowsForms><Nullable>enable</Nullable></PropertyGroup><ItemGroup><PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4258.31"/></ItemGroup></Project>', $utf8)
-            [IO.File]::WriteAllText((Join-Path (Split-Path -Parent $wpfProject) 'DependencyProbe.cs'), 'internal static class DependencyProbe { public static readonly System.Type[] Types = { typeof(System.Windows.Forms.NotifyIcon), typeof(Microsoft.Web.WebView2.Wpf.WebView2) }; }', $utf8)
+            $nativeSource = Join-Path $ProjectRoot 'platform/windows'
+            $nativePackages = Join-Path $ProjectRoot '.dev/native-ui-nuget'
+            $nativeSdkRoot = Join-Path $nativePackages 'microsoft.web.webview2/1.0.4258.31'
             $goSource = Join-Path $smoke 'main.go'
             [IO.File]::WriteAllText($goSource, "package main`nfunc main() { println(`"FnCPN build smoke`") }`n", $utf8)
             $wixSource = Join-Path $smoke 'Package.wxs'
@@ -370,7 +398,14 @@ try {
             try {
                 $env:GOOS = 'windows'; $env:CGO_ENABLED = '0'
                 foreach ($target in @('arm64', 'x64')) {
-                    Invoke-Tool $script:dotnet @('publish', $wpfProject, '-c', 'Release', '-r', "win-$target", '--self-contained', 'true', '-o', (Join-Path $output "wpf-$target"), "-p:BaseIntermediateOutputPath=$output\obj\$target\", "-p:BaseOutputPath=$output\bin\$target\")
+                    $cmakeArch = if ($target -eq 'arm64') { 'ARM64' } else { 'x64' }
+                    $nativeBuild = Join-Path $output "windows-ui-$target"
+                    Invoke-Tool $script:cmake @('-S', $nativeSource, '-B', $nativeBuild, '-G', 'Visual Studio 17 2022', '-A', $cmakeArch, "-DWEBVIEW2_SDK_ROOT=$nativeSdkRoot")
+                    Invoke-Tool $script:cmake @('--build', $nativeBuild, '--config', 'Release')
+                    if ($target -eq $hostArch -or $hostArch -eq 'arm64') {
+                        Invoke-Tool (Join-Path (Split-Path -Parent $script:cmake) 'ctest.exe') @('--test-dir', $nativeBuild, '-C', 'Release', '--output-on-failure')
+                    } else { Write-SetupLog '跳过' 'x64 主机不能运行 ARM64 回归；已交叉编译，需 ARM64 主机执行。' }
+                    Copy-Item -LiteralPath (Join-Path $nativeBuild 'Release/FnCPN.UI.exe') -Destination (Join-Path $output "FnCPN-$target.exe")
                     $env:GOARCH = $target
                     if ($target -eq 'x64') { $env:GOARCH = 'amd64' }
                     $exe = Join-Path $output "go-$target.exe"
@@ -387,7 +422,12 @@ try {
         $savedPath = $env:Path
         try {
             $env:Path = [Environment]::GetEnvironmentVariable('Path', 'Machine') + ';' + [Environment]::GetEnvironmentVariable('Path', 'User')
-            Invoke-Tool $script:pwsh @('-NoProfile', '-NonInteractive', '-Command', 'dotnet --version; if ($LASTEXITCODE) { exit 1 }; go version; if ($LASTEXITCODE) { exit 1 }; gh --version; if ($LASTEXITCODE) { exit 1 }')
+            $verify = 'dotnet --version; if ($LASTEXITCODE) { exit 1 }; go version; if ($LASTEXITCODE) { exit 1 }; git --version; if ($LASTEXITCODE) { exit 1 }; python --version; if ($LASTEXITCODE) { exit 1 }; cmake --version; if ($LASTEXITCODE) { exit 1 }'
+            if ($IncludeReleaseTools) { $verify += '; gh --version; if ($LASTEXITCODE) { exit 1 }' }
+            # fnm/nvm may expose Node only in the current shell. Validate its selected
+            # executable without persisting a temporary version-manager path.
+            if ($IncludeServerTools) { $verify += "; & '" + $script:node.Replace("'", "''") + "' --version; if (`$LASTEXITCODE) { exit 1 }" }
+            Invoke-Tool $script:pwsh @('-NoProfile', '-NonInteractive', '-Command', $verify)
         }
         finally { $env:Path = $savedPath }
     }
