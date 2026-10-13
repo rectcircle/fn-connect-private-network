@@ -230,3 +230,5 @@ pwsh -NoProfile -File scripts/check-windows.ps1
 
 仓库其他脚本包含 macOS/fnOS 构建、跨平台版本/本地化、发布资产与 Homebrew 校验，不能因为 Windows 技术栈切换删除。按职责保留，Windows 专用辅助已移入子目录。
 此整理不自动删除本机工具、下载缓存或用户配置，也不卸载共享 Runtime。
+
+Windows CI 与发布使用 `windows-2022` 镜像，以匹配固定的 `Visual Studio 17 2022` CMake generator；`windows-2025` 已切换到 VS 2026，不能直接替换 runner 标签。调整工具链时需同步 generator、本地 setup 和 CI，并验收双架构产物。

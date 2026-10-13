@@ -20,7 +20,9 @@ concurrency:
 jobs:
   windows-build:
     if: ${{ !inputs.publish }}
-    runs-on: windows-2025
+    # Match the native build generator (Visual Studio 17 2022).
+    # windows-2025 now defaults to VS 2026.
+    runs-on: windows-2022
     permissions:
       contents: read
     steps:
