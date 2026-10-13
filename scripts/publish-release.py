@@ -16,7 +16,7 @@ def run(*args):
 
 def release_notes(version):
     """Use the version's changelog entry, or Unreleased while preparing a draft."""
-    changelog = pathlib.Path('CHANGELOG.md').read_text()
+    changelog = pathlib.Path('CHANGELOG.md').read_text(encoding='utf-8')
     sections = {}
     for match in re.finditer(r'^## \[([^\]]+)\][^\n]*\n(.*?)(?=^## |\Z)', changelog, re.M | re.S):
         sections[match.group(1)] = match.group(2).strip()
@@ -81,12 +81,13 @@ def publish(directory, repository, make_public=False):
     # Distinguish not-found from auth/network errors before creating a release.
     releases = json.loads(run('gh', 'api', '--paginate', '--slurp', f'repos/{repository}/releases'))
     release = next((r for page in releases for r in page if r['tag_name'] == tag), None)
+    existing_release = release is not None
     if release is None and make_public:
         raise SystemExit("Publication requires an existing release draft")
     if release is None:
         with tempfile.TemporaryDirectory(prefix='fncpn-release-notes-') as temporary:
             notes = pathlib.Path(temporary) / 'notes.md'
-            notes.write_text(release_notes(version))
+            notes.write_text(release_notes(version), encoding='utf-8')
             args = ['gh', 'release', 'create', tag, '--repo', repository, '--verify-tag', '--draft',
                     '--title', f'FnCPN {version}', '--notes-file', str(notes)]
             run(*args)
@@ -95,6 +96,12 @@ def publish(directory, repository, make_public=False):
     else:
         draft = release['draft']
     if draft and not make_public:
+        if existing_release:
+            with tempfile.TemporaryDirectory(prefix='fncpn-release-notes-') as temporary:
+                notes = pathlib.Path(temporary) / 'notes.md'
+                notes.write_text(release_notes(version), encoding='utf-8')
+                run('gh', 'release', 'edit', tag, '--repo', repository,
+                    '--notes-file', str(notes))
         run('gh', 'release', 'upload', tag, '--repo', repository, '--clobber',
             *(str(sources.get(name, directory / name)) for name in names))
         # A private draft may replace its legacy installer names. Public assets

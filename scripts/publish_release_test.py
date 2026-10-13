@@ -49,9 +49,14 @@ class PublicationTest(unittest.TestCase):
                         self.assertIn('--draft', args)
                         self.assertNotIn('--prerelease', args)
                     if args[:3] == ('gh', 'release', 'edit'):
-                        self.assertIn('--draft=false', args)
-                        self.assertIn('--latest', args)
-                        self.assertNotIn('--latest=false', args)
+                        if '--notes-file' in args:
+                            notes_path = pathlib.Path(args[args.index('--notes-file') + 1])
+                            self.assertEqual(notes_path.read_text(encoding='utf-8'), 'Current release changes.\n')
+                            self.assertNotIn('--draft=false', args)
+                        else:
+                            self.assertIn('--draft=false', args)
+                            self.assertIn('--latest', args)
+                            self.assertNotIn('--latest=false', args)
                     if args[:2] == ('git', 'status'):
                         return ''
                     if args[0] == 'git':
@@ -115,10 +120,10 @@ class PublicationTest(unittest.TestCase):
         self.assertEqual(self.exercise(False, corrupt=True), [])
 
     def test_default_keeps_draft(self):
-        self.assertEqual(self.exercise(True, publish=False), ['upload'])
+        self.assertEqual(self.exercise(True, publish=False), ['edit', 'upload'])
 
     def test_downloaded_release_assets_can_be_verified_from_flat_layout(self):
-        self.assertEqual(self.exercise(True, publish=False, flattened=True), ['upload'])
+        self.assertEqual(self.exercise(True, publish=False, flattened=True), ['edit', 'upload'])
 
     def test_inventory_missing_windows_architecture_is_rejected(self):
         with self.assertRaisesRegex(SystemExit, 'missing required Windows MSI assets'):
