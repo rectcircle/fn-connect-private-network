@@ -8,7 +8,29 @@
 
 ### Added
 
-- `fncpn authorize <fn-id>` now collects the fnOS username and a no-echo terminal password, then authorizes through the existing client daemon IPC. The command no longer opens the FnCPN app; the IPC protocol and stored data are unchanged.
+- `fncpn authorize <fn-id>` 直接在终端收集 fnOS 用户名和不回显密码，通过已有 daemon IPC 完成授权，不再唤起应用登录页。
+
+### Changed
+
+- Windows UI 从自包含 WPF/.NET 改为 C++ Win32，保留登录、连接详情、托盘、自启动、诊断与应用内管理后台；安装包不再携带 WPF/WinForms 桌面运行时。管理后台按需使用共享 WebView2 Evergreen Runtime。
+- Windows 安装器改为标准安装向导，同一个 MSI 自动跟随系统显示语言使用简体中文或英文；完成页默认勾选立即打开 FnCPN，并隐藏无意义的返回按钮。
+- 压缩 Windows 安装包：Go 程序去除调试符号、CAB 使用高压缩，安装维护改用精简辅助程序，避免 MSI 内嵌第二份完整 Go 客户端。本地 ARM64/x64 候选约 9.0/9.7 MiB，相比原 WPF ARM64 基线约 76.4 MiB 明显缩小；最终发布资产大小以实际文件为准。
+- Windows 主页面按 macOS 信息层级调整布局、字体、图标、DPI 和窗口高度；macOS/Windows 连接详情统一展示 `FN Connect ID · 用户名`。fnOS 应用介绍分段显示并提供客户端链接。
+- Windows 开发入口统一为 setup/build/check，移除旧 WPF 链路，内部辅助脚本集中到 `scripts/windows/`；Node 和 GitHub CLI 改为可选开发依赖。
+
+### Fixed
+
+- 修复 Windows 升级时后台退出和重复文件占用提示，增加 MSI 与安装维护操作的耗时日志，便于定位进度条满格后的等待。
+- 修复登录输入框重复边框、按钮 hover 闪烁、图标与文字对齐、诊断滚动条和自启动复选框显示；错误统一进入诊断详情，不再同时显示“无异常”。
+- 修复管理后台 HTTP/2 会话探测失败、浏览器误跳转和白屏；管理窗口在主窗口前方打开，并按页面宽度和显示器工作区调整尺寸。
+- 修复后台消息结果的内存回收、退出时线程和 IPC 的取消等待、JSON 数字越界转换及管理窗口关闭后的迟到回调。
+- 固定 Windows CI 的 VS 2022 runner，避免默认镜像切换到 VS 2026 后无法找到 CMake 指定的编译器。
+
+### 升级与验证范围
+
+- 本次为兼容 PATCH 重构和修复，不新增服务端要求，不改变远程准入规则、本地 IPC 版本或数据 schema；升级保留身份、配置、凭据和连接意图，正常卸载保留用户数据。
+- Windows 11 ARM64 原生 UI 已由用户实测；本地双架构构建、C++/IPC 回归、Go test/vet、安装器元数据与平台条件、本地化和发布脚本检查通过，草稿发布流水线已完成。ARM64 上运行 x64 属于仿真，不等同于原生 x64 验收。
+- 用户确认 Windows 10/原生 x64、历史 WPF 升级、多用户与异常安装回滚、可访问性/多屏 DPI、安装占用与启动/内存，以及缺少 WebView2 Runtime 的安装场景均已完成验收。Windows 客户端和 MSI 仍未签名。
 
 ## [1.0.6] - 2026-10-12
 

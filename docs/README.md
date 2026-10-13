@@ -13,8 +13,7 @@
 | [开发与构建](development.md) | 环境、测试、打包、图标、本地化和正式构建 |
 | [版本与兼容性](versioning-and-compatibility.md) | 从 1.0.0 生效的版本、协议、数据升级和发布约束 |
 | [验证记录](validation.md) | 按版本记录的验证范围、未验证项及有价值的历史实测 |
-| [Windows 开发与发布](windows-development.md) | 工具准备、双架构 MSI 构建与 RC 发布前置步骤 |
-| [Windows UI 后续优化](windows-ui-roadmap.md) | 下一 Windows 版本采用独立 C++ Win32 UI、内嵌 WebView2 与 Go IPC 的决策及迁移验收 |
+| [Windows 开发与发布](windows-development.md) | 工具准备、双架构 MSI 构建、草稿发布与剩余实机验收 |
 
 用户安装和使用从 [项目 README](../README.md) 开始；变更记录见 [CHANGELOG](../CHANGELOG.md)。
 
