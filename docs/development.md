@@ -89,7 +89,7 @@ Go CLI 默认构建也会嵌入这个版本，不再报告 `dev`。
 1. 更新 `internal/version/VERSION`（纯数字 `MAJOR.MINOR.PATCH`）、同步模板、更新 CHANGELOG，提交代码。
 2. 创建并推送对应 tag。tag 流水线运行检查、构建并上传草稿，不自动公开。
 3. 草稿出错可修复、重建及替换；公开后兼容修复应升 PATCH。
-4. 候选验收后，运行 `gh workflow run release.yml --ref main -f tag=v1.0.5 -f publish=true`（替换为待发布版本）。独立的 publish job 下载原草稿产物复核并公开，不依赖构建 job，不安装编译工具、不重建或重新上传资产；也可使用本地已验收的原始产物运行 `python3 scripts/publish-release.py dist --publish`，避免将另一批未经确认的构建视为已验收。
+4. 候选验收后，推荐运行 `python3 scripts/quark-release.py dispatch v1.0.10`（替换为待发布版本），先检查本地夸克授权并通过 `gh secret set` 同步 Secret，再触发公开发布。仅需 GitHub 发布时仍可运行 `gh workflow run release.yml --ref main -f tag=v1.0.10 -f publish=true`，但必须预先准备夸克 Secret，否则后续镜像 job 会失败。独立的 publish job 下载原草稿产物复核并公开，不依赖构建 job，不安装编译工具、不重建或重新上传资产；也可使用本地已验收的原始产物运行 `python3 scripts/publish-release.py dist --publish`，避免将另一批未经确认的构建视为已验收。
 5. Release 说明从 CHANGELOG 对应版本条目提取；尚未登记版本时使用 Unreleased，公开前应完成版本条目。发布脚本下载远端所有资产逐字节复核后公开；已公开版本只允许校验一致的幂等重试，不覆盖。
 6. `python3 scripts/update-cask.py <version>` 仅从公开稳定版发布清单生成 `Casks/fncpn.rb`；脚本拒绝非数字版本、草稿和 GitHub prerelease；公开任务自动提交并推送 Cask 更新。提交并推送生成文件。
 
@@ -105,3 +105,54 @@ PKG Cask 安装使用系统 installer，卸载先运行项目脚本做网络清�
 安装包命名使用小写 `fncpn-<version>-<os>-<arch>[-unsigned].<extension>`，系统为 `macos`、`windows`、`fnos`，架构为 `arm64`、`x64`。fnOS manifest 内的 `x86`/`arm` 平台标识保持不变，仅对外文件名统一。`release-<version>.json` 与 `SHA256SUMS-<version>` 为发布清单和校验和，沿用现有名称。已公开安装包不改名，Homebrew 生成器支持历史文件名。
 
 macOS 发布在 Apple Silicon runner 上构建 arm64 和 x64 两套 PKG，Swift 使用 `arm64`/`x86_64` target，Go 使用 `arm64`/`amd64` 并指定 cgo clang 架构。打包前校验 App 和 helper 的 Mach-O 架构。Intel 原生运行验证仍需 Intel Mac，不以交叉构建代替实机验收。
+
+### 夸克网盘国内镜像
+
+GitHub Release 是发布源。公开任务完成后，Homebrew 更新和夸克镜像作为两个独立 job 执行；
+镜像失败不会撤回 GitHub Release 或阻断 Homebrew 更新，Actions 会明确报错。
+`mirror-quark.yml` 也接收 GitHub 页面公开事件，并支持手动补传；通过 `GITHUB_TOKEN`
+公开不会触发另一个工作流，因此 `release.yml` 显式调用可复用镜像工作流。
+
+本地发布入口（Python 3.11+、Node 16+、已登录的 `gh`）：
+
+```bash
+# 草稿构建和验收完成后：检查本地授权、更新 Secret，然后公开并镜像。
+python3 scripts/quark-release.py dispatch v1.0.10
+
+# 已公开版本的镜像失败后：更新授权并只重试镜像，不重建或替换 GitHub 资产。
+python3 scripts/quark-release.py dispatch v1.0.10 --mode mirror
+```
+
+CLI 默认位置是 `~/.local/share/quark-cli/1.0.24/quark-drive.cjs`，本地授权位于同一 CLI 根目录下的
+`codex/config.json`（默认 `~/.local/share/quark-cli/codex/config.json`）。可通过 `--cli` 和
+`--auth-config` 指定配套路径；首次登录或授权失效时，本地执行 `node <CLI路径> login` 完成授权，
+然后重新执行发布入口。发布入口不会自动打开登录，也不会把授权码作为长期 token。
+
+脚本仅导出当前 Codex 账号的 `accessToken`、`refreshToken`、`clientToken`、账号及设备标识，
+通过标准输入传给仓库 `QUARK_AUTH` Secret，再触发 `main` 上的 workflow。
+发布者需要更新 Actions Secret 及触发工作流的权限；不要将配置放入 workflow input、仓库、日志或 artifact。
+同一时间只从一个本地会话发起发布或补传，避免后一次 Secret 更新抢在前一次 job 读取之前。
+
+runner 固定 Node 22.14.0 / Python 3.12，验证夸克 CLI `1.0.24-29460f9` 压缩包 SHA256，
+只提取 `quark-drive.cjs` 和 `hash-worker.cjs`；不安装 Skill，不执行官方安装或自动更新脚本。
+授权通过 `CODEX_CI=1` 选择 Codex 通道，保存于临时运行目录的 `codex/config.json`（0600），
+任务结束清理整个临时目录，不持久化 runner 刷新后的凭据。CLI 内部支持刷新令牌，
+但如果服务端刷新使本地旧授权失效，下次发布须在本地重新授权；当前不承诺长期免维护。
+
+镜像流程：
+
+1. 拒绝草稿及 prerelease，从指定公开 tag 下载全部资产；校验清单版本、tag commit、六个平台安装包、
+   `SHA256SUMS` 和 GitHub 提供的全部资产 SHA256，不构建或重新打包。
+2. 上传到未分享的 `/releases/fncpn-staging/v<版本>/`。重试时回读已有文件，只补传缺失文件；
+   同名不同内容、重复名称或额外文件立即失败，不覆盖或删除远端内容。
+3. 全部文件从夸克回读验证 SHA256 后，移动版本目录到 `/releases/fncpn/v<版本>/`，已有永久分享自动包含新目录。
+   已公开镜像只允许完整校验的幂等重试，不做原地补写或替换。
+4. 所有版本共享同一个镜像并发组，避免同时操作同一账号。失败时保留未分享的暂存目录供重试；
+   若发现内容冲突，先排查原因，不用自动覆盖绕过错误。
+
+目标目录 FID 固定在 `scripts/quark-release.py`，对应专用发布账号的 `releases` 与 `fncpn`；
+切换账号或重建目录时必须同时调整 FID，不能只替换授权。
+官网中文下载入口使用永久分享，提取码为公开下载用途，不是登录凭据；英文页面仍使用 GitHub。
+
+当前验证边界：本机已验证最小授权恢复及 1.0.9 全部 8 个文件上传/回读一致；
+1.0.10 的 Ubuntu runner 跨机器授权、真实自动镜像和打包验收仍需发布时确认。

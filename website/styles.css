@@ -155,3 +155,12 @@ footer{border-top:1px solid var(--line)}
 @media(max-width:1000px){.header-inner{padding:0 28px}}
 @media(max-width:700px){.header{height:68px;padding:0}.header-inner{padding:0 18px}}
 @media(max-width:370px){.header{padding:0}.header-inner{padding:0 12px}}
+
+/* The Quark mirror is an additional download option for the Chinese page. */
+.download-title .download-mirror{margin:18px 0 0;max-width:330px}
+.mirror-heading{display:flex;align-items:center;flex-wrap:wrap;gap:8px 16px}
+.mirror-heading a{color:#2455a1;font-size:12px;font-weight:600;text-decoration:underline;text-underline-offset:4px}
+.mirror-heading>span{font-size:11px;color:var(--muted)}
+.mirror-heading code{padding:2px 5px;border-radius:3px;background:#f4f8ff;color:var(--ink);font:12px monospace}
+.download-title .download-mirror p{margin:8px 0 0;font-size:10px;line-height:1.7}
+html[lang="en"] .download-mirror{display:none}

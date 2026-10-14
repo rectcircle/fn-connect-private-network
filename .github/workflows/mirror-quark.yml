@@ -1,0 +1,46 @@
+name: Quark release mirror
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Public stable release tag (vMAJOR.MINOR.PATCH)
+        required: true
+        type: string
+  workflow_call:
+    inputs:
+      tag:
+        required: true
+        type: string
+    secrets:
+      QUARK_AUTH:
+        required: true
+permissions:
+  contents: read
+# Serialize ALL versions sharing this account, including retries and publication events.
+concurrency:
+  group: quark-release-mirror
+  cancel-in-progress: false
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      # Execute trusted mirror tooling from main; assets always come from the public release.
+      - uses: actions/checkout@v5
+        with:
+          ref: main
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22.14.0"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Download, upload and verify the public release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          QUARK_AUTH: ${{ secrets.QUARK_AUTH }}
+          RELEASE_TAG: ${{ inputs.tag || github.event.release.tag_name }}
+        run: python3 scripts/quark-release.py mirror "$RELEASE_TAG"

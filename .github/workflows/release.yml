@@ -171,6 +171,26 @@ jobs:
           gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --dir "$DIST_DIR"
       - name: Verify existing assets and make release public
         run: python3 scripts/publish-release.py "$DIST_DIR" --publish
+  mirror-quark:
+    needs: publish
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.publish }}
+    permissions:
+      contents: read
+    uses: ./.github/workflows/mirror-quark.yml
+    with:
+      tag: ${{ inputs.tag }}
+    secrets:
+      QUARK_AUTH: ${{ secrets.QUARK_AUTH }}
+  update-cask:
+    needs: publish
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.publish }}
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.tag }}
       - name: Update public stable release cask
         run: |
           VERSION="$(cat internal/version/VERSION)"

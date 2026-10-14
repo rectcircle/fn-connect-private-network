@@ -19,8 +19,8 @@ Windows 日常开发只需要三个入口：
 | macOS/fnOS 构建 | `build-all.sh`、`build-macos-pkg.sh`、`build-fpk.sh`、`install-fnpack.sh` | 平台产物与 fnpack 环境 |
 | 共享检查 | `check-release.sh`、`test-fnos-state-permissions.sh` | 跨平台/服务端验收 |
 | 生成资源 | `sync-version.py`、`sync-localizations.py`、`sync-native-localizations.py`、`generate-icons.swift` | 统一版本、翻译与产品图标 |
-| 发布 | `release-version.sh`、`release-manifest.py`、`publish-release.py`、`update-cask.py` | 版本、资产清单、发布和 Homebrew 更新 |
-| 发布回归 | `release_manifest_test.py`、`publish_release_test.py`、`update_cask_test.py` | 发布操作的自动验证 |
+| 发布 | `release-version.sh`、`release-manifest.py`、`publish-release.py`、`quark-release.py`、`update-cask.py` | 版本、资产清单、发布和 Homebrew 更新 |
+| 发布回归 | `release_manifest_test.py`、`publish_release_test.py`、`quark_release_test.py`、`update_cask_test.py` | 发布操作的自动验证 |
 | 设计预览 | `preview-icon-concepts.swift`、`preview-private-network-icon.swift` | 图标方案预览，不参与 Windows setup |
 
 不应将共享或其他平台脚本当成 Windows 迁移残留删除。新增 Windows 内部辅助放到 `windows/`，优先接入统一入口，不再增加平行的常用入口。
