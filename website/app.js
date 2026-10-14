@@ -99,7 +99,21 @@ tabs.forEach((tab, index) => {
 });
 setLanguage(currentLanguage);
 if (new URLSearchParams(location.search).get('donate') === '1') {
-  requestAnimationFrame(() => document.querySelector('#donate')?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
+  const openDonationSection = async () => {
+    if (document.fonts?.ready) await document.fonts.ready;
+    const section = document.querySelector('#donate');
+    if (!section) return;
+
+    // Keep the query parameter as an entry point, then leave a clean anchor URL.
+    const cleanURL = new URL(location.href);
+    cleanURL.searchParams.delete('donate');
+    cleanURL.hash = 'donate';
+    history.replaceState(null, '', cleanURL);
+    section.scrollIntoView({ block: 'start' });
+  };
+
+  if (document.readyState === 'complete') openDonationSection();
+  else window.addEventListener('load', openDonationSection, { once: true });
 }
 let toastTimer;
 document.querySelector('#copy-command').addEventListener('click', async () => {
