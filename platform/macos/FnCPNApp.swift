@@ -525,6 +525,8 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         let menu = NSMenu()
         let appMenu = NSMenu(title: "FnCPN")
+        appMenu.addItem(withTitle: L("项目官网"), action: #selector(openHomepage), keyEquivalent: "").target = self
+        appMenu.addItem(.separator())
         appMenu.addItem(withTitle: L("退出"), action: #selector(quit), keyEquivalent: "q").target = self
         let appItem = NSMenuItem(title: "FnCPN", action: nil, keyEquivalent: "")
         appItem.submenu = appMenu
@@ -926,6 +928,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         )
         refreshAutoStartItem()
         menu.addItem(.separator())
+        menu.addItem(withTitle: L("项目官网"), action: #selector(openHomepage), keyEquivalent: "")
         menu.addItem(withTitle: L("退出"), action: #selector(quit), keyEquivalent: "q")
         menu.autoenablesItems = false
         for entry in menu.items { entry.target = self }
@@ -964,6 +967,10 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         window?.deminiaturize(nil)
         window?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    @objc private func openHomepage() {
+        if let url = URL(string: "https://fncpn.rectcircle.cn") { NSWorkspace.shared.open(url) }
     }
 
     @objc private func quit() {

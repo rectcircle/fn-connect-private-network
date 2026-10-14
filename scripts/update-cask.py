@@ -33,7 +33,7 @@ body = '''cask "TOKEN" do
   url "https://github.com/rectcircle/fn-connect-private-network/releases/download/v#{version}/PACKAGE_FILENAME"
   name "FnCPN"
   desc "Private networking for fnOS through FN Connect"
-  homepage "https://github.com/rectcircle/fn-connect-private-network"
+  homepage "https://fncpn.rectcircle.cn"
 
   depends_on arch: :arm64
   depends_on macos: :ventura

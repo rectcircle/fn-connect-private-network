@@ -19,7 +19,7 @@
   <key>FnCPNSupportEmail</key>
   <string>rectcircle96@gmail.com</string>
   <key>FnCPNHomepage</key>
-  <string>https://github.com/rectcircle/fn-connect-private-network</string>
+  <string>https://fncpn.rectcircle.cn</string>
   <key>CFBundleName</key>
   <string>FnCPN</string>
   <key>CFBundleIconFile</key>
@@ -27,9 +27,9 @@
   <key>CFBundlePackageType</key>
   <string>APPL</string>
   <key>CFBundleShortVersionString</key>
-  <string>1.0.7</string>
+  <string>1.0.8</string>
   <key>FnCPNProductVersion</key>
-  <string>1.0.7</string>
+  <string>1.0.8</string>
   <key>CFBundleVersion</key>
   <string>47</string>
   <key>CFBundleURLTypes</key>

@@ -4,6 +4,7 @@
 
 | 文档 | 内容 |
 | --- | --- |
+| [网站部署](website-deployment.md) | 落地页本地预览、Netlify 与 Cloudflare 部署 |
 | [产品需求](product.md) | 用户流程、P0 范围、角色、状态、验收条件和后续能力 |
 | [技术架构](architecture.md) | 进程边界、WireGuard、存储、事务与安全决策 |
 | [接口契约](interfaces.md) | FnCPN HTTP/WSS、本地 IPC 与局域网探测 |

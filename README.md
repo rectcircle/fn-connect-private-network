@@ -177,4 +177,6 @@ NAS 服务端通过 fnOS 应用中心卸载。管理页的「删除离线设备�
 
 作者：rectcircle · 邮箱：rectcircle96@gmail.com
 
-项目官网：https://github.com/rectcircle/fn-connect-private-network
+项目官网：https://fncpn.rectcircle.cn
+
+源码仓库：https://github.com/rectcircle/fn-connect-private-network

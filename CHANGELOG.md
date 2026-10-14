@@ -6,6 +6,25 @@
 
 ## [Unreleased]
 
+## [1.0.8] - 2026-10-14
+
+### Added
+
+- 新增 FnCPN 产品落地页，面向个人、家人和团队说明连接路径、安装方式、端口暴露对比与 FN Connect 中继权益；采用静态页面与 Netlify + Cloudflare 部署配置。
+- macOS 应用菜单与状态栏菜单、Windows 托盘菜单新增“项目官网”入口。
+
+### Changed
+
+- 官网统一为 https://fncpn.rectcircle.cn；fnOS 管理页及应用描述、Mac 元数据、Windows 安装器信息与 Homebrew 主页同步更新，生成脚本保留该地址。版本下载仍指向 GitHub Releases。
+
+### 升级与验证范围
+
+- 本次为兼容 PATCH 更新，不新增另一端要求，不改变远程协议、本地 IPC 或数据 schema；无需数据迁移，升级与回滚沿用已有流程。
+- 本地打包及服务端测试、管理页逻辑、本地化与版本同步检查、Homebrew 脚本测试及 macOS 类型检查通过；落地页已验证桌面与手机布局及主要交互。
+- 1.0.8 安装包的实机安装、菜单跳转与历史正式版互通等待草稿验收；官网域名、Netlify 和 DNS 尚未部署。
+
+## [1.0.7] - 2026-10-14
+
 ### Added
 
 - `fncpn authorize <fn-id>` 直接在终端收集 fnOS 用户名和不回显密码，通过已有 daemon IPC 完成授权，不再唤起应用登录页。

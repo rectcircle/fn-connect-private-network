@@ -6,7 +6,7 @@ cask "fncpn" do
   url "https://github.com/rectcircle/fn-connect-private-network/releases/download/v#{version}/fncpn-#{version}-macos-#{arch}-unsigned.pkg"
   name "FnCPN"
   desc "Private networking for fnOS through FN Connect"
-  homepage "https://github.com/rectcircle/fn-connect-private-network"
+  homepage "https://fncpn.rectcircle.cn"
 
   depends_on macos: :ventura
 

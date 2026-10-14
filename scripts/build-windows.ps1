@@ -665,7 +665,7 @@ foreach ($architecture in $architectures) {
     [void]$wxs.AppendLine('<UI><Publish Dialog="ExitDialog" Control="Finish" Event="DoAction" Value="SetLaunchFnCPNTarget" Order="1" Condition="WIXUI_EXITDIALOGOPTIONALCHECKBOX = 1 AND NOT Installed AND NOT REMOVE~=&quot;ALL&quot;" /><Publish Dialog="ExitDialog" Control="Finish" Event="DoAction" Value="LaunchFnCPN" Order="2" Condition="WIXUI_EXITDIALOGOPTIONALCHECKBOX = 1 AND NOT Installed AND NOT REMOVE~=&quot;ALL&quot;" /></UI>')
     [void]$wxs.AppendLine('<Property Id="ARPCONTACT" Value="rectcircle" />')
     [void]$wxs.AppendLine('<Property Id="ARPHELPLINK" Value="https://github.com/rectcircle/fn-connect-private-network/issues" />')
-    [void]$wxs.AppendLine('<Property Id="ARPURLINFOABOUT" Value="https://github.com/rectcircle/fn-connect-private-network" />')
+    [void]$wxs.AppendLine('<Property Id="ARPURLINFOABOUT" Value="https://fncpn.rectcircle.cn" />')
     [void]$wxs.AppendLine('<Property Id="ARPURLUPDATEINFO" Value="https://github.com/rectcircle/fn-connect-private-network/releases" />')
     [void]$wxs.AppendLine('<Property Id="ARPCOMMENTS" Value="Contact: rectcircle96@gmail.com" />')
     # HKLM's 32-bit view is SOFTWARE\WOW6432Node on both supported architectures.
