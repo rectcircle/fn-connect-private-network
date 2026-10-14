@@ -22,12 +22,12 @@ for path, (pattern, replacement) in updates.items():
     after, count = re.subn(pattern, replacement, before)
     if path.name == 'manifest':
         after, desc_count = re.subn(r'(?m)^desc=.*$',
-            f'desc=<p>通过 FN Connect 自动建立 WireGuard 异地私有网络。</p><p>Automatically connect private networks with WireGuard via FN Connect.</p><p><a href="https://fncpn.rectcircle.cn/?donate=1" target="_blank" rel="noopener noreferrer">项目官网 · 支持项目 · Website · Donate</a></p><p>macOS / Windows 客户端请访问官网查阅下载入口。</p>', after)
+            f'desc=<p>通过 FN Connect 自动建立 WireGuard 异地私有网络。</p><p>Automatically connect private networks with WireGuard via FN Connect.</p><p><a href="https://github.com/rectcircle/fn-connect-private-network/releases/tag/v{version}" target="_blank" rel="noopener noreferrer">下载当前版本客户端 / Download current version</a></p><p><a href="https://fncpn.rectcircle.cn" target="_blank" rel="noopener noreferrer">官方网站 / Official website</a></p><p><a href="https://fncpn.rectcircle.cn/?donate=1" target="_blank" rel="noopener noreferrer">支持 FnCPN / Support FnCPN</a></p>', after)
         if desc_count != 1:
             raise SystemExit('Missing description in fnOS manifest')
         description = re.search(r'(?m)^desc=(.*)$', after)
-        if not description or '#' in description.group(1) or description.group(1).count('<a ') != 1:
-            raise SystemExit('fnOS description must use one link and avoid raw # characters')
+        if not description or '#' in description.group(1) or description.group(1).count('<a ') != 3:
+            raise SystemExit('fnOS description must use three links and avoid raw # characters')
     if path == plist_path:
         after, product_count = re.subn(r'(<key>FnCPNProductVersion</key>\s*<string>)[^<]+(</string>)', rf'\g<1>{version}\g<2>', after)
         if product_count != 1:
