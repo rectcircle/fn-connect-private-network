@@ -35,3 +35,115 @@ footer{border-top:1px solid var(--line)}
 }
 
 .network-art{height:auto!important;background-size:18px 18px}.network-svg{display:block;width:100%;height:auto}.mobile-diagram{display:none}.diagram-caption{padding:0 20px 24px;font-size:11px}.diagram-caption .dot{margin-right:8px;width:5px;height:5px}@media(max-width:480px){.wide-diagram{display:none}.mobile-diagram{display:block}.diagram-caption{font-size:10px;padding:7px 16px 20px}}
+
+.install-support{margin-top:28px}.download-title .support-note{font-size:11px;line-height:1.7;margin:12px 0 0;max-width:300px}
+.support-cta {
+  display: inline-flex;
+  align-items: center;
+  gap: 13px;
+  min-height: 58px;
+  padding: 10px 16px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  color: #fff;
+  box-shadow: 0 8px 24px #0003;
+  transition:
+    transform 160ms ease,
+    filter 160ms ease,
+    box-shadow 160ms ease;
+}
+.support-cta:hover {
+  color: #fff;
+  filter: brightness(1.07);
+  transform: translateY(-2px);
+  box-shadow: 0 12px 28px #0005;
+}
+.support-cta-afdian {
+  background: #946ce6;
+}
+.support-cta-kofi {
+  background: #ff5e5b;
+}
+.install-support[data-language="zh"] [lang="en"],
+.install-support[data-language="en"] [lang="zh-CN"] {
+  display: none;
+}
+.support-cta-icon {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  border-radius: 8px;
+  background: #ffffff2b;
+  font-size: 19px;
+}
+.support-cta-icon svg {
+  width: 22px;
+  height: 22px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.8;
+}
+.support-cta-label {
+  display: grid;
+  gap: 3px;
+}
+.support-cta-label strong {
+  font-size: 13px;
+  font-weight: 650;
+}
+.support-cta-label small {
+  font-size: 9px;
+  opacity: 0.82;
+}
+.support-cta-arrow {
+  margin-left: 10px;
+  font-size: 15px;
+}
+
+.header{position:sticky;top:0;z-index:30;background:rgba(244,247,252,.96);backdrop-filter:blur(14px)}
+.header-actions{display:flex;align-items:center;gap:20px}
+.language-toggle,.menu-toggle{border:1px solid var(--line);background:transparent;color:var(--ink);border-radius:4px;min-width:42px;height:36px;font-size:11px;font-weight:650}
+.language-toggle:hover,.menu-toggle:hover{border-color:var(--accent);color:var(--accent)}
+.menu-toggle{display:none;padding:9px;min-width:38px}
+.menu-toggle span{display:block;width:18px;height:1.5px;margin:3px auto;background:currentColor}
+@media(max-width:700px){
+.header{height:68px;padding:0 18px}.header-actions{gap:9px}.menu-toggle{display:block}.header nav{display:none;position:absolute;top:calc(100% - 1px);left:0;right:0;padding:10px 20px 18px;background:var(--paper);border-bottom:1px solid var(--line);box-shadow:0 12px 18px #172f5810;flex-direction:column;gap:0}.header nav.is-open{display:flex}.header nav a{padding:12px 4px;border-top:1px solid var(--line)}.nav-download{font-size:10px;padding-bottom:5px}.nav-download span{margin-left:5px}.brand{font-size:20px}.brand img{width:28px;height:28px}}
+@media(max-width:370px){.header{padding:0 12px}.header-actions{gap:6px}.nav-download{font-size:9px}.brand{gap:6px}.brand span{display:none}}
+
+/* Keep compact header controls visually quiet while retaining comfortable hit areas. */
+.language-toggle,.menu-toggle{min-width:0;width:36px;height:34px;padding:0;border:0;border-radius:5px;background:transparent}
+.language-toggle{width:auto;min-width:34px;padding:0 3px;font-size:12px;font-weight:550;color:var(--ink);border-bottom:1px solid var(--line);border-radius:0}
+.language-toggle:hover{border-color:var(--accent);color:var(--accent)}
+.menu-toggle{width:34px;height:34px;padding:7px}
+.menu-toggle:hover{background:#e8f0fc}
+.menu-toggle span{width:19px;height:1.5px;margin:4px auto;background:var(--ink)}
+@media(max-width:700px){.header-actions{gap:12px}.language-toggle{min-width:34px;width:auto;padding:0 3px}.menu-toggle{width:34px;height:34px;padding:7px}}
+@media(max-width:370px){.header-actions{gap:8px}.nav-download{font-size:9px}.menu-toggle{width:32px;height:32px}}
+
+
+/* Align the three header actions as one quiet control group. */
+.header-actions{gap:14px}
+.header-actions>.nav-download,.header-actions>.language-toggle,.header-actions>.menu-toggle{display:inline-flex;align-items:center;justify-content:center;height:36px;min-width:36px;padding:0 8px;border:0;border-radius:4px;background:transparent;color:var(--ink);font-size:12px;font-weight:550;line-height:1;text-decoration:none}
+.header-actions>.menu-toggle{width:36px;padding:7px}
+.header-actions>.nav-download span{margin-left:7px}
+.header-actions>.nav-download:hover,.header-actions>.language-toggle:hover,.header-actions>.menu-toggle:hover{background:#e8f0fc;color:var(--accent)}
+.header-actions>.menu-toggle span{width:19px;height:1.5px;margin:4px auto;background:currentColor}
+@media(max-width:700px){.header-actions{gap:6px}.header-actions>.nav-download,.header-actions>.language-toggle,.header-actions>.menu-toggle{height:36px;min-width:36px;padding:0 7px;font-size:11px}.header-actions>.menu-toggle{width:36px;padding:7px}}
+@media(max-width:370px){.header-actions{gap:3px}.header-actions>.nav-download,.header-actions>.language-toggle,.header-actions>.menu-toggle{padding:0 5px;font-size:10px}.header-actions>.menu-toggle{width:34px;min-width:34px;padding:6px}}
+
+/* Keep all header actions on one baseline; show the menu icon only on mobile. */
+.header-actions>.nav-download,.header-actions>.language-toggle,.header-actions>.menu-toggle{display:inline-flex;border-bottom:1px solid var(--line);border-radius:0;background:transparent;color:var(--ink)}
+.header-actions>.nav-download:hover,.header-actions>.language-toggle:hover,.header-actions>.menu-toggle:hover{border-bottom-color:var(--accent);background:transparent;color:var(--accent)}
+.header-actions>.menu-toggle{display:none}
+@media(max-width:700px){.header-actions>.menu-toggle{display:inline-flex}}
+.header-actions>.menu-toggle{flex-direction:column;gap:4px}
+.header-actions>.menu-toggle span{flex:0 0 1.5px;margin:0 auto}
+#donate{scroll-margin-top:132px}
+.header{width:100%;max-width:none;padding-left:clamp(24px,4vw,96px);padding-right:clamp(24px,4vw,96px)}
+.header nav{gap:clamp(18px,2vw,32px)}
+@media(max-width:1000px){.header{padding-left:28px;padding-right:28px}}
+@media(max-width:700px){.header{padding-left:18px;padding-right:18px}}
+@media(max-width:370px){.header{padding-left:12px;padding-right:12px}}

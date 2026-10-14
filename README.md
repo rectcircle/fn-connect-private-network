@@ -169,6 +169,13 @@ brew uninstall --cask --force rectcircle/fn-connect-private-network/fncpn
 
 NAS 服务端通过 fnOS 应用中心卸载。管理页的「删除离线设备」用于清理记录，不等同于安全撤销访问权限。
 
+## 支持项目
+
+如果 FnCPN 对你有帮助，欢迎自愿支持项目维护。赞助将用于开发、测试和基础设施费用；软件继续免费开源。
+
+- [爱发电](https://afdian.com/a/rectcircle)
+- [Ko-fi](https://ko-fi.com/rectcircle)
+
 ## 项目资料与许可证
 
 开发与协议资料见 [文档索引](docs/README.md)，实测范围见 [验证记录](docs/validation.md)。源码采用 [MIT 许可证](LICENSE)，依赖许可证见 [第三方声明](THIRD_PARTY_NOTICES.md)。fnOS 与 FN Connect 商标归各自权利人，本项目与其无隶属或背书关系。

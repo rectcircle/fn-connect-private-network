@@ -271,7 +271,7 @@ inline std::wstring L(std::wstring_view source) {
         {L"服务端版本", L"Server version"},
         {L"对应版本下载", L"Download this version"},
         {L"FN Connect ID", L"FN Connect ID"},
-        {L"项目官网", L"Project website"},
+        {L"官网 · 捐赠", L"Website · Donate"},
     };
     const auto found = catalog.find(source);
     return std::wstring(found == catalog.end() ? source : found->second);
@@ -542,7 +542,7 @@ inline const wchar_t* L(const char* source) {
         {"服务端版本", {L"Server version", L"服务端版本"}},
         {"对应版本下载", {L"Download this version", L"对应版本下载"}},
         {"FN Connect ID", {L"FN Connect ID", L"FN Connect ID"}},
-        {"项目官网", {L"Project website", L"项目官网"}},
+        {"官网 · 捐赠", {L"Website · Donate", L"官网 · 捐赠"}},
     };
     const auto found = catalog.find(source);
     if (found == catalog.end()) return L"";

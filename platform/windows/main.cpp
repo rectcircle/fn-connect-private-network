@@ -1407,7 +1407,7 @@ void ShowTrayMenu(HWND window) {
     AppendMenuW(menu, MF_STRING, 4, L("重试"));
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu, MF_STRING | (g_autoStart ? MF_CHECKED : 0), 5, L("开机启动"));
-    AppendMenuW(menu, MF_STRING, 7, L("项目官网"));
+    AppendMenuW(menu, MF_STRING, 7, L("官网 · 捐赠"));
     AppendMenuW(menu, MF_STRING, 6, L("退出"));
     POINT point{};
     GetCursorPos(&point);
@@ -1421,7 +1421,7 @@ void ShowTrayMenu(HWND window) {
     if (selected == 4) PostMessageW(window, WM_COMMAND, kRetry, 0);
     if (selected == 5) SetAutoStart(!g_autoStart);
     if (selected == 6) PostMessageW(window, WM_COMMAND, kExit, 0);
-    if (selected == 7) ShellExecuteW(window, L"open", L"https://fncpn.rectcircle.cn", nullptr, nullptr, SW_SHOWNORMAL);
+    if (selected == 7) ShellExecuteW(window, L"open", L"https://fncpn.rectcircle.cn/#donate", nullptr, nullptr, SW_SHOWNORMAL);
 }
 
 LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam) {
