@@ -98,6 +98,9 @@ tabs.forEach((tab, index) => {
   });
 });
 setLanguage(currentLanguage);
+if (new URLSearchParams(location.search).get('donate') === '1') {
+  requestAnimationFrame(() => document.querySelector('#donate')?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
+}
 let toastTimer;
 document.querySelector('#copy-command').addEventListener('click', async () => {
   const toast = document.querySelector('#toast');
