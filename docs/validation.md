@@ -183,3 +183,15 @@ chown 使用替身，未记为实际跨 UID 或 NAS 实机启用通过。实机�
 - macOS 产品/PKG/CLI 版本为 1.0.3，build number 为 29；固定路径、无 relocate bundle 和 App 的 codesign 深度校验通过。
 - 远端五份资产逐字节复核后公开为 Latest 稳定版，Homebrew Cask 更新至 1.0.3；历史公开版本未覆盖。
 - 本轮未在 NAS 写文件、停服、升级或启用；新包实机启用结果需单独记录。
+
+## 1.0.10 构建与夸克镜像核验（2026-10-15）
+
+- 源码 commit：`ed73f7f83e531c2aa37ec6f963f8e68e4c79602c`，tag：`v1.0.10`。
+- [草稿构建 38602567019](https://github.com/rectcircle/fn-connect-private-network/actions/runs/38602567019) 成功：Windows ARM64/x64 构建、macOS/fnOS 发布检查、原始资产上传及逐字节复核通过。
+- 公开前独立下载草稿，验证全部 8 个资产 SHA256、清单及 tag commit；展开 macOS ARM64/x64 包确认架构，ARM64 内嵌 CLI 输出 `1.0.10`。未据此宣称完成真实安装、运行或历史数据迁移验收。
+- [公开发布 38605607575](https://github.com/rectcircle/fn-connect-private-network/actions/runs/38605607575) 全部成功：本地 `dispatch` 检查授权，将当前账号最小配置通过标准输入同步为 `QUARK_AUTH` Secret，公开原始草稿后并行更新 Homebrew 与夸克。
+- Ubuntu runner 使用固定版本 CLI（仅运行文件，无 Skill），成功恢复本地授权并上传全部 8 个文件到未分享的暂存目录；日志中 6 个安装包、发布清单、校验和全部逐项 `Verified:`，最终输出 `Verified mirror: /releases/fncpn/v1.0.10 (8 files)`。
+- 校验完成后版本目录移动至 `/releases/fncpn/v1.0.10/`；通过原永久分享确认版本目录可见，目录内为完整 8 个文件。Homebrew 自动更新提交为 `e604993`。
+- 本地新增 18 项镜像回归测试、完整 `check-release.sh` 和工作流 actionlint 静态检查通过。回归覆盖部分上传恢复、内容冲突、已公开镜像不可覆盖、校验前不公开、授权检查失败不传 Secret、凭据不进入 workflow input/错误输出及 CLI 压缩包校验。
+- 异常保留：[主分支 Checks 38602543466](https://github.com/rectcircle/fn-connect-private-network/actions/runs/38602543466) 的 macOS job 显示 `check-release.sh` 步骤失败，但整体长期保持运行中，日志接口返回 404；取消及强制取消请求后仍未能获取失败日志。发布依据为同 commit 的 Release 校验成功、本地完整检查及独立草稿资产核验，不将该 Checks 记为通过，根因待排查。
+- 未覆盖：令牌自然到期后的跨机器刷新及轮换、长期无人值守、切换账号/重建目录、该版本全平台真实安装与历史正式版本互通专项。此次变更仅为分发流程，不改变协议、IPC 或持久化 schema；不据此扩大已有产品兼容验证范围。

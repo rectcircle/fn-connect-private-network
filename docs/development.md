@@ -113,6 +113,53 @@ GitHub Release 是发布源。公开任务完成后，Homebrew 更新和夸克�
 `mirror-quark.yml` 也接收 GitHub 页面公开事件，并支持手动补传；通过 `GITHUB_TOKEN`
 公开不会触发另一个工作流，因此 `release.yml` 显式调用可复用镜像工作流。
 
+#### 从新克隆仓库开始
+
+发布者需要仓库写权限、更新 Actions Secret 的权限、可运行 Actions 的仓库环境，以及目标夸克账号的人工授权。
+仓库包含流程和固定目录 FID，不包含登录凭据；单独克隆源码不能直接访问维护者网盘。
+准备 Python 3.11+、Node（建议与 CI 相同的 22.14.0）、Git 和 GitHub CLI，先执行 `gh auth login`。
+以下命令均从仓库根目录执行，示例版本须替换为本次发布版本。
+
+首次安装夸克 CLI（已有固定版本安装时跳过）：
+
+```bash
+python3 - <<'INSTALL_QUARK'
+import importlib.util
+from pathlib import Path
+import shutil
+import tempfile
+
+spec = importlib.util.spec_from_file_location("quark_release", "scripts/quark-release.py")
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+# 用仓库内的固定 URL、SHA256 和版本自检，只安装 CLI 及 hash worker。
+with tempfile.TemporaryDirectory(prefix="fncpn-quark-install-") as temporary:
+    entry = module.install_cli(Path(temporary) / "runtime")
+    destination = module.DEFAULT_CLI.parent
+    destination.mkdir(parents=True, exist_ok=False)
+    for name in ("quark-drive.cjs", "hash-worker.cjs"):
+        shutil.copy2(entry.parent / name, destination / name)
+print(module.DEFAULT_CLI)
+INSTALL_QUARK
+```
+
+首次授权或授权失效后：
+
+```bash
+CODEX_CI=1 node "$HOME/.local/share/quark-cli/1.0.24/quark-drive.cjs" login
+CODEX_CI=1 node "$HOME/.local/share/quark-cli/1.0.24/quark-drive.cjs" get-user-info
+```
+
+`CODEX_CI=1` 用于让普通终端与 runner 使用相同的 Codex 授权通道，并不要求安装 Codex Skill。
+浏览器中完成授权后，以 `get-user-info` 成功作为登录完成依据；仅网页显示成功不代表 CLI 已保存凭据。
+如果登录等待超时，完成页面授权后再运行 `login` 检查；页面提供授权码时可本地使用
+`login --token <授权码>` 完成交换，不将此授权码当成 `QUARK_AUTH`。
+
+#### 发布与重试
+
+推送版本 tag 后先等待草稿构建和验收通过，再运行下方发布入口。
+完成后使用 `gh run watch <运行ID> --exit-status` 确认公开、Homebrew 更新和夸克镜像三个 job 均成功。
+
 本地发布入口（Python 3.11+、Node 16+、已登录的 `gh`）：
 
 ```bash
@@ -123,21 +170,23 @@ python3 scripts/quark-release.py dispatch v1.0.10
 python3 scripts/quark-release.py dispatch v1.0.10 --mode mirror
 ```
 
-CLI 默认位置是 `~/.local/share/quark-cli/1.0.24/quark-drive.cjs`，本地授权位于同一 CLI 根目录下的
-`codex/config.json`（默认 `~/.local/share/quark-cli/codex/config.json`）。可通过 `--cli` 和
-`--auth-config` 指定配套路径；首次登录或授权失效时，本地执行 `node <CLI路径> login` 完成授权，
-然后重新执行发布入口。发布入口不会自动打开登录，也不会把授权码作为长期 token。
+#### Token 获取与传递
 
-脚本仅导出当前 Codex 账号的 `accessToken`、`refreshToken`、`clientToken`、账号及设备标识，
-通过标准输入传给仓库 `QUARK_AUTH` Secret，再触发 `main` 上的 workflow。
-发布者需要更新 Actions Secret 及触发工作流的权限；不要将配置放入 workflow input、仓库、日志或 artifact。
-同一时间只从一个本地会话发起发布或补传，避免后一次 Secret 更新抢在前一次 job 读取之前。
+登录成功后，CLI 自动把 access token、refresh token、账号和设备标识保存到
+`~/.local/share/quark-cli/codex/config.json`；无需手动复制或打印 token。
+`login --token` 接收的是一次性授权码，不是用于发布的长期 token。
 
-runner 固定 Node 22.14.0 / Python 3.12，验证夸克 CLI `1.0.24-29460f9` 压缩包 SHA256，
-只提取 `quark-drive.cjs` 和 `hash-worker.cjs`；不安装 Skill，不执行官方安装或自动更新脚本。
-授权通过 `CODEX_CI=1` 选择 Codex 通道，保存于临时运行目录的 `codex/config.json`（0600），
-任务结束清理整个临时目录，不持久化 runner 刷新后的凭据。CLI 内部支持刷新令牌，
-但如果服务端刷新使本地旧授权失效，下次发布须在本地重新授权；当前不承诺长期免维护。
+`dispatch` 会检查本地授权，从配置中提取当前账号的最小授权状态，通过标准输入调用
+`gh secret set QUARK_AUTH`，再触发公开发布。不要把 token 放进 workflow input、仓库或日志。
+默认 CLI 路径为 `~/.local/share/quark-cli/1.0.24/quark-drive.cjs`，
+可用 `--cli` 和 `--auth-config` 指定配套路径；失效时本地重新登录，再执行 `dispatch`。
+同一时间只从一个本地会话发起发布或补传，避免并发更新同一个 Secret。
+
+runner 只提取固定版本 CLI 的运行文件并校验压缩包 SHA256，不安装 Skill；授权配置写入临时目录并在结束后清理。
+若 runner 刷新令牌后使本地旧凭据失效，下次发布须重新登录，不承诺永久免授权。
+
+更多 CLI 用法参考 [夸克官方 Skill 仓库](https://github.com/quark-clouddrive/quarkclouddrive_offical)，
+仅作参考，本项目不要求安装 Skill。
 
 镜像流程：
 
@@ -154,5 +203,7 @@ runner 固定 Node 22.14.0 / Python 3.12，验证夸克 CLI `1.0.24-29460f9` 压
 切换账号或重建目录时必须同时调整 FID，不能只替换授权。
 官网中文下载入口使用永久分享，提取码为公开下载用途，不是登录凭据；英文页面仍使用 GitHub。
 
-当前验证边界：本机已验证最小授权恢复及 1.0.9 全部 8 个文件上传/回读一致；
-1.0.10 的 Ubuntu runner 跨机器授权、真实自动镜像和打包验收仍需发布时确认。
+已在 1.0.10 验证本地授权导出、Ubuntu runner 恢复授权、全部 8 个文件上传与 SHA256 回读、
+校验后移动至公开目录，以及 Homebrew 并行更新。运行链接和未覆盖范围见
+[1.0.10 发布核验](validation.md#1010-构建与夸克镜像核验2026-10-15)。
+该次通过不代表凭据长期续期、不同账号或全部平台安装专项已验证。
