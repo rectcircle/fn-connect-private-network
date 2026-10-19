@@ -386,3 +386,99 @@ test('byte counts use the selected language format', () => {
   assert.equal(ui.evaluate('formatBytes(1536)'), '1.5 KiB');
   assert.equal(ui.evaluate('formatBytes(1048576)'), '1.0 MiB');
 });
+
+test('DNS settings save independently without requiring per-device records', async () => {
+  let sent;
+  const ui = page(async (url, options) => {
+    assert.ok(url.endsWith('/api/v1/admin/networks'));
+    sent = JSON.parse(options.body);
+    return {ok: true, status: 200, json: async () => ({settings: {...sample.settings, ...sent}})};
+  });
+  ui.get('dnsSuffixInput').value = 'MyHome.FnCPN';
+  await ui.get('dnsForm').listeners.submit({preventDefault() {}});
+  assert.deepEqual(sent, {dnsSuffix: 'myhome.fncpn'});
+  assert.equal(ui.get('dnsState').textContent, '设置已保存');
+});
+
+test('DNS test queries only IPv4 and displays source', async () => {
+  const sent = [];
+  const ui = page(async (url, options) => {
+    assert.ok(url.endsWith('/api/v1/admin/dns-test'));
+    const query = JSON.parse(options.body); sent.push(query);
+    return {ok: true, status: 200, json: async () => ({result: query.type === 'A' ? 'answer' : 'nodata', source: 'mdns', resolvedName: 'abc.local', addresses: query.type === 'A' ? ['192.168.50.20'] : []})};
+  });
+  ui.get('dnsTestName').value = 'abc';
+  await ui.get('dnsTestForm').listeners.submit({preventDefault() {}});
+  assert.deepEqual(sent, [{name: 'abc', type: 'A'}]);
+  assert.match(ui.get('dnsTestResult').textContent, /abc\.local.*192\.168\.50\.20.*mDNS/);
+});
+
+test('DNS uses the current FN ID and opens only the saved suffix', async () => {
+ const ui=page(async(url,options)=>({ok:true,status:200,json:async()=> url.endsWith('/api/v1/admin/networks') ? {settings:{...sample.settings,...JSON.parse(options.body)}} : {upstreams:[],searchDomains:[]}}));
+ ui.evaluate("applyNASHostname('mi-nuc'); location.search='?fnId=wrong&nasPort=9999'; initializeDNSIdentity({fnId:'home-nas',defaultDNSSuffix:'home-nas.fncpn',fnConnectState:'ready',managementState:'ready',managementScheme:'http',managementPort:5666})");
+ assert.equal(ui.get('dnsSuffixInput').value,'home-nas.fncpn');
+ assert.equal(ui.evaluate('nasURL'),'http://mi-nuc.home-nas.fncpn:5666/');
+ assert.equal(ui.get('openNAS').textContent,'http://mi-nuc.home-nas.fncpn:5666/');
+ ui.get('dnsSuffixInput').value='custom.fncpn';
+ ui.get('dnsSuffixInput').listeners.input();
+ assert.equal(ui.evaluate('nasURL'),'http://mi-nuc.home-nas.fncpn:5666/');
+ assert.equal(ui.get('openNAS').textContent,'http://mi-nuc.home-nas.fncpn:5666/');
+ await ui.get('dnsForm').listeners.submit({preventDefault(){}});
+ assert.equal(ui.evaluate('nasURL'),'http://mi-nuc.custom.fncpn:5666/');
+ ui.get('dnsReset').listeners.click();
+ await ui.get('dnsForm').listeners.submit({preventDefault(){}});
+ assert.equal(ui.evaluate('nasURL'),'http://mi-nuc.home-nas.fncpn:5666/');
+ assert.equal(ui.get('openNAS').textContent,'http://mi-nuc.home-nas.fncpn:5666/');
+});
+test('DNS never invents an FN ID or NAS port',()=>{
+ const ui=page();
+ assert.equal(ui.get('dnsSuffixInput').value,'');
+ assert.equal(ui.get('openNAS').attributes['aria-disabled'],'true');
+ ui.evaluate("location.hostname='myhome.fnos.net'; initializeDNSIdentity()");
+ assert.equal(ui.get('dnsSuffixInput').value,'');
+ assert.equal(ui.get('openNAS').attributes['aria-disabled'],'true');
+});
+test('DNS form keeps automatic configuration out of the UI',()=>{
+ const html=sourceHTML.split('<script>')[0];
+ assert.doesNotMatch(html,/dnsUpstreamsInput|dnsSearchInput|dnsUpstreamState|解析诊断|高级 DNS 设置/);
+});
+
+test('NAS hostname supplies the default test name and preserves edits',()=>{
+ const ui=page();
+ ui.evaluate("applyNASHostname('mi-nuc')");
+ assert.equal(ui.get('dnsTestName').value,'mi-nuc');
+ assert.equal(ui.get('dnsTestName').placeholder,'mi-nuc');
+ ui.get('dnsTestName').value='printer.local';
+ ui.evaluate("applyNASHostname('mi-nuc')");
+ assert.equal(ui.get('dnsTestName').value,'printer.local');
+});
+
+test('server metadata supports HTTPS and custom suffix despite FN ID failure',()=>{
+ const ui=page();
+ ui.evaluate("applyNASHostname('mi-nuc'); savedDNSSuffix='custom.fncpn'; dnsAutomatic=false; byId('dnsSuffixInput').value=savedDNSSuffix; initializeDNSIdentity({fnConnectState:'unavailable',managementState:'ready',managementScheme:'https',managementPort:7443})");
+ assert.equal(ui.get('dnsSuffixInput').value,'custom.fncpn');
+ assert.equal(ui.evaluate('nasURL'),'https://mi-nuc.custom.fncpn:7443/');
+ assert.equal(ui.get('openNAS').attributes['aria-disabled'],'false');
+});
+test('unconfigured FN Connect is distinguished from a temporary read failure',()=>{
+ const ui=page();
+ ui.evaluate("initializeDNSIdentity({fnConnectState:'not-configured',managementState:'ready',managementScheme:'http',managementPort:5666})");
+ assert.match(ui.get('dnsState').textContent,/尚未配置 FN Connect/);
+ ui.evaluate("initializeDNSIdentity({fnConnectState:'unavailable',managementState:'unavailable'})");
+ assert.match(ui.get('dnsState').textContent,/暂时无法读取/);
+});
+
+test('IPv4 errors retain friendly address diagnostics and real failures',async()=>{
+ for (const addressFiltered of [true,false]) {
+  const ui=page(async(url,options)=>{
+   assert.equal(JSON.parse(options.body).type,'A');
+   return {ok:false,status:503,json:async()=>({error:{code:'UNAVAILABLE',remoteCode:addressFiltered?'DNS_NO_REACHABLE_ADDRESS':'',message:addressFiltered?'DNS answer has no address in enabled networks':'upstream timeout',requestId:'request-123'}})};
+  });
+  ui.get('dnsTestName').value='device';
+  await ui.get('dnsTestForm').listeners.submit({preventDefault(){}});
+  assert.match(ui.get('dnsTestResult').textContent,addressFiltered?/IPv4: 未找到当前连接可用的地址/:/IPv4: 解析失败/);
+  assert.doesNotMatch(ui.get('dnsTestResult').textContent,/IPv6|UNAVAILABLE|request-123/);
+  assert.equal(ui.get('dnsTestDetails').hidden,false);
+  assert.match(ui.get('dnsTestError').textContent,/request-123/);
+ }
+});

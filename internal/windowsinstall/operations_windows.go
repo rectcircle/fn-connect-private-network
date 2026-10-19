@@ -15,7 +15,6 @@ import (
 	"unsafe"
 
 	"github.com/rectcircle/fn-connect-private-network/internal/ipc"
-	"github.com/rectcircle/fn-connect-private-network/internal/model"
 	platformwindows "github.com/rectcircle/fn-connect-private-network/internal/platform/windows"
 	"golang.org/x/sys/windows"
 )
@@ -123,25 +122,7 @@ func stopClientDaemonInSession(sessionID uint32) error {
 }
 
 func stopClientDaemonAt(socket string) error {
-	clientIPC := ipc.Client{SocketPath: socket, Timeout: 2 * time.Second}
 	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
 	defer cancel()
-	if err := clientIPC.Call(ctx, "shutdown-client-daemon", nil, nil); err != nil {
-		var status model.ClientStatus
-		statusErr := clientIPC.Call(ctx, "status", nil, &status)
-		if statusErr != nil && model.AsError(statusErr).Code == model.ErrorUnavailable {
-			return nil // No responsive daemon is listening in this session.
-		}
-		return fmt.Errorf("request daemon shutdown: %w (status probe: %v)", err, statusErr)
-	}
-	for {
-		if err := ctx.Err(); err != nil {
-			return fmt.Errorf("wait for daemon shutdown: %w", err)
-		}
-		var status model.ClientStatus
-		if err := clientIPC.Call(ctx, "status", nil, &status); err != nil && model.AsError(err).Code == model.ErrorUnavailable {
-			return nil
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
+	return ipc.StopDaemonForMaintenance(ctx, socket)
 }

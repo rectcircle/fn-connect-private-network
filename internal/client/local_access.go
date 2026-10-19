@@ -48,10 +48,10 @@ func (m *Manager) waitForLocalAccess(ctx context.Context, remote RemoteService, 
 	if !ok {
 		return
 	}
-	cfg := cloneLocalProbeConfiguration(m.localProbeConfig)
+	cfg := clonePrivateAPIConfiguration(m.privateAPIConfig)
 	if cfg == nil {
 		fetch, cancel := context.WithTimeout(ctx, configurationFetchTimeout)
-		fresh, err := remote.LocalProbeConfiguration(fetch, config.DeviceID)
+		fresh, err := remote.PrivateAPIConfiguration(fetch, config.DeviceID)
 		cancel()
 		if err != nil {
 			return

@@ -32,7 +32,7 @@ func TestManualCheckKeepsHealthyRelayPlan(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		m, p, n, d, _ := coordinationFixture(t)
 		p.reachable.Store(false)
-		m.localProbeConfig = &model.LocalProbeConfiguration{}
+		m.privateAPIConfig = &model.PrivateAPIConfiguration{}
 		if err := m.Connect(t.Context()); err != nil {
 			t.Fatal(err)
 		}
@@ -82,7 +82,7 @@ func TestDirectBudgetReservesRelayAndApplySharesDeadline(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		m, p, n, d, _ := coordinationFixture(t)
 		p.reachable.Store(false)
-		m.localProbeConfig = &model.LocalProbeConfiguration{}
+		m.privateAPIConfig = &model.PrivateAPIConfiguration{}
 		d.discover = func(context.Context) (Discovery, error) {
 			return Discovery{IPv6: []string{"240e::1", "240e::2", "240e::3"}}, nil
 		}
@@ -131,7 +131,7 @@ func TestSlowRelayApplyLeavesFullHandshakeBudget(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		m, p, n, _, _ := coordinationFixture(t)
 		p.reachable.Store(false)
-		m.localProbeConfig = &model.LocalProbeConfiguration{}
+		m.privateAPIConfig = &model.PrivateAPIConfiguration{}
 		n.apply = func(ctx context.Context, plan model.ClientPlan) (model.ClientPrivilegedStatus, error) {
 			select {
 			case <-ctx.Done():
@@ -168,7 +168,7 @@ func TestRelayRetryDoesNotExtendIPv6Cooldown(t *testing.T) {
 		}
 		m.ipv6RouteChecker = func(context.Context, netip.Addr, int) bool { return true }
 		p.reachable.Store(false)
-		m.localProbeConfig = &model.LocalProbeConfiguration{}
+		m.privateAPIConfig = &model.PrivateAPIConfiguration{}
 		expires := time.Now().Add(5 * time.Minute)
 		m.directRetryAfter = expires
 		if err := m.connect(t.Context()); err != nil {
@@ -188,7 +188,7 @@ func TestSlowDirectApplyDoesNotConsumeNetworkProbeBudget(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		m, p, n, d, _ := coordinationFixture(t)
 		p.reachable.Store(false)
-		m.localProbeConfig = &model.LocalProbeConfiguration{}
+		m.privateAPIConfig = &model.PrivateAPIConfiguration{}
 		d.discover = func(context.Context) (Discovery, error) {
 			return Discovery{IPv6: []string{"240e::1"}}, nil
 		}
@@ -225,9 +225,9 @@ func (blockingStatusNetwork) Remove(context.Context) error { return nil }
 // A gateway that never responds must not extend the LAN selection window.
 type stalledProbeRemote struct{ *fakeRemoteService }
 
-func (s stalledProbeRemote) LocalProbeConfiguration(ctx context.Context, _ string) (model.LocalProbeConfiguration, error) {
+func (s stalledProbeRemote) PrivateAPIConfiguration(ctx context.Context, _ string) (model.PrivateAPIConfiguration, error) {
 	<-ctx.Done()
-	return model.LocalProbeConfiguration{}, ctx.Err()
+	return model.PrivateAPIConfiguration{}, ctx.Err()
 }
 
 func TestManualHealthyCheckBoundsProbeAndSkipsConfigurationFetch(t *testing.T) {

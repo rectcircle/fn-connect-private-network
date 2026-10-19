@@ -41,10 +41,10 @@ type RemoteService interface {
 	Bootstrap(context.Context) (Bootstrap, error)
 	RegisterDevice(context.Context, string, string) (model.DeviceRegistration, error)
 	Configuration(context.Context, string) (model.ClientConfiguration, error)
-	LocalProbeConfiguration(
+	PrivateAPIConfiguration(
 		context.Context,
 		string,
-	) (model.LocalProbeConfiguration, error)
+	) (model.PrivateAPIConfiguration, error)
 }
 
 type ConfigurationWatchResult struct {
@@ -91,7 +91,7 @@ type Bridge interface {
 type LocalProbe interface {
 	Reachable(
 		context.Context,
-		model.LocalProbeConfiguration,
+		model.PrivateAPIConfiguration,
 		string,
 		NetworkSnapshot,
 	) (bool, error)
@@ -148,6 +148,8 @@ func (s NetworkSnapshot) Fingerprint() string {
 }
 
 type ManagerOptions struct {
+	// DNSHTTPClient optionally supplies a private-network transport. DNS never uses its cookie jar.
+	DNSHTTPClient    *http.Client
 	Store            *ConfigStore
 	Discoverer       Discoverer
 	Remote           RemoteFactory
@@ -167,6 +169,8 @@ type ManagerOptions struct {
 }
 
 type Manager struct {
+	dnsHTTPClient    *http.Client
+	dns              clientDNS
 	mu               sync.RWMutex
 	operation        sync.Mutex
 	store            *ConfigStore
@@ -184,8 +188,8 @@ type Manager struct {
 	handshakeTimeout time.Duration
 	directRetryAfter time.Time
 	direct           model.DirectDiagnostics
-	localProbeConfig *model.LocalProbeConfiguration
-	// nasAddress is the NAS's LAN IPv4 extracted from the local-probe endpoints.
+	privateAPIConfig *model.PrivateAPIConfiguration
+	// nasAddress is the NAS's LAN IPv4 extracted from the private API endpoints.
 	// It is retained even when the LAN probe itself fails: once the VPN tunnel
 	// is up this address is reachable, so it is shown on the client's details
 	// page regardless of which path (local/direct/relay) was selected.
@@ -258,6 +262,7 @@ func NewManager(options ManagerOptions) (*Manager, error) {
 		ipv6RouteChecker = hasIPv6RouteTo
 	}
 	return &Manager{
+		dnsHTTPClient:    options.DNSHTTPClient,
 		store:            options.Store,
 		discoverer:       options.Discoverer,
 		remote:           options.Remote,
@@ -297,34 +302,34 @@ func (m *Manager) Start() error {
 	return nil
 }
 
-// loadLocalProbeCache restores a previously persisted LAN probe configuration so
+// loadPrivateAPICache restores a previously persisted NAS private API configuration so
 // the LOCAL path can be established without first contacting the public gateway.
 // It is a best-effort hint: an absent or invalid cache is ignored. It must only
 // be called once the IPC/privileged secret path is available (i.e. during
 // connect), never from Start — the daemon may not have its privileged IPC ready
 // yet and reading a secret would block Startup.
-func (m *Manager) loadLocalProbeCache(fnID string) {
-	cfg, found, _, err := m.store.LoadLocalProbeConfig(fnID)
+func (m *Manager) loadPrivateAPICache(fnID string) {
+	cfg, found, _, err := m.store.LoadPrivateAPIConfig(fnID)
 	if err != nil {
-		m.logger.Warn("load cached local probe configuration", "fn_id", fnID, "error", err)
+		m.logger.Warn("load cached private API configuration", "fn_id", fnID, "error", err)
 		return
 	}
 	if !found {
 		return
 	}
 	m.mu.Lock()
-	m.localProbeConfig = &cfg
+	m.privateAPIConfig = &cfg
 	m.mu.Unlock()
-	m.logger.Info("cached local probe configuration loaded", "fn_id", fnID,
+	m.logger.Info("cached private API configuration loaded", "fn_id", fnID,
 		"endpoint_count", len(cfg.Endpoints))
 }
 
-// persistLocalProbeConfig writes the local-probe cache to disk. Failures are
+// persistPrivateAPIConfig writes the private API cache to disk. Failures are
 // logged but never fatal: the cache is an optimization, so a stale cache still
 // falls back to fetching from the gateway.
-func (m *Manager) persistLocalProbeConfig(fnID string, cfg model.LocalProbeConfiguration) {
-	if err := m.store.SaveLocalProbeConfig(fnID, cfg); err != nil {
-		m.logger.Warn("save cached local probe configuration", "fn_id", fnID, "error", err)
+func (m *Manager) persistPrivateAPIConfig(fnID string, cfg model.PrivateAPIConfiguration) {
+	if err := m.store.SavePrivateAPIConfig(fnID, cfg); err != nil {
+		m.logger.Warn("save cached private API configuration", "fn_id", fnID, "error", err)
 	}
 }
 
@@ -604,6 +609,11 @@ func (m *Manager) Disconnect(ctx context.Context) error {
 }
 
 func (m *Manager) disconnect(ctx context.Context) error {
+	defer func() {
+		if err := m.stopDNS(ctx); err != nil {
+			m.setDNSStatus("degraded", "", err)
+		}
+	}()
 	m.stopLocalAccess()
 	logger := logging.FromContext(ctx, m.logger)
 	logger.Info("client disconnect requested")
@@ -620,7 +630,7 @@ func (m *Manager) disconnect(ctx context.Context) error {
 	}
 	m.cancelConfigurationWatch()
 	m.bridge.Stop()
-	m.localProbeConfig = nil
+	m.privateAPIConfig = nil
 	m.lastPlan = nil
 	m.lastNetworkFingerprint = ""
 	if err := m.removeNetwork(ctx); err != nil {
@@ -762,7 +772,7 @@ func (m *Manager) Forget(ctx context.Context) error {
 		return m.fail(err)
 	}
 	m.bridge.Stop()
-	m.localProbeConfig = nil
+	m.privateAPIConfig = nil
 	m.lastPlan = nil
 	m.lastNetworkFingerprint = ""
 	if err := m.removeNetwork(ctx); err != nil {
@@ -781,12 +791,16 @@ func (m *Manager) Forget(ctx context.Context) error {
 }
 
 func (m *Manager) Close(ctx context.Context) error {
+	m.dns.lifecycle.Lock()
+	m.dns.closed = true
+	m.dns.lifecycle.Unlock()
+	dnsErr := m.stopDNS(ctx)
 	m.suspendConnections()
 	m.operation.Lock()
 	defer m.operation.Unlock()
 	m.cancelConfigurationWatch()
 	m.bridge.Stop()
-	m.localProbeConfig = nil
+	m.privateAPIConfig = nil
 	m.lastPlan = nil
 	m.lastNetworkFingerprint = ""
 	m.mu.Lock()
@@ -796,10 +810,10 @@ func (m *Manager) Close(ctx context.Context) error {
 	if proxy != nil {
 		closeErr := proxy.Close()
 		if closeErr != nil {
-			return closeErr
+			return errors.Join(dnsErr, closeErr, m.removeNetwork(ctx))
 		}
 	}
-	return m.removeNetwork(ctx)
+	return errors.Join(dnsErr, m.removeNetwork(ctx))
 }
 
 func (m *Manager) closeAdminProxy() {
@@ -818,7 +832,12 @@ func (m *Manager) Run(ctx context.Context) {
 	m.operation.Lock()
 	m.localAccessContext = ctx
 	m.operation.Unlock()
+	dnsContext, cancelDNS := context.WithCancel(ctx)
+	dnsDone := make(chan struct{})
+	go func() { defer close(dnsDone); m.runDNS(dnsContext) }()
 	m.runCoordinator(ctx)
+	cancelDNS()
+	<-dnsDone
 	m.operation.Lock()
 	m.stopLocalAccess()
 	m.operation.Unlock()
@@ -1257,7 +1276,7 @@ func publishPrivilegedLifecycleEvent(events chan privilegedLifecycleEvent, event
 // localProbeHealthChecks is how many consecutive failed LAN probe checks mark an
 // established LOCAL path as lost. A single transient probe timeout must not tear
 // down a working LAN link: doing so forces a costly reconnect that re-fetches
-// the local-probe config over the public gateway (which itself may be flaky).
+// the private API configuration over the public gateway (which itself may be flaky).
 const localProbeHealthChecks = 2
 
 // localProbeHealthRetryInterval is the small wait between consecutive probe
@@ -1282,7 +1301,7 @@ func (m *Manager) localPathStillHealthy(ctx context.Context, config *LocalConfig
 			case <-time.After(localProbeHealthRetryInterval):
 			}
 		}
-		probeConfiguration := cloneLocalProbeConfiguration(m.localProbeConfig)
+		probeConfiguration := clonePrivateAPIConfiguration(m.privateAPIConfig)
 		if probeConfiguration == nil {
 			return false
 		}
@@ -1300,7 +1319,7 @@ func (m *Manager) localPathStillHealthy(ctx context.Context, config *LocalConfig
 			m.logger.Warn("local path check failed", logging.ErrorAttrs(probeErr)...)
 		}
 		if reachable {
-			m.localProbeConfig = probeConfiguration
+			m.privateAPIConfig = probeConfiguration
 			return true
 		}
 	}
@@ -2258,7 +2277,7 @@ func clientConfigurationsEqual(
 		first.ServerPublicKey == second.ServerPublicKey &&
 		first.ServerAddress == second.ServerAddress &&
 		first.ClientAddress == second.ClientAddress &&
-		first.ListenPort == second.ListenPort &&
+		first.ListenPort == second.ListenPort && first.DNSSuffix == second.DNSSuffix && first.DNSRevision == second.DNSRevision &&
 		slices.Equal(first.AllowedIPs, second.AllowedIPs)
 }
 
@@ -2355,6 +2374,7 @@ func (m *Manager) setNetworkStatus(
 ) {
 	m.mu.Lock()
 	m.status = model.ClientStatus{
+		DNS:                m.status.DNS,
 		LocalNetworkAccess: m.status.LocalNetworkAccess,
 		State:              state,
 		Path:               path,
@@ -2408,9 +2428,9 @@ func clientNetworkHealthError(
 	return nil
 }
 
-func cloneLocalProbeConfiguration(
-	configuration *model.LocalProbeConfiguration,
-) *model.LocalProbeConfiguration {
+func clonePrivateAPIConfiguration(
+	configuration *model.PrivateAPIConfiguration,
+) *model.PrivateAPIConfiguration {
 	if configuration == nil {
 		return nil
 	}
@@ -2429,7 +2449,7 @@ func isValidClientConfiguration(config model.ClientConfiguration) bool {
 		config.ClientAddress != ""
 }
 
-// primaryNASAddress returns the first private IPv4 host from the local-probe
+// primaryNASAddress returns the first private IPv4 host from the private API
 // endpoints. These are the NAS gateway LAN addresses that become reachable once
 // the VPN tunnel is up. Returns an empty string when no private IPv4 endpoint
 // is present.
@@ -2600,6 +2620,7 @@ func (m *Manager) setStatus(
 ) {
 	m.mu.Lock()
 	m.status = model.ClientStatus{
+		DNS:                m.status.DNS,
 		LocalNetworkAccess: m.status.LocalNetworkAccess,
 		State:              state,
 		Path:               path,
@@ -2722,7 +2743,7 @@ type SystemLocalProbe struct {
 
 func (p SystemLocalProbe) Reachable(
 	ctx context.Context,
-	configuration model.LocalProbeConfiguration,
+	configuration model.PrivateAPIConfiguration,
 	deviceID string,
 	snapshot NetworkSnapshot,
 ) (bool, error) {
@@ -2835,7 +2856,7 @@ func probeLocalEndpoint(
 	target := url.URL{
 		Scheme: "http",
 		Host:   endpoint,
-		Path:   "/probe",
+		Path:   model.LocalProbePath,
 	}
 	request, err := http.NewRequestWithContext(
 		ctx,
@@ -2848,6 +2869,21 @@ func probeLocalEndpoint(
 	}
 	request.Header.Set("Content-Type", "application/json")
 	response, err := client.Do(request)
+	if err == nil && response.StatusCode == http.StatusNotFound {
+		response.Body.Close()
+		// v1.x.x compatibility: historical servers expose only /probe. It is
+		// retained for authenticated bootstrap/version rejection; v2.x.x deprecates it.
+		target.Path = model.LegacyLocalProbePath
+		legacyRequest, buildErr := http.NewRequestWithContext(ctx, http.MethodPost, target.String(), bytes.NewReader(body))
+		if buildErr != nil {
+			if transport != nil {
+				transport.CloseIdleConnections()
+			}
+			return false, buildErr
+		}
+		legacyRequest.Header.Set("Content-Type", "application/json")
+		response, err = client.Do(legacyRequest)
+	}
 	if transport != nil {
 		transport.CloseIdleConnections()
 	}

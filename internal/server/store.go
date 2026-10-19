@@ -15,7 +15,7 @@ import (
 )
 
 const stateFileName = "state.json"
-const stateVersion = 1
+const stateVersion = 2
 
 type stateDocument struct {
 	Version int               `json:"version"`
@@ -29,6 +29,7 @@ type Store struct {
 }
 
 type NetworkUpdate struct {
+	DNSSuffix   *string
 	OverlayCIDR *string
 	ListenPort  *uint16
 	LANCIDRs    *[]string
@@ -52,10 +53,22 @@ func openStore(dir string) (*Store, model.ServerState, error) {
 		if err := model.DecodeStrict(data, &document); err != nil {
 			return nil, state, fmt.Errorf("decode server state: %w", err)
 		}
-		if document.Version != stateVersion {
+		if document.Version != stateVersion && document.Version != 1 {
 			return nil, state, fmt.Errorf("unsupported state schema version %d", document.Version)
 		}
 		state = document.State
+		if document.Version == 1 {
+			if err := validateState(state); err != nil {
+				return nil, state, err
+			}
+			backup := filepath.Join(dir, "state.schema-1.backup.json")
+			if err := writeJSONAtomic(backup, document); err != nil {
+				return nil, state, err
+			}
+			if _, err := store.save(state); err != nil {
+				return nil, state, err
+			}
+		}
 	} else {
 		for _, name := range []string{"state.transaction.json", "settings.json", "devices.json"} {
 			if _, statErr := os.Stat(filepath.Join(dir, name)); statErr == nil {

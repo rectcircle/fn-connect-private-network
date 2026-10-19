@@ -100,7 +100,7 @@ func TestLocalSelectionPreservesTerminalVersionError(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	manager.localProbeConfig = &model.LocalProbeConfiguration{Endpoints: []string{"192.168.1.2:54790"}, Key: "cached"}
+	manager.privateAPIConfig = &model.PrivateAPIConfiguration{Endpoints: []string{"192.168.1.2:54790"}, Key: "cached"}
 	err = manager.Connect(context.Background())
 	if !version.IsFailure(err) || manager.Status().State != model.ClientError {
 		t.Fatalf("lost local rejection: %v %+v", err, manager.Status())
@@ -110,7 +110,7 @@ func TestLocalSelectionPreservesTerminalVersionError(t *testing.T) {
 type rejectingVersionProbe struct{ err error }
 
 func (p rejectingVersionProbe) Snapshot() (NetworkSnapshot, error) { return NetworkSnapshot{}, nil }
-func (p rejectingVersionProbe) Reachable(context.Context, model.LocalProbeConfiguration, string, NetworkSnapshot) (bool, error) {
+func (p rejectingVersionProbe) Reachable(context.Context, model.PrivateAPIConfiguration, string, NetworkSnapshot) (bool, error) {
 	return false, p.err
 }
 
@@ -258,5 +258,37 @@ func TestRemoteVersionAdmissionHasIndependentBudget(t *testing.T) {
 	deadline, _ := parent.Deadline()
 	if remote.deadline.After(deadline) {
 		t.Fatal("version request extended parent deadline")
+	}
+}
+
+func TestProbeLegacyFallbackPreservesVersionGate(t *testing.T) {
+	for _, status := range []int{http.StatusNotFound, http.StatusForbidden} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			calls := []string{}
+			expected := []byte("known per-device nonce HMAC")
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls = append(calls, r.URL.Path)
+				if r.URL.Path == model.LocalProbePath {
+					w.WriteHeader(status)
+					return
+				}
+				if r.URL.Path != model.LegacyLocalProbePath {
+					t.Errorf("unexpected path %s", r.URL.Path)
+				}
+				_ = json.NewEncoder(w).Encode(model.LocalProbeResponse{ServerVersion: "1.0.10", Proof: base64.RawURLEncoding.EncodeToString(model.VersionedProbeProof(expected, "1.0.10"))})
+			}))
+			defer server.Close()
+			ok, err := probeLocalEndpoint(t.Context(), server.Client(), 0, server.Listener.Addr().String(), []byte(`{}`), expected)
+			if ok || err == nil {
+				t.Fatalf("historical server admitted: %v", err)
+			}
+			if status == http.StatusNotFound {
+				if len(calls) != 2 || !version.IsFailure(err) {
+					t.Fatalf("legacy bootstrap lost version rejection: %v %v", calls, err)
+				}
+			} else if len(calls) != 1 {
+				t.Fatalf("non-404 triggered fallback: %v", calls)
+			}
+		})
 	}
 }

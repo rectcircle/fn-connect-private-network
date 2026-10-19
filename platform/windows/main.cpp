@@ -40,7 +40,7 @@ using namespace winrt::Windows::Data::Json;
 namespace {
 constexpr wchar_t kWindowClass[] = L"FnCPN.NativeWindow";
 constexpr wchar_t kAdminWindowClass[] = L"FnCPN.AdminWindow";
-constexpr int kIpcVersion = 4;
+constexpr int kIpcVersion = 5;
 constexpr UINT_PTR kRefreshTimer = 1;
 constexpr UINT kStatusReady = WM_APP + 1;
 constexpr UINT kDaemonReady = WM_APP + 2;
@@ -88,6 +88,7 @@ constexpr int kDiagnosticValue = 1030;
 constexpr int kStatusError = 1031;
 constexpr int kLoginReturn = 1032;
 constexpr int kLoginCancel = 1033;
+constexpr int kCopyDNSSuffix = 1034;
 
 HWND g_window{};
 HWND g_state{};
@@ -113,6 +114,8 @@ HWND g_repair{};
 HWND g_values[7]{};
 HWND g_fieldLabels[7]{};
 HWND g_diagnosticValue{};
+HWND g_dnsLabel{}, g_dnsValue{}, g_copyDNSSuffix{};
+std::wstring g_dnsSuffix;
 HWND g_statusError{};
 HWND g_loginReturn{};
 HWND g_loginCancel{};
@@ -183,6 +186,7 @@ struct RefreshResult {
     std::wstring privilege;
     std::wstring direct;
     std::wstring details;
+    std::wstring dnsText, dnsSuffix;
     std::wstring statusError;
     std::wstring diagnosticJson;
     bool administrator{};
@@ -534,6 +538,13 @@ void RefreshFromWorker() {
         if (!endpoint.empty()) refreshed->details += (refreshed->details.empty() ? L"" : L"\n") + std::wstring(L"UDP ") + endpoint;
         const auto lastError = status.GetNamedObject(L"lastError", JsonObject{});
         refreshed->statusError = localWaiting ? L("正在等待局域网访问") + (JsonString(status, L"localNetworkAccess").empty() ? L"" : L" (" + JsonString(status, L"localNetworkAccess") + L")") : FailureMessage(lastError);
+        const auto dns = status.GetNamedObject(L"dns", JsonObject{});
+        const auto dnsState = JsonString(dns, L"state", L"inactive");
+        const std::wstring dnsLabel = dnsState == L"ready" ? L("就绪") : dnsState == L"preparing" ? L("正在读取") : dnsState == L"degraded" ? L("降级") : L("未连接");
+        refreshed->dnsSuffix = JsonString(dns, L"suffix");
+        refreshed->dnsText = dnsLabel + L" · " + refreshed->dnsSuffix;
+        const auto dnsError = FailureMessage(dns.GetNamedObject(L"lastError", JsonObject{}));
+        if (!dnsError.empty()) refreshed->details += L"\n" + dnsError;
         std::wstring errorList;
         if (result.HasKey(L"errors") && result.GetNamedValue(L"errors").ValueType() == JsonValueType::Array) {
             for (const auto& value : result.GetNamedArray(L"errors")) {
@@ -774,11 +785,12 @@ void ShowControls(bool show, std::initializer_list<HWND> controls) {
 }
 
 std::vector<HIMAGELIST> g_buttonImages;
-HICON g_nasButtonIcon{};
+HICON g_nasButtonIcon{}, g_dnsButtonIcon{};
 std::wstring g_diagnosticBase, g_adminError;
 
 void UpdateButtonIcons(HWND window) {
     if (g_nasButtonIcon) DestroyIcon(g_nasButtonIcon);
+    if (g_dnsButtonIcon) DestroyIcon(g_dnsButtonIcon);
     for (auto images : g_buttonImages) ImageList_Destroy(images);
     g_buttonImages.clear();
     const int size = Scale(window, 16);
@@ -790,7 +802,7 @@ void UpdateButtonIcons(HWND window) {
     // Windows' native symbol font keeps icons sharp at every display scale.
     for (auto [id, glyph] : std::initializer_list<std::pair<int, wchar_t>>{
         {kConnect, L'\uE703'}, {kRelogin, 0xE77B}, {kRetry, 0xE72C}, {kChangeServer, 0xE8AB},
-        {kAdmin, 0xE774}, {kCopyDiagnostics, 0xE8C8}, {kOpenLog, 0xE8B7},
+        {kCopyDNSSuffix, 0xE8C8}, {kAdmin, 0xE774}, {kCopyDiagnostics, 0xE8C8}, {kOpenLog, 0xE8B7},
         {kRefresh, 0xE72C}, {kExit, 0xE7E8}, {kOpenNas, 0xE8A7}}) {
         auto bitmap = CreateCompatibleBitmap(dc, size, size);
         auto oldBitmap = SelectObject(memory, bitmap);
@@ -800,11 +812,14 @@ void UpdateButtonIcons(HWND window) {
         SelectObject(memory, oldBitmap);
         auto images = ImageList_Create(size, size, ILC_COLOR32 | ILC_MASK, 1, 0);
         ImageList_AddMasked(images, bitmap, RGB(255,255,255)); DeleteObject(bitmap);
-        BUTTON_IMAGELIST image{images, {Scale(window, 6), 0, Scale(window, 4), 0}, static_cast<UINT>(id == kOpenNas ? BUTTON_IMAGELIST_ALIGN_CENTER : BUTTON_IMAGELIST_ALIGN_LEFT)};
+        BUTTON_IMAGELIST image{images, {Scale(window, 6), 0, Scale(window, 4), 0}, static_cast<UINT>((id == kOpenNas || id == kCopyDNSSuffix) ? BUTTON_IMAGELIST_ALIGN_CENTER : BUTTON_IMAGELIST_ALIGN_LEFT)};
         SendMessageW(GetDlgItem(window, id), BCM_SETIMAGELIST, 0, reinterpret_cast<LPARAM>(&image));
         if (id == kOpenNas) {
             g_nasButtonIcon = ImageList_GetIcon(images, 0, ILD_NORMAL);
             SendMessageW(g_openNas, BM_SETIMAGE, IMAGE_ICON, reinterpret_cast<LPARAM>(g_nasButtonIcon));
+        }
+        if (id == kCopyDNSSuffix) {
+            g_dnsButtonIcon = ImageList_GetIcon(images, 0, ILD_NORMAL);
         }
         g_buttonImages.push_back(images);
         SetWindowLongW(GetDlgItem(window,id),GWL_STYLE,(GetWindowLongW(GetDlgItem(window,id),GWL_STYLE) & ~BS_TYPEMASK) | BS_OWNERDRAW);
@@ -869,7 +884,7 @@ void Layout(HWND window) {
     const int contentWidth = std::max(0, width - margin * 2);
     const bool errorVisible = false;
     const bool repairVisible = g_configured && !g_privilegedAvailable;
-    const int naturalHeight = g_viewLogin ? 510 : 724 + (errorVisible ? 44 : 0) + (repairVisible ? 42 : 0);
+    const int naturalHeight = g_viewLogin ? 510 : 756 + (errorVisible ? 44 : 0) + (repairVisible ? 42 : 0);
     g_layoutScaleY = std::clamp(static_cast<double>(height) / naturalHeight, 0.82, 1.0);
     const int contentHeight = static_cast<int>(naturalHeight * g_layoutScaleY);
     SCROLLINFO scroll{sizeof(scroll), SIF_RANGE | SIF_PAGE | SIF_POS};
@@ -901,23 +916,36 @@ void Layout(HWND window) {
         EnableWindow(g_fnIdInput, !g_loginInFlight && !g_externalAuthorization);
         EnableWindow(g_usernameInput, !g_loginInFlight); EnableWindow(g_passwordInput, !g_loginInFlight);
         EnableWindow(g_loginButton, !g_loginInFlight);
-        ShowControls(false, {GetDlgItem(window, kRefresh), GetDlgItem(window, kExit), g_state, g_connect, g_retry, g_relogin, g_changeServer, g_admin, g_copyDiagnostics, g_openLog, g_openNas, g_repair, g_autostart, g_statusError, g_diagnosticValue, g_diagnosticsLabel});
+        ShowControls(false, {GetDlgItem(window, kRefresh), GetDlgItem(window, kExit), g_state, g_connect, g_retry, g_relogin, g_changeServer, g_admin, g_copyDiagnostics, g_openLog, g_openNas, g_repair, g_autostart, g_statusError, g_diagnosticValue, g_diagnosticsLabel, g_dnsLabel, g_dnsValue, g_copyDNSSuffix});
         for (int i = 0; i < 7; ++i) ShowControls(false, {g_values[i], g_fieldLabels[i]});
     } else {
         Move(window, g_state, margin, 142, contentWidth, 36);
         const int valueX = margin + 126;
         for (int i = 0; i < 7; ++i) {
-            Move(window, g_fieldLabels[i], margin, 197 + i * 32, 118, 26);
-            Move(window, g_values[i], valueX, 197 + i * 32, contentWidth - 126, 26);
+            const int row = i < 4 ? i : i + 1; // DNS follows the handshake, matching macOS.
+            Move(window, g_fieldLabels[i], margin, 197 + row * 32, 118, 26);
+            Move(window, g_values[i], valueX, 197 + row * 32, contentWidth - 126, 26);
         }
-        Move(window, g_values[6], valueX, 197 + 6 * 32, 158, 26);
+        Move(window, g_values[6], valueX, 197 + 7 * 32, 158, 26);
         auto valueDc=GetDC(g_values[6]); auto previousValueFont=SelectObject(valueDc,g_font); SIZE ipSize{}; auto ip=GetText(g_values[6]);
         GetTextExtentPoint32W(valueDc,ip.c_str(),static_cast<int>(ip.size()),&ipSize); SelectObject(valueDc,previousValueFont); ReleaseDC(g_values[6],valueDc);
-        Move(window, g_openNas, valueX + MulDiv(ipSize.cx,96,GetDpiForWindow(window)) + 6, 197 + 6 * 32, 22, 26);
-        Move(window, g_connect, margin, 437, 150, 34);
-        Move(window, g_relogin, margin + 160, 437, 130, 34);
-        Move(window, g_retry, margin + 300, 437, 140, 34);
-        int y = 487;
+        Move(window, g_openNas, valueX + MulDiv(ipSize.cx,96,GetDpiForWindow(window)) + 6, 197 + 7 * 32, 22, 26);
+        const int dnsY = 197 + 4 * 32;
+        Move(window, g_dnsLabel, margin, dnsY, 118, 26);
+        auto dnsDc = GetDC(g_dnsValue); auto dnsFont = SelectObject(dnsDc, g_font); SIZE dnsSize{};
+        auto dnsText = GetText(g_dnsValue);
+        GetTextExtentPoint32W(dnsDc, dnsText.c_str(), static_cast<int>(dnsText.size()), &dnsSize);
+        SelectObject(dnsDc, dnsFont); ReleaseDC(g_dnsValue, dnsDc);
+        // Static controls must not cover the icon's hit-test/paint area. Keep the
+        // copy action next to short text and reserve room when text is truncated.
+        const int dnsWidth = std::clamp(MulDiv(dnsSize.cx, 96, GetDpiForWindow(window)) + 2, 1, std::max(1, contentWidth - 126 - 32));
+        Move(window, g_dnsValue, valueX, dnsY, dnsWidth, 26);
+        Move(window, g_copyDNSSuffix, valueX + dnsWidth + 6, dnsY, 26, 26);
+        EnableWindow(g_copyDNSSuffix, !g_dnsSuffix.empty());
+        Move(window, g_connect, margin, 469, 150, 34);
+        Move(window, g_relogin, margin + 160, 469, 130, 34);
+        Move(window, g_retry, margin + 300, 469, 140, 34);
+        int y = 519;
         if (errorVisible) { Move(window, g_statusError, margin, y, contentWidth, 38); y += 44; }
         Move(window, g_diagnosticsLabel, margin, y, contentWidth, 25); y += 32;
         Move(window, g_diagnosticValue, margin, y, contentWidth, 82); y += 102;
@@ -934,6 +962,7 @@ void Layout(HWND window) {
         Move(window, g_autostart, margin, y, 126, 28); y += 35;
         if (repairVisible) Move(window, g_repair, margin, y, contentWidth, 32);
         ShowControls(true, {GetDlgItem(window, kExit), g_state, g_connect, g_retry, g_relogin, g_changeServer, g_copyDiagnostics, g_openLog, g_openNas, g_autostart, g_diagnosticValue, g_diagnosticsLabel, GetDlgItem(window, kRefresh)});
+        ShowControls(true, {g_dnsLabel, g_dnsValue, g_copyDNSSuffix});
         ShowControls(false, {g_statusError});
         ShowControls(g_configured && g_administrator, {g_admin}); EnableWindow(g_admin, !g_adminOpening);
         ShowControls(repairVisible, {g_repair});
@@ -1030,10 +1059,9 @@ void RepairServiceFromWorker() {
     PostPayload(kOperationReady, new std::wstring(std::move(error)), 0);
 }
 
-void CopyDiagnostics(HWND window) {
+void CopyText(HWND window, const std::wstring& serialized) {
     if (!OpenClipboard(window)) return;
     EmptyClipboard();
-    const std::wstring serialized = g_diagnostics ? std::wstring(g_diagnostics.Stringify()) : L"{}";
     const auto text = serialized.c_str();
     const size_t bytes = (wcslen(text) + 1) * sizeof(wchar_t);
     HGLOBAL memory = GlobalAlloc(GMEM_MOVEABLE, bytes);
@@ -1043,6 +1071,10 @@ void CopyDiagnostics(HWND window) {
         else GlobalFree(memory);
     }
     CloseClipboard();
+}
+
+void CopyDiagnostics(HWND window) {
+    CopyText(window, g_diagnostics ? std::wstring(g_diagnostics.Stringify()) : L"{}");
 }
 
 void OpenLogs() {
@@ -1453,6 +1485,9 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
         g_relogin = AddControl(L"BUTTON", L("重新登录"), BS_PUSHBUTTON, kRelogin);
         g_changeServer = AddControl(L"BUTTON", L("更换 NAS"), BS_PUSHBUTTON, kChangeServer);
         g_admin = AddControl(L"BUTTON", L("管理后台"), BS_PUSHBUTTON, kAdmin);
+        g_dnsLabel = AddControl(L"STATIC", L"DNS", SS_LEFT | SS_CENTERIMAGE, 0);
+        g_dnsValue = AddControl(L"STATIC", L"-", SS_LEFT | SS_CENTERIMAGE | SS_ENDELLIPSIS, 0);
+        g_copyDNSSuffix = AddControl(L"BUTTON", L("复制 DNS 后缀"), BS_PUSHBUTTON, kCopyDNSSuffix);
         g_copyDiagnostics = AddControl(L"BUTTON", L("复制"), BS_PUSHBUTTON, kCopyDiagnostics);
         g_openLog = AddControl(L"BUTTON", L("日志"), BS_PUSHBUTTON, kOpenLog);
         g_openNas = AddControl(L"BUTTON", L"", BS_PUSHBUTTON | BS_ICON, kOpenNas);
@@ -1486,7 +1521,7 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
         SendMessageW(g_autostart, BM_SETCHECK, g_autoStart ? BST_CHECKED : BST_UNCHECKED, 0);
         SendMessageW(g_identity, WM_SETFONT, reinterpret_cast<WPARAM>(GetStockObject(DEFAULT_GUI_FONT)), TRUE);
         SendMessageW(g_state, WM_SETFONT, reinterpret_cast<WPARAM>(GetStockObject(DEFAULT_GUI_FONT)), TRUE);
-        for (int id : {kConnect, kRefresh, kExit, kRetry, kRelogin, kChangeServer, kAdmin, kCopyDiagnostics, kOpenLog, kOpenNas, kAutostart, kRepair, kStatusError, kDiagnosticValue, kLoginReturn, kLoginCancel}) SendMessageW(GetDlgItem(window, id), WM_SETFONT, reinterpret_cast<WPARAM>(GetStockObject(DEFAULT_GUI_FONT)), TRUE);
+        for (int id : {kConnect, kRefresh, kExit, kRetry, kRelogin, kChangeServer, kAdmin, kCopyDiagnostics, kCopyDNSSuffix, kOpenLog, kOpenNas, kAutostart, kRepair, kStatusError, kDiagnosticValue, kLoginReturn, kLoginCancel}) SendMessageW(GetDlgItem(window, id), WM_SETFONT, reinterpret_cast<WPARAM>(GetStockObject(DEFAULT_GUI_FONT)), TRUE);
         for (int id : {kFnIdLabel, kFnId, kUsernameLabel, kUsername, kPasswordLabel, kPassword, kLoginError, kLogin})
             SendMessageW(GetDlgItem(window, id), WM_SETFONT, reinterpret_cast<WPARAM>(GetStockObject(DEFAULT_GUI_FONT)), TRUE);
         for (int i = 0; i < 7; ++i) { SendMessageW(g_values[i], WM_SETFONT, reinterpret_cast<WPARAM>(GetStockObject(DEFAULT_GUI_FONT)), TRUE); SendMessageW(g_fieldLabels[i], WM_SETFONT, reinterpret_cast<WPARAM>(GetStockObject(DEFAULT_GUI_FONT)), TRUE); }
@@ -1522,7 +1557,7 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
         COLORREF color = GetSysColor(COLOR_WINDOWTEXT);
         if (!g_highContrast) {
             color = RGB(35, 38, 43);
-            if (control == g_versionLabel || control == g_diagnosticsLabel || std::find(std::begin(g_fieldLabels), std::end(g_fieldLabels), control) != std::end(g_fieldLabels)) color = RGB(112, 117, 125);
+            if (control == g_versionLabel || control == g_diagnosticsLabel || control == g_dnsLabel || std::find(std::begin(g_fieldLabels), std::end(g_fieldLabels), control) != std::end(g_fieldLabels)) color = RGB(112, 117, 125);
             if (control == g_state) color = (g_remoteState == L"LOCAL" || g_remoteState == L"DIRECT" || g_remoteState == L"RELAY") ? RGB(35, 164, 82) : RGB(112, 117, 125);
             if (control == g_statusError || control == g_loginError) color = RGB(181, 49, 49);
         }
@@ -1534,10 +1569,10 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
     case WM_DRAWITEM: {
         const auto* item = reinterpret_cast<DRAWITEMSTRUCT*>(lParam);
         if (item->CtlType != ODT_BUTTON) break;
-        if(item->CtlID==kOpenNas) {
+        if(item->CtlID==kOpenNas || item->CtlID==kCopyDNSSuffix) {
             FillRect(item->hDC,&item->rcItem,g_backgroundBrush);
             const int size=Scale(window,16);
-            DrawIconEx(item->hDC,(item->rcItem.right-size)/2,(item->rcItem.bottom-size)/2,g_nasButtonIcon,size,size,0,nullptr,DI_NORMAL);
+            DrawIconEx(item->hDC,(item->rcItem.right-size)/2,(item->rcItem.bottom-size)/2,item->CtlID == kOpenNas ? g_nasButtonIcon : g_dnsButtonIcon,size,size,0,nullptr,DI_NORMAL);
             return TRUE;
         }
         auto theme = OpenThemeData(window, L"Button");
@@ -1621,6 +1656,8 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
         }
         const std::array<std::wstring, 7> values{refreshed->path, refreshed->address, refreshed->network, refreshed->handshake, refreshed->privilege, refreshed->direct, refreshed->nas};
         for (size_t i = 0; i < values.size(); ++i) if (g_values[i]) SetWindowTextW(g_values[i], values[i].c_str());
+        g_dnsSuffix = refreshed->dnsSuffix;
+        SetWindowTextW(g_dnsValue, refreshed->dnsText.c_str());
         g_diagnosticBase=refreshed->details;
         if (IsConnectedState(refreshed->state)) { g_operationError.clear(); refreshed->statusError.clear(); }
         if (g_statusError) SetWindowTextW(g_statusError, (g_operationError.empty() ? refreshed->statusError : g_operationError).c_str());
@@ -1765,6 +1802,7 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
             g_loginRequested = false; g_externalAuthorization = false;
             g_viewLogin = false; SetWindowTextW(g_passwordInput, L""); Layout(window); return 0;
         case kCopyDiagnostics: CopyDiagnostics(window); return 0;
+        case kCopyDNSSuffix: if (!g_dnsSuffix.empty()) CopyText(window, g_dnsSuffix); return 0;
         case kOpenLog: OpenLogs(); return 0;
         case kOpenNas: OpenNas(); return 0;
         case kAutostart: SetAutoStart(SendMessageW(g_autostart, BM_GETCHECK, 0, 0) == BST_CHECKED); return 0;
@@ -1809,6 +1847,7 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
         for (auto images : g_buttonImages) ImageList_Destroy(images);
         g_buttonImages.clear();
         if (g_nasButtonIcon) { DestroyIcon(g_nasButtonIcon); g_nasButtonIcon = nullptr; }
+        if (g_dnsButtonIcon) { DestroyIcon(g_dnsButtonIcon); g_dnsButtonIcon = nullptr; }
         for (HFONT font : {g_font, g_titleFont, g_deviceFont, g_statusFont, g_monoFont}) if (font) DeleteObject(font);
         g_font = g_titleFont = g_deviceFont = g_statusFont = g_monoFont = nullptr;
         if (g_backgroundBrush) { DeleteObject(g_backgroundBrush); g_backgroundBrush = nullptr; }

@@ -1,5 +1,7 @@
 上架 fnos 应用商店
 
-上架微软应用商店
-
 支持 fnos 更多认证方式
+
+1.1.0 DNS：实现与自动化验证已完成；待真实 NAS mDNS/LAN DNS、系统解析规则和历史正式产物兼容验收（见 docs/validation.md）
+
+安卓/linux/iphone 支持

@@ -4,7 +4,9 @@ package windowsinstall
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"github.com/Microsoft/go-winio"
 	"github.com/rectcircle/fn-connect-private-network/internal/ipc"
 	"github.com/rectcircle/fn-connect-private-network/internal/model"
 	"os"
@@ -22,15 +24,18 @@ func TestStopClientDaemonAtIsolatedPipe(t *testing.T) {
 			defer cancel()
 			ready := make(chan struct{})
 			done := make(chan error, 1)
-			server := ipc.Server{SocketPath: socket, OnReady: func() { close(ready) }, Handler: ipc.HandlerFunc(func(_ context.Context, request ipc.Request) ipc.Response {
-				if request.Method == "shutdown-client-daemon" {
+			server := ipc.Server{SocketPath: socket, OnReady: func() { close(ready) },
+				PrepareMaintenanceShutdown: func() (func(), error) {
 					if refuse {
-						return ipc.Failure(request.ID, model.NewError(model.ErrorPermissionDenied, "test refusal", false))
+						return nil, model.NewError(model.ErrorPermissionDenied, "test refusal", false)
 					}
-					go func() { time.Sleep(50 * time.Millisecond); cancel() }()
-				}
-				return ipc.Success(request.ID, model.ClientStatus{State: model.ClientPaused})
-			})}
+					return cancel, nil
+				},
+				Handler: ipc.HandlerFunc(func(_ context.Context, request ipc.Request) ipc.Response {
+					t.Error("maintenance must not enter the business handler")
+					return ipc.Failure(request.ID, model.NewError(model.ErrorPermissionDenied, "business call forbidden", false))
+				}),
+			}
 			go func() { done <- server.Serve(ctx) }()
 			select {
 			case <-ready:
@@ -54,6 +59,73 @@ func TestStopClientDaemonAtIsolatedPipe(t *testing.T) {
 			}
 			if err := stopClientDaemonAt(socket); err != nil {
 				t.Fatalf("absent daemon should be harmless: %v", err)
+			}
+		})
+	}
+}
+
+// Matches the v1.0.9 framing, IPC 4 admission and response product version.
+func TestStopReleasedDaemonProtocol(t *testing.T) {
+	for _, refuse := range []bool{false, true} {
+		t.Run(fmt.Sprintf("refuse=%v", refuse), func(t *testing.T) {
+			socket := fmt.Sprintf(`\\.\pipe\FnCPN.Installer.Historical.%d.%d`, os.Getpid(), time.Now().UnixNano())
+			listener, err := winio.ListenPipe(socket, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer listener.Close()
+			done := make(chan struct{})
+			go func() {
+				defer close(done)
+				for {
+					conn, err := listener.Accept()
+					if err != nil {
+						return
+					}
+					conn.SetDeadline(time.Now().Add(3 * time.Second))
+					payload, err := ipc.ReadFrame(conn)
+					if err != nil {
+						conn.Close()
+						return
+					}
+					var req ipc.Request
+					if json.Unmarshal(payload, &req) != nil {
+						conn.Close()
+						return
+					}
+					response := ipc.Success(req.ID, nil)
+					stop := false
+					if req.Version != 4 {
+						response = ipc.Failure("", model.NewError(model.ErrorProtocol, "unsupported local IPC version", false))
+					} else if req.Method == "shutdown-client-daemon" {
+						if refuse {
+							response = ipc.Failure(req.ID, model.NewError(model.ErrorPermissionDenied, "historical refusal", false))
+						} else {
+							stop = true
+						}
+					}
+					response.Version, response.ProductVersion = 4, "1.0.9"
+					ipc.WriteResponse(conn, response)
+					conn.Close()
+					if stop {
+						listener.Close()
+						return
+					}
+				}
+			}()
+			err = stopClientDaemonAt(socket)
+			if refuse {
+				if err == nil || !strings.Contains(err.Error(), "historical refusal") {
+					t.Fatalf("refusal hidden: %v", err)
+				}
+			} else if err != nil {
+				t.Fatal(err)
+			}
+			listener.Close()
+			select {
+			case <-done:
+			case <-time.After(5 * time.Second):
+				t.Fatal("historical server did not stop")
 			}
 		})
 	}

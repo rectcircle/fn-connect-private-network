@@ -152,6 +152,7 @@ const (
 )
 
 type ClientStatus struct {
+	DNS                 DNSStatus   `json:"dns"`
 	LocalNetworkWaiting bool        `json:"localNetworkWaiting,omitempty"`
 	LocalNetworkAccess  string      `json:"localNetworkAccess,omitempty"`
 	State               ClientState `json:"state"`
@@ -221,7 +222,10 @@ type NetworkChange struct {
 	PrimaryNetworkChanged bool
 }
 
-type LocalProbeConfiguration struct {
+// PrivateAPIConfiguration describes the NAS LAN HTTP API shared by identity
+// probing and DNS. Key is used only by the identity probe; DNS uses Endpoints.
+// The historical JSON shape is retained for released v1 clients.
+type PrivateAPIConfiguration struct {
 	Endpoints []string `json:"endpoints"`
 	Key       string   `json:"key"`
 }
@@ -237,6 +241,7 @@ type LocalProbeResponse struct {
 }
 
 type ServerSettings struct {
+	DNSSuffix   string   `json:"dnsSuffix,omitempty"`
 	OverlayCIDR string   `json:"overlayCIDR"`
 	ListenPort  uint16   `json:"listenPort"`
 	LANCIDRs    []string `json:"lanCIDRs"`
@@ -305,6 +310,8 @@ type ClientPlan struct {
 }
 
 type ClientConfiguration struct {
+	DNSSuffix       string   `json:"dnsSuffix,omitempty"`
+	DNSRevision     string   `json:"dnsRevision,omitempty"`
 	DeviceID        string   `json:"deviceId"`
 	ServerPublicKey string   `json:"serverPublicKey"`
 	ServerAddress   string   `json:"serverAddress"`

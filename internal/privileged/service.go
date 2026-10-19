@@ -2,6 +2,7 @@ package privileged
 
 import (
 	"context"
+	"errors"
 	"runtime"
 
 	"github.com/rectcircle/fn-connect-private-network/internal/ipc"
@@ -133,6 +134,7 @@ type Service[NetworkStatus, StatusEnvelope any] struct {
 type ClientService struct {
 	*Service[model.ClientPrivilegedStatus, ClientStatus]
 	secrets ClientSecretHandler
+	dns     *DNSRules
 }
 
 type ClientSecretHandler interface {
@@ -186,6 +188,11 @@ func NewClientService(
 
 func (s *ClientService) Handle(ctx context.Context, request ipc.Request) ipc.Response {
 	switch request.Method {
+	case MethodApplyDNS, MethodRenewDNS, MethodRemoveDNS:
+		if s.dns == nil {
+			return ipc.Failure(request.ID, model.NewError(model.ErrorUnavailable, "DNS rules unavailable", true))
+		}
+		return s.dns.Handle(ctx, request)
 	case MethodGetSecret, MethodPutSecret, MethodDeleteSecret:
 		if s.secrets == nil {
 			return ipc.Failure(request.ID, model.NewError(
@@ -273,4 +280,22 @@ func (s *Service[NetworkStatus, StatusEnvelope]) Handle(
 			),
 		)
 	}
+}
+
+func (s *ClientService) WithDNSRules(rules *DNSRules) *ClientService { s.dns = rules; return s }
+func (s *ClientService) Recover(ctx context.Context) error {
+	if s.dns != nil {
+		if err := s.dns.Recover(ctx); err != nil {
+			logging.FromContext(ctx, nil).Error("recover DNS rules; network service remains available", "error", err)
+		}
+		go s.dns.Run(ctx)
+	}
+	return s.Service.Recover(ctx)
+}
+func (s *ClientService) Close(ctx context.Context) error {
+	var dnsErr error
+	if s.dns != nil {
+		dnsErr = s.dns.Close(ctx)
+	}
+	return errors.Join(dnsErr, s.Service.Close(ctx))
 }

@@ -6,6 +6,7 @@ import (
 	"net/netip"
 	"slices"
 
+	dnsresolver "github.com/rectcircle/fn-connect-private-network/internal/dns"
 	"github.com/rectcircle/fn-connect-private-network/internal/ipc"
 	"github.com/rectcircle/fn-connect-private-network/internal/model"
 	"github.com/rectcircle/fn-connect-private-network/internal/privileged"
@@ -127,6 +128,8 @@ func ClientConfiguration(
 	}
 	allowedIPs = append(allowedIPs, state.Settings.LANCIDRs...)
 	return wgconfig.NormalizeClientConfiguration(model.ClientConfiguration{
+		DNSSuffix:       state.Settings.DNSSuffix,
+		DNSRevision:     valueCursor(dnsresolver.DetectEnvironment(state.Settings)),
 		DeviceID:        device.ID,
 		ServerPublicKey: status.PublicKey,
 		ServerAddress:   serverAddress,

@@ -172,11 +172,13 @@ func (c *RemoteClient) WatchConfiguration(
 	return result, nil
 }
 
-func (c *RemoteClient) LocalProbeConfiguration(
+// PrivateAPIConfiguration uses the historical v1 local-probe URL and JSON shape.
+// Endpoints serve the shared private API; Key is used only for identity probes.
+func (c *RemoteClient) PrivateAPIConfiguration(
 	ctx context.Context,
 	deviceID string,
-) (model.LocalProbeConfiguration, error) {
-	var result model.LocalProbeConfiguration
+) (model.PrivateAPIConfiguration, error) {
+	var result model.PrivateAPIConfiguration
 	err := c.call(
 		ctx,
 		http.MethodGet,

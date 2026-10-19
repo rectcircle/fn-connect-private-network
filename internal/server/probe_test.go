@@ -29,7 +29,7 @@ func TestLocalProbeUsesPerDeviceHMACWithoutCookies(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create device: %v", err)
 	}
-	service := &LocalProbeService{
+	service := &PrivateAPIService{
 		store:     store,
 		masterKey: bytes.Repeat([]byte{3}, probeKeySize),
 		endpoints: []string{"192.168.1.10:54790"},
@@ -89,6 +89,16 @@ func TestLocalProbeUsesPerDeviceHMACWithoutCookies(t *testing.T) {
 		t.Fatal("probe proof does not match device key")
 	}
 
+	versionedResponse := httptest.NewRecorder()
+	service.ServeHTTP(versionedResponse, httptest.NewRequest(http.MethodPost, model.LocalProbePath, bytes.NewReader(body)))
+	var versionedResult model.LocalProbeResponse
+	if err := json.NewDecoder(versionedResponse.Body).Decode(&versionedResult); err != nil {
+		t.Fatal(err)
+	}
+	if versionedResponse.Code != http.StatusOK || versionedResult != result {
+		t.Fatal("versioned and legacy probe paths changed proof semantics")
+	}
+
 	request = httptest.NewRequest(http.MethodPost, "/probe", bytes.NewReader(body))
 	request.Header.Set("Cookie", "session=secret")
 	response = httptest.NewRecorder()
@@ -125,7 +135,7 @@ func TestProbeRetriesInitialFailureOnNetworkEvent(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			probe, err := OpenLocalProbeService(dir, store, 54790)
+			probe, err := OpenPrivateAPIService(dir, store, 54790)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -180,7 +190,7 @@ func TestNilProbeHTTPReturnsUnavailable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var probe *LocalProbeService
+	var probe *PrivateAPIService
 	handler := NewHTTPHandler(store, probe)
 	request := httptest.NewRequest("GET", "/api/v1/devices/device-1/local-probe", nil)
 	request.Header.Set("X-Trim-Userid", "user")

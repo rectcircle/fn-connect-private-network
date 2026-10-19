@@ -12,6 +12,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	dnsresolver "github.com/rectcircle/fn-connect-private-network/internal/dns"
 	"github.com/rectcircle/fn-connect-private-network/internal/logging"
 	"github.com/rectcircle/fn-connect-private-network/internal/model"
 	"github.com/rectcircle/fn-connect-private-network/internal/notify"
@@ -24,6 +25,7 @@ type Network interface {
 
 // Service owns every business write and publishes one immutable state/network view.
 type Service struct {
+	dns           *dnsresolver.Resolver
 	operation     sync.Mutex
 	store         *Store
 	network       Network
@@ -42,7 +44,7 @@ func OpenService(dir string, network Network, logger *slog.Logger) (*Service, er
 		logger = slog.Default()
 	}
 	service := &Service{
-		store: store, network: network, logger: logger,
+		store: store, network: network, logger: logger, dns: dnsresolver.NewResolver(),
 		configChanges: notify.New(), adminChanges: notify.New(),
 	}
 	service.view.Store(&serverSnapshot{state: state})
@@ -262,7 +264,7 @@ func (s *Service) UpdateNetworks(ctx context.Context, update NetworkUpdate) (mod
 	defer s.operation.Unlock()
 	current := s.Snapshot()
 	next := cloneState(current)
-	if update.OverlayCIDR == nil && update.ListenPort == nil && update.LANCIDRs == nil {
+	if update.OverlayCIDR == nil && update.ListenPort == nil && update.LANCIDRs == nil && update.DNSSuffix == nil {
 		return model.ServerState{}, model.NewError(model.ErrorInvalidArgument, "network update is empty", false)
 	}
 	if update.OverlayCIDR != nil {
@@ -274,12 +276,16 @@ func (s *Service) UpdateNetworks(ctx context.Context, update NetworkUpdate) (mod
 	if update.LANCIDRs != nil {
 		next.Settings.LANCIDRs = slices.Clone(*update.LANCIDRs)
 	}
+	if update.DNSSuffix != nil {
+		next.Settings.DNSSuffix = *update.DNSSuffix
+	}
+
 	if err := ValidateSettings(next.Settings); err != nil {
 		return model.ServerState{}, model.WrapError(model.ErrorInvalidArgument, "invalid network settings", false, err)
 	}
 	overlayChanged := next.Settings.OverlayCIDR != current.Settings.OverlayCIDR
 	if !overlayChanged && next.Settings.ListenPort == current.Settings.ListenPort &&
-		slices.Equal(next.Settings.LANCIDRs, current.Settings.LANCIDRs) {
+		slices.Equal(next.Settings.LANCIDRs, current.Settings.LANCIDRs) && next.Settings.DNSSuffix == current.Settings.DNSSuffix {
 		return current, nil
 	}
 	if overlayChanged {
@@ -295,7 +301,17 @@ func (s *Service) UpdateNetworks(ctx context.Context, update NetworkUpdate) (mod
 			next.Devices[index].UpdatedAt = now
 		}
 	}
-	if err := s.commit(ctx, next); err != nil {
+	if !overlayChanged && next.Settings.ListenPort == current.Settings.ListenPort && slices.Equal(next.Settings.LANCIDRs, current.Settings.LANCIDRs) {
+		committed, err := s.store.save(next)
+		if committed {
+			view := s.snapshot()
+			view.state = next
+			s.publish(view)
+		}
+		if err != nil {
+			return model.ServerState{}, err
+		}
+	} else if err := s.commit(ctx, next); err != nil {
 		return model.ServerState{}, err
 	}
 	logging.FromContext(ctx, s.logger).Info("server network settings updated",

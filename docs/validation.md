@@ -4,6 +4,71 @@
 产品要求见 [产品需求](product.md)，升级保证见 [版本契约](versioning-and-compatibility.md)。
 自动化通过、用户确认和带日志的实测分别记录；旧版证据不代表新版的所有专项通过。
 
+## Windows 虚拟机 LOCAL DNS 修复（2026-10-19）
+
+本机处于虚拟机 NAT 网段，NAS 私网探测成功并进入 LOCAL，但 DNS 地址检查额外要求目的地址
+属于本机网卡直连前缀，导致可经网关访问的 NAS DNS API 被提前拒绝、查询返回 SERVFAIL。
+LOCAL 现使用 NAS 已授权的 `AllowedIPs` 限制查询目标和回答，不再要求同一直连子网；
+DIRECT/RELAY 的网段冲突过滤，以及暂停、切换 NAS、越界地址限制保留。
+
+- client/dns 包测试及 vet 通过；增加 LOCAL 同网段 / 虚拟机 NAT 的完整查询与清理回归，
+  并覆盖越界、公网、loopback、暂停以及 DIRECT/RELAY 网段冲突。
+- 在隔离配置和隔离本机 DNS listener 中使用真实 NAS HTTP DNS API 验证，用户指定的
+  NAS 域名经 UDP / TCP 均返回正确 LAN IPv4；未修改用户 NRPT、配置或运行中的 daemon。
+- 修复前旧安装版本的系统解析为 SERVFAIL；修复后的当前 Windows ARM64 候选由用户确认“无问题”。
+  此确认与上述隔离 UDP/TCP 自动化证据分别记录，不扩展为历史版本完整安装矩阵验收。
+
+## Windows 安装维护协议修复（2026-10-19）
+
+`codex/feature-lan-dns` 的本地 1.1.0 候选，未发布。修复 1.0.9 → 1.1.0 安装时
+`StopCurrentUserDaemon` 因产品版本 / IPC 4→5 检查失败而返回 MSI 1722 的问题。
+安装维护 v1 独立于业务 IPC；旧 IPC 4/5 的退出适配保留，不读取业务状态，不放宽正常业务版本检查。
+
+- `scripts/check-windows.ps1 -SkipPackage`、全量 `go test ./...` 与 `go vet ./...` 通过。
+- `scripts/windows/test-maintenance-compatibility.ps1` 使用 v1.0.7、v1.0.8、v1.0.9、v1.0.10
+  原始 IPC 源码构建隔离进程；另构建等价旧 IPC 5 样本、当前维护 v1、业务 IPC 99 / 产品 9.0.0 样本。
+  当前和模拟未来的维护客户端分别测试这 7 种进程的正常退出、拒绝退出、身份拒绝，共 42 项通过。
+  IPC 5 样本基于 v1.0.10，只将 IPC 改为 5、产品改为 1.1.0；已核对其 IPC 源码与 `10f5512` 等价，
+  不要求未发布分支提交长期可达。每次运行在 `.dev/maintenance-compatibility/` 保存源码 commit 和二进制哈希清单。
+- 单元回归覆盖普通业务版本检查、非法维护方法、未知维护版本、缺失/错误响应、请求 ID 不匹配、
+  拒绝关闭、身份校验、未收到确认不执行关闭，以及存活进程超时不能视为退出。
+- 修复 Windows schema 2→3 配置迁移前未关闭读取句柄、导致原子替换失败的问题；
+  原有身份、私钥、连接意图和精确回滚备份保留测试已通过。
+
+这些是安装维护和迁移的自动化证据。历史测试使用原始 IPC 实现及隔离测试 handler，
+不等同于每个历史 MSI 的完整实机升级；用户已确认当前 Windows ARM64 候选“无问题”，
+历史完整安装矩阵及其他网络环境仍不属于此次验证范围。
+
+## 1.1.0 DNS 候选与真机验收（2026-10-19）
+
+当前候选来自 `v1.1.0` tag，GitHub Release 草稿尚未公开。新增 mDNS / LAN DNS 地址解析，
+默认 `<FN Connect ID>.fncpn`，保留自定义后缀；安装/升级后随原连接意图自动应用。
+新增服务端要求通过 MINOR 1.1 表达，不能通过关闭 DNS 放行 1.1 client → 1.0 server。
+
+| 范围 | 自动化证据 |
+| --- | --- |
+| Go | `go test -race ./...`、`go vet ./...` 通过；后续解析/生命周期修改对 dns/client/server/privileged/command 包重跑竞态测试 |
+| 解析 | 家庭 DNS 缺失/超时/不存在回退 mDNS；LAN 优先及故障回退、IPv4 A、AAAA 本地空答案且不查询 NAS、地址范围及路由冲突、后缀隔离；真实 loopback UDP/TCP 前端及 LAN DNS CNAME/负缓存/截断转 TCP 测试 |
+| 系统计划 | 测试替身验证 LOCAL 自动应用、后缀更新、断开清理、journal 恢复、进程与 generation 隔离、不覆盖外部规则；不在开发主机安装真实 resolver/NRPT 规则 |
+| 升级 | schema 1 server / schema 2 client 输入的备份和原子升级测试，验证设备、网络、私钥及连接意图保留；旧版本请求头与版本准入回归 |
+| 页面及原生界面 | Web 测试 32 项通过，iframe 浏览器专项因未配置 Playwright 跳过；Swift 完整编译及 `FNCPN_LAYOUT_CHECK=1` 离屏布局测试通过；本地化、版本和 IPC 同步检查通过 |
+| 跨平台构建 | Windows amd64/arm64、Linux amd64/arm64 的 Go CLI 编译通过；PR Checks 与 1.1.0 Release workflow 在 macOS / Windows runner 均通过，构建了 macOS、fnOS 和 Windows ARM64/x64 安装包 |
+
+用户于 2026-10-19 确认当前 1.1.0 候选的 macOS 与 Windows 真机测试全部完成，包含实际连接和 DNS 功能验收；此前记录的 Windows ARM64 LOCAL DNS 回归是其中一项。此处按用户确认记录整体结论，不补写未提供的系统版本、设备型号、逐项日志或性能数据。
+
+正式发布前仍需按版本契约使用实际已发布的同 MAJOR 历史 client/server 二进制完成互通矩阵；当前历史源码夹具和候选 Release 构建不能替代该项验收。
+DNS 已统一为 NAS LAN IP 的 HTTP 54790，LOCAL 使用物理 LAN，DIRECT/RELAY 使用 WireGuard LAN 路由。
+DNS 已移除新增签名、时间窗口和防重放；回归覆盖无密钥查询、重复请求成功、不依赖设备注册状态、请求参数及路由冲突；不使用 HTTPS 网关回退。
+`/api/v1/probe` 与 `/probe` 共用证明逻辑；后者保留 v1.x.x 兼容，v2.x.x 将废弃。
+管理页已拆分网络连接、域名访问与解析诊断，增加字段说明及折叠高级配置；已用本地模拟 API 在浏览器检查布局。
+内建 `<NAS hostname>.<后缀>` 自动化覆盖 LAN 地址过滤、仅 IPv4 地址回答 和不调用上游；管理页只使用 server 本机读取的 FN ID 与管理端口，覆盖未知信息、强制 HTTPS、自定义后缀保留和忽略 URL 参数。
+server 本机信息读取已在 fnOS 1.2.0800 实机以 `fncpn` 用户运行 Go 读取器冒烟测试通过，直接读取 Unix Socket 与管理端口配置；未替换运行中的服务或修改 NAS 设置。
+Windows loopback 候选选择、候选耗尽、双传输部分绑定回滚和特权端参数校验已有自动化回归；
+Windows 检测到组策略接管 NRPT 时报告 DNS 受限，不修改组策略或谎报就绪。
+
+回滚恢复升级前程序与配套 `state.schema-1.backup.json`、`config.json.schema-2.backup`；
+server schema 2 / client schema 3 不由旧程序直接读取，本地 IPC 升为 5，本地组件成套更新。
+
 ## 1.0.0-rc.2 验证汇总（2026-10-09）
 
 `1.0.0-rc.2` 安装由用户确认通过。以下范围记录截至 2026-10-09 收到的验证证据。

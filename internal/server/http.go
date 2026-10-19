@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -37,20 +38,23 @@ type adminSnapshot struct {
 
 type HTTPServer struct {
 	*Service
-	probe   *LocalProbeService
-	handler http.Handler
+	privateAPI *PrivateAPIService
+	nasInfo    func(context.Context) fnOSInfo
+	handler    http.Handler
 }
 
-func NewHTTPHandler(service *Service, probe *LocalProbeService) *HTTPServer {
+func NewHTTPHandler(service *Service, privateAPI *PrivateAPIService) *HTTPServer {
 	server := &HTTPServer{
-		Service: service,
-		probe:   probe,
+		Service:    service,
+		privateAPI: privateAPI,
+		nasInfo:    newFNOSInfoReader(fnConnectSocket, fnOSGatewaySettings).read,
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /version", server.authenticated(false, func(w http.ResponseWriter, r *http.Request) {
 		server.writeJSON(w, http.StatusOK, map[string]string{"serverVersion": version.Current})
 	}))
 	mux.HandleFunc("GET /", serveIndex)
+	mux.HandleFunc("POST /api/v1/admin/dns-test", server.authenticated(true, server.dnsTest))
 	mux.HandleFunc(
 		"GET /api/v1/bootstrap",
 		server.authenticated(false, server.bootstrap),
@@ -76,8 +80,10 @@ func NewHTTPHandler(service *Service, probe *LocalProbeService) *HTTPServer {
 		server.authenticated(false, server.deviceConfiguration),
 	)
 	mux.HandleFunc(
+		// Historical configuration URL and response shape are retained for v1 clients.
+		// It now supplies shared private API endpoints plus the probe-only key.
 		"GET /api/v1/devices/{id}/local-probe",
-		server.authenticated(false, server.localProbeConfiguration),
+		server.authenticated(false, server.privateAPIConfiguration),
 	)
 	mux.HandleFunc(
 		"PUT /api/v1/admin/networks",
@@ -119,11 +125,11 @@ func (s *HTTPServer) ServeHTTP(writer http.ResponseWriter, request *http.Request
 	}
 }
 
-func (s *HTTPServer) localProbeConfiguration(
+func (s *HTTPServer) privateAPIConfiguration(
 	writer http.ResponseWriter,
 	request *http.Request,
 ) {
-	if s.probe == nil {
+	if s.privateAPI == nil {
 		s.writeError(writer, request, model.NewError(
 			model.ErrorUnavailable,
 			"local probe is unavailable",
@@ -131,7 +137,7 @@ func (s *HTTPServer) localProbeConfiguration(
 		))
 		return
 	}
-	configuration, err := s.probe.Configuration(request.PathValue("id"))
+	configuration, err := s.privateAPI.Configuration(request.PathValue("id"))
 	if err != nil {
 		s.writeError(writer, request, err)
 		return
@@ -147,7 +153,10 @@ func (s *HTTPServer) bootstrap(writer http.ResponseWriter, request *http.Request
 		s.writeError(writer, request, err)
 		return
 	}
+	hostname, _ := os.Hostname()
 	response := map[string]any{
+		"hostname":      hostname,
+		"nasInfo":       s.nasInfo(request.Context()),
 		"serverVersion": version.Current,
 		"administrator": strings.EqualFold(
 			request.Header.Get("X-Trim-Isadmin"),
@@ -298,6 +307,7 @@ func (s *HTTPServer) deviceConfiguration(
 
 func (s *HTTPServer) updateNetworks(writer http.ResponseWriter, request *http.Request) {
 	var input struct {
+		DNSSuffix   *string   `json:"dnsSuffix"`
 		OverlayCIDR *string   `json:"overlayCIDR"`
 		ListenPort  *uint16   `json:"listenPort"`
 		LANCIDRs    *[]string `json:"lanCIDRs"`
@@ -307,6 +317,7 @@ func (s *HTTPServer) updateNetworks(writer http.ResponseWriter, request *http.Re
 		return
 	}
 	state, err := s.UpdateNetworks(request.Context(), NetworkUpdate{
+		DNSSuffix:   input.DNSSuffix,
 		OverlayCIDR: input.OverlayCIDR,
 		ListenPort:  input.ListenPort,
 		LANCIDRs:    input.LANCIDRs,
@@ -442,7 +453,10 @@ func (s *HTTPServer) authenticated(
 }
 
 func decodeBody(request *http.Request, destination any) error {
-	data, err := io.ReadAll(io.LimitReader(request.Body, maxRequestBody+1))
+	return decodeBodyBounded(request, destination, maxRequestBody)
+}
+func decodeBodyBounded(request *http.Request, destination any, limit int64) error {
+	data, err := io.ReadAll(io.LimitReader(request.Body, limit+1))
 	if err != nil {
 		return model.WrapError(
 			model.ErrorInvalidArgument,
@@ -451,7 +465,7 @@ func decodeBody(request *http.Request, destination any) error {
 			err,
 		)
 	}
-	if len(data) > maxRequestBody {
+	if int64(len(data)) > limit {
 		return model.NewError(
 			model.ErrorInvalidArgument,
 			"request body is too large",

@@ -5,7 +5,7 @@
 ## 使用条件
 
 - Apple Silicon 或 Intel Mac，macOS 13 或更新版本。
-- Windows 客户端：Windows 10 22H2（build 19045）或更新的 ARM64/x64 系统，不支持 32 位或 Windows Server；目前日常功能实测通过的是 Windows 11 ARM64，原生 x64 和 Windows 10 待验收。
+- Windows 客户端：Windows 10 22H2（build 19045）或更新的 ARM64/x64 系统，不支持 32 位或 Windows Server。Windows 10 和原生 x64 已由用户完成验收。
 - 已启用 FN Connect 的 fnOS NAS，支持 x86_64 和 ARM64。
 - fnOS 用户账号。普通用户可以连接；安装软件和修改服务端网络设置需要管理员权限。
 
@@ -110,7 +110,7 @@ go test ./...
 本地与远端 LAN 网段重叠时，FnCPN 会提示冲突并保留 NAS 私有地址访问。中继速度取决于上游服务和网络条件。
 界面支持简体中文与英文，跟随系统或浏览器首选语言。
 
-连接失败时，先检查 FN Connect 是否可用、NAS 上 FnCPN 是否运行，再按 App 提示处理。排障与脱敏诊断见 [诊断指南](docs/diagnostics.md)。
+连接失败时，先检查 FN Connect 是否可用、NAS 上 FnCPN 是否运行，再按 App 提示处理。常见限制、端口和防火墙要求见 [故障排查](docs/troubleshooting.md)；日志与脱敏诊断见 [诊断指南](docs/diagnostics.md)。
 
 也可以使用命令行：
 

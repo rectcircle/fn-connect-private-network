@@ -70,7 +70,7 @@ func TestGatewayApplicationFailureClassification(t *testing.T) {
 					return err
 				},
 				"local_probe": func() error {
-					_, err := remote.LocalProbeConfiguration(context.Background(), "device-1")
+					_, err := remote.PrivateAPIConfiguration(context.Background(), "device-1")
 					return err
 				},
 				"websocket": func() error {

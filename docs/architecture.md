@@ -1,14 +1,14 @@
 # 技术架构与核心决策
 
 以源码为依据，产品行为见 [产品需求](product.md)，远程与本地契约见 [接口](interfaces.md)。
-采用最小 root 进程而非 Network Extension：macOS 在特权进程内嵌 wireguard-go，fnOS 使用内核 WireGuard；不随包启动外部 wg/bridge 工具。
+客户端共享 Go 连接核心，以平台适配层接入原生界面、IPC 和网络能力。macOS 与 Windows 在特权组件内嵌 wireguard-go，fnOS 使用内核 WireGuard；不随包启动外部 wg/bridge 工具。
 
 ## 总体架构
 
 ```text
-macOS
+客户端（当前：macOS、Windows；后续平台复用业务核心）
 ┌──────────────────────────────┐
-│ FnCPN.app / fncpn CLI        │
+│ 平台原生 UI / fncpn CLI       │
 │ 展示、原生登录表单、用户命令  │
 └──────────────┬───────────────┘
                │ 用户私有 IPC
@@ -19,7 +19,7 @@ macOS
                │ 受限特权 IPC
 ┌──────────────▼────────────────┐
 │ fncpn client privileged-daemon│
-│ root；内嵌 WireGuard、网络配置 │
+│ 系统特权；WireGuard、网络配置 │
 └──────────────┬────────────────┘
                │ IPv6 UDP / FN Connect WSS
                ▼
@@ -39,24 +39,42 @@ fnOS
 └───────────────────────────────┘
 ```
 
-数据面由 root 进程持有 WireGuard；RELAY 的 WSS 连接由普通 client daemon 持有，通过 loopback UDP 转发密文；LOCAL 不创建隧道。图中的进程关系不表示 root 进程发起 WSS。
+客户端数据面由系统特权组件持有 WireGuard（macOS root / Windows LocalSystem）；RELAY 的 WSS 连接由普通 client daemon 持有，通过 loopback UDP 转发密文；LOCAL 不创建隧道。图中的进程关系不表示 root 进程发起 WSS。
+
+### 客户端平台适配与扩展
+
+总体图描述客户端的逻辑职责，具体启动方式、IPC 和系统权限由平台实现。当前已支持 macOS 与 Windows；
+后续客户端复用 `internal/client` 的连接状态机、配置同步、选路及 DNS 逻辑，按平台接入 UI、
+进程生命周期、凭据存储、IPC、WireGuard、路由、DNS 和网络事件。
+
+| 能力 | macOS | Windows |
+|---|---|---|
+| 原生界面 | `FnCPN.app`，AppKit / WebKit | 原生 Windows UI，WebView2 |
+| 后台生命周期 | LaunchAgent / LaunchDaemon | 用户 daemon / Windows 系统服务 |
+| 特权身份 | root | LocalSystem |
+| 本地 IPC | Unix Socket 与 peer credential | Named Pipe 与 Windows 身份校验 |
+| WireGuard / 虚拟接口 | wireguard-go / utun | wireguard-go / Wintun |
+| 系统 DNS | loopback DNS + resolver 文件 | loopback DNS + NRPT |
+
+新增平台应实现业务核心定义的窄接口，保持 UI、连接状态机和系统网络权限的职责边界。
+若目标系统要求不同的进程或系统扩展模型，由平台适配承接；支持范围以实际实现和验收为准。
 
 ### 职责边界
 
 | 组件 | 负责 | 明确不负责 |
 |---|---|---|
-| FnCPN.app | 授权窗口、首次引导、状态和设置 | 不直接配置网络，不长期承载连接 |
-| `fncpn` 用户 CLI | 脚本化查询和控制客户端 daemon | 不读取 profile 执行连接，不直接调用 root 能力 |
-| `fncpn client daemon` | 唯一客户端状态机、配置同步、授权凭证、选路和 WSS bridge | 不以 root 运行，不直接修改系统网络 |
+| 平台原生 UI（macOS / Windows） | 授权窗口、首次引导、状态和设置 | 不直接配置网络，不长期承载连接 |
+| `fncpn` 用户 CLI | 脚本化查询和控制客户端 daemon | 不读取 profile 执行连接，不直接调用系统特权能力 |
+| `fncpn client daemon` | 唯一客户端状态机、配置同步、授权凭证、选路和 WSS bridge | 以普通用户运行，不直接修改系统网络 |
 | `fncpn client privileged-daemon` | 进程内运行 WireGuard，并按结构化计划配置接口和路由 | 不联网、不解析凭据、不接受命令名和文件路径 |
 | `fncpn server daemon` | 设备、地址池、配置、HTTP API 和中继桥 | 不以 root 运行，不直接操作接口、防火墙和转发 |
 | `fncpn server privileged-daemon` | 管理服务端私钥、内核 WireGuard、转发和防火墙 | 不监听 HTTP/WSS，不处理浏览器或客户端原始输入 |
 
-单一二进制不代表单一进程。普通权限 daemon 与 root privileged-daemon 必须作为独立进程运行，通过窄 IPC 保持权限隔离。
+单一二进制不代表单一进程。当前桌面客户端的普通权限 daemon 与系统特权 privileged-daemon 作为独立进程运行，通过窄 IPC 保持权限隔离。
 
 ## Go 业务包设计
 
-`fncpn` Go 程序承载除原生 UI 以外的全部核心业务逻辑，不只是供 UI 调用的工具库。macOS 和 fnOS UI 仅负责展示、收集登录输入和用户操作，并调用本地 IPC。
+`fncpn` Go 程序承载除原生 UI 以外的全部核心业务逻辑，不只是供 UI 调用的工具库。macOS、Windows 原生 UI 仅负责展示、收集登录输入和用户操作，并调用本地 IPC；fnOS 管理页通过网关 HTTP API 操作服务端。
 
 同一代码库按目标平台构建一个 `fncpn` 可执行文件，不同职责通过子命令启动。内部 package 按业务领域和平台边界命名，不设置 `core`、`common` 或 `utils` 等宽泛的中间层。
 
@@ -66,16 +84,18 @@ fnOS
 | `internal/peer` | 已认证的本地进程身份及其 context 传递 | IPC 识别的本地调用方身份 → 权限边界 |
 | `internal/client` | 授权、配置同步、自动选路、连接状态机和 WSS bridge | 用户意图 + 网络事件 → 客户端状态 |
 | `internal/server` | 服务端设置、设备、地址池、HTTP API、中继和配置版本 | 管理请求 → 服务端期望状态 |
-| `internal/ipc` | framed JSON、请求响应和本地 Unix Socket 通讯 | 本地进程请求 ↔ 结构化响应 |
+| `internal/ipc` | framed JSON、请求响应与平台 IPC（Unix Socket / Named Pipe） | 本地进程请求 ↔ 结构化响应 |
+| `internal/dns` | DNS 消息编解码、域名校验、客户端转发与服务端解析链 | DNS 查询 ↔ 结构化解析结果 |
 | `internal/privileged` | client/server 特权操作白名单、客户端凭据文件和计划调度 | 已校验请求 → 网络适配或受限凭据存储 |
 | `internal/platform/darwin` | utun、路由和系统事件适配 | 网络计划 ↔ macOS |
+| `internal/platform/windows` | Wintun、IP Helper、路由和网络事件适配 | 网络计划 ↔ Windows |
 | `internal/platform/linux` | netlink、内核 WireGuard、转发和 nftables 适配 | 服务端期望状态 ↔ Linux |
 | `internal/command` | 子命令解析、进程组装和生命周期入口 | 命令行 → 对应进程职责 |
 
 ### Go 实现约束
 
 - package 名称必须表达具体领域或平台职责，禁止创建承载无关逻辑的 `core`、`common`、`shared` 或 `utils` package。
-- `internal/client` 和 `internal/server` 可以依赖 `internal/model`，但不能相互依赖。
+- `internal/client` 和 `internal/server` 可以依赖 `internal/model` 和 `internal/dns`，但不能相互依赖。
 - `internal/model` 只保存跨边界稳定契约，不放文件、网络、日志或进程操作。
 - `internal/platform` 只能实现上层定义的窄接口，不能持有产品状态机。
 - 不执行 shell，不拼接系统命令。
@@ -92,17 +112,17 @@ fnOS
 
 ### 单一二进制与子命令
 
-macOS 和 fnOS 分别构建适配自身平台的 `fncpn`，但每个平台的安装包中只包含一个 Go 可执行文件。同一文件可以被不同的 LaunchAgent、LaunchDaemon 或 fnOS 生命周期脚本以不同子命令启动。
+macOS、Windows 和 fnOS 分别构建适配自身平台的 Go 核心可执行文件（Windows 为 `fncpn.exe`）。同一平台的不同职责复用该文件，由 LaunchAgent、LaunchDaemon、Windows 服务或 fnOS 生命周期脚本以不同子命令启动；原生 UI 和平台驱动依赖单独打包。
 
 | 子命令 | 平台 | 运行身份 | 职责 |
 |---|---|---|---|
-| `fncpn client daemon` | macOS | 当前用户 | 客户端核心业务和用户 IPC |
-| `fncpn client privileged-daemon` | macOS | root | 进程内 WireGuard、utun 和路由 |
+| `fncpn client daemon` | macOS / Windows | 当前用户 | 客户端核心业务和用户 IPC |
+| `fncpn client privileged-daemon` | macOS / Windows | root / LocalSystem | 进程内 WireGuard、平台虚拟接口、路由和 DNS 配置 |
 | `fncpn server daemon` | fnOS | 应用专用普通用户 | HTTP/WSS、设备和配置管理 |
 | `fncpn server privileged-daemon` | fnOS | root | 内核 WireGuard、转发和防火墙 |
-| `fncpn status/connect/...` | macOS | 当前用户 | 用户 CLI，通过 IPC 控制 client daemon |
+| `fncpn status/connect/...` | macOS / Windows | 当前用户 | 用户 CLI，通过 IPC 控制 client daemon |
 
-`FnCPN.app` 仍是一个薄原生 UI 壳，不属于 Go 核心二进制；它使用 AppKit、ServiceManagement、UserNotifications 和 WebKit 等系统框架。
+各平台原生 UI 独立于 Go 核心二进制：macOS 使用 AppKit、ServiceManagement、UserNotifications 和 WebKit；Windows 使用原生 Windows UI 与 WebView2。
 
 ### WireGuard 集成
 
@@ -115,8 +135,10 @@ macOS 和 fnOS 分别构建适配自身平台的 `fncpn`，但每个平台的安
 ### 平台网络实现
 
 - macOS 客户端在进程内运行 WireGuard，并由 privileged-daemon 使用固定绝对路径调用系统自带的 `/sbin/ifconfig` 和 `/sbin/route`。
+- Windows 客户端通过 Wintun 创建虚拟接口，使用 Windows 网络 API 配置地址、路由和网络事件，由 LocalSystem 服务执行特权操作。
 - 系统命令必须通过 `exec.CommandContext` 直接调用，不经过 shell；命令路径、操作集合和参数结构固定，所有动态值来自已复验的结构化计划。
-- P0 不修改系统 DNS；访问远端资源使用 IP。内部域名与 split DNS 在出现明确需求后单独设计。
+- 1.0.x 不修改系统 DNS；访问远端资源使用 IP。1.1.0 起局域网域名解析采用 split DNS，
+  设计见 [局域网域名解析（Split DNS）](#局域网域名解析split-dns)。
 - fnOS 使用 Linux 内核 WireGuard、Go netlink、wgctrl 和 Go nftables 库。
 - fnOS 不依赖系统中的 `ip`、`wg`、`nft` 或其他第三方 CLI。
 - 若内核 WireGuard 不可用，P0 明确报错，不静默下载或执行未知二进制。
@@ -193,6 +215,45 @@ FnCPN 会按需
 `/var/log/fncpn/client-privileged.log`，fnOS daemon 写入
 `${TRIM_PKGVAR}/logs/` 下相互隔离的目录。
 
+## 局域网域名解析（Split DNS）
+
+1.1.0 DNS 为随连接自动生效的内建能力，无管理员启用步骤；完整契约见
+[局域网域名解析](interfaces.md#局域网域名解析110)。
+
+```text
+系统解析器 → 本机 loopback DNS（client daemon，UDP/TCP）
+                           │ LAN HTTP 54790
+                           ▼
+                     server daemon
+               去除隔离后缀 → LAN DNS / mDNS
+```
+
+- `<NAS hostname>.<后缀>` 为内建 NAS 名称，直接解析到已启用 LAN 内的 NAS 本机地址；管理页显示真实默认后缀，
+  并按实际管理协议与端口提供打开入口。server daemon 从本机 Unix Socket 和网关配置读取 FN Connect ID、协议及管理端口，
+  经 bootstrap 下发；不依赖客户端传参、浏览器域名或 fnOS 桌面桥接。
+- 后缀本身及 `<NAS hostname>.<后缀>` 均解析到 NAS。
+- 默认后缀 `<FN Connect ID>.fncpn`，管理员可自定义；两端安装/升级后随连接自动应用。
+  `abc.<后缀>` 优先 NAS LAN DNS，无记录或上游不可用时尝试 mDNS `abc.local`，不维护来源固定状态；
+  `abc.local.<后缀>` 明确走 mDNS，`abc.home.lan.<后缀>` 明确走 LAN DNS。
+  原始 `.local` 和家庭 DNS 后缀不被接管，避免与客户端当前网络同名设备冲突。
+- 私网 DNS 默认信任内网环境，直接收发解析 JSON，不增加请求/响应 HMAC、时间窗口或防重放；
+  原有 `/api/v1/probe` 与 `/probe` 的身份 HMAC 证明保持不变。DNS 不依赖探测密钥。
+- NAS 自动检测有效 LAN DNS 和搜索域，在已启用 LAN 接口上代查 mDNS；用户无需逐设备建表。
+  54790 为共享的 NAS 私网 API（身份探测及 DNS）；解析响应返回地址，客户端不转发或重播 mDNS 组播，不依赖系统对 `.local` 的接管。
+- DNS 生命周期独立于 WireGuard，LOCAL/DIRECT/RELAY 均应用；LOCAL 不创建隧道，
+  同一带隔离后缀的名称继续通过 NAS 查询并按当前真实路由验证。
+- macOS 使用 loopback 高位端口和 resolver 的显式 port，普通 daemon 直接解析；特权组件
+  仅维护 resolver 文件。Windows 自动探测可用 loopback IP 的 UDP/TCP 53 并写入 NRPT，优先复用上次地址，需实机验证。
+  不增加 `watch-dns-query`/`respond-dns-query`，不依赖隧道地址，也不在 NAS 上新开 DNS 端口。
+- 独立 DNS 计划与 journal 管理 owner/generation、规则和监听器生命周期；先启动监听器，
+  后安装规则，DNS 子事务失败只降级名称功能。监督器恢复、owner 存活检查、退避重试与
+  清理规则共同避免崩溃后的解析黑洞。
+- server 校验名称及结果地址范围；client 再按实际路由过滤答案。NXDOMAIN、NODATA、
+  SERVFAIL 分开处理，故障不进入否定缓存；设置变化和路径变化失效缓存。
+- 新字段、新 IPC 和持久化设置需要按版本契约管理：远程功能通过 1.1 MINOR 引入；本地 IPC
+  独立定版，严格解码的持久化设置升级 schema，事务备份后迁移，保留身份和连接意图。
+  自动化协议测试不能替代历史 1.0 正式产物和平台系统解析验收。
+
 ## 安全与权限边界
 
 - 每台设备独立密钥；客户端私钥不上传，服务端私钥不导出。
@@ -206,7 +267,13 @@ FnCPN 会按需
 - 安装包不携带 `wireguard-go`、`wg` 或其他网络工具；macOS 仅调用系统自带的固定 `/sbin/ifconfig` 和 `/sbin/route`，fnOS 不调用外部网络命令。
 - 所有网络变更使用声明式计划并在失败时逆序回滚。
 - WSS 目标固定为本机 WireGuard 端口，并限制帧大小、速率、连接数和队列。
+- DNS 解析服务只应答已配置后缀内的名称，解析结果地址限定在已启用的 LAN/overlay CIDR，
+  NAS HTTP 接口仅返回已启用网段内的 IPv4 地址，不增加设备鉴权；客户端监听器只绑定 loopback，
+  丢弃非 loopback 来源；仍没有本机调用方认证，安全依赖后缀白名单、
+  地址校验、超时和并发上限。
 - 日志和诊断统一脱敏；严重错误必须记录组件、阶段和可操作原因。
 - 服务停止、升级、卸载和系统关机均执行幂等清理。
 
 在无 Developer ID 的本地安装模式下，不能把代码签名身份作为唯一安全边界。P0 安全边界依赖 Unix peer credential、目录权限、严格 schema、固定操作集合和参数复验。
+
+DNS 名称解析仅支持 IPv4 A（家庭 DNS、mDNS 及 NAS hostname 入口）。客户端收到 AAAA 查询时本地返回 NOERROR 空答案，不向 NAS 发起请求；DNS API 拒绝非 A 查询。此限制不影响 DIRECT 的 IPv6 UDP 传输。

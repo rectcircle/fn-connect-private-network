@@ -41,7 +41,7 @@ func (s NetworkSnapshot) interfaceForEndpoint(endpoint string) int {
 
 // probeLocal retries unknown/transient outcomes for one bounded selection
 // window. Subnet equality is never evidence that the authenticated probe passed.
-func (m *Manager) probeLocal(ctx context.Context, cfg model.LocalProbeConfiguration, deviceID string, snapshot NetworkSnapshot) (bool, error) {
+func (m *Manager) probeLocal(ctx context.Context, cfg model.PrivateAPIConfiguration, deviceID string, snapshot NetworkSnapshot) (bool, error) {
 	stage, cancel := context.WithTimeout(ctx, localSelectionTimeout)
 	defer cancel()
 	for {
@@ -70,7 +70,7 @@ func (m *Manager) probeLocal(ctx context.Context, cfg model.LocalProbeConfigurat
 
 type localSelection struct {
 	err           error
-	configuration model.LocalProbeConfiguration
+	configuration model.PrivateAPIConfiguration
 	endpoints     []string
 	reachable     bool
 }
@@ -81,15 +81,15 @@ type localSelection struct {
 // individual timeouts. All goroutines are joined before returning, including
 // cookie persistence.
 func (m *Manager) selectLocal(ctx context.Context, remote RemoteService, config LocalConfig, snapshot NetworkSnapshot) localSelection {
-	if m.localProbeConfig == nil {
-		m.loadLocalProbeCache(config.FNID)
+	if m.privateAPIConfig == nil {
+		m.loadPrivateAPICache(config.FNID)
 	}
 	m.waitForLocalAccess(ctx, remote, config)
-	cached := cloneLocalProbeConfiguration(m.localProbeConfig)
+	cached := clonePrivateAPIConfiguration(m.privateAPIConfig)
 	stage, cancel := context.WithTimeout(ctx, localSelectionTimeout)
 	defer cancel()
 	type result struct {
-		cfg   model.LocalProbeConfiguration
+		cfg   model.PrivateAPIConfiguration
 		ok    bool
 		fresh bool
 		err   error
@@ -115,7 +115,7 @@ func (m *Manager) selectLocal(ctx context.Context, remote RemoteService, config 
 			}
 		}
 		fetch, stop := context.WithTimeout(stage, configurationFetchTimeout)
-		fresh, err := remote.LocalProbeConfiguration(fetch, config.DeviceID)
+		fresh, err := remote.PrivateAPIConfiguration(fetch, config.DeviceID)
 		stop()
 		if err != nil {
 			if stage.Err() == nil {
@@ -137,8 +137,8 @@ func (m *Manager) selectLocal(ctx context.Context, remote RemoteService, config 
 		if res.fresh && len(res.cfg.Endpoints) > 0 && ctx.Err() == nil {
 			// Persist authenticated endpoint metadata even on a remote network, so
 			// subsequent LOCAL promotion can use it without the public gateway.
-			m.localProbeConfig = cloneLocalProbeConfiguration(&res.cfg)
-			m.persistLocalProbeConfig(config.FNID, res.cfg)
+			m.privateAPIConfig = clonePrivateAPIConfiguration(&res.cfg)
+			m.persistPrivateAPIConfig(config.FNID, res.cfg)
 		}
 		if res.ok && !selection.reachable {
 			selection.configuration, selection.reachable = res.cfg, true
@@ -148,7 +148,7 @@ func (m *Manager) selectLocal(ctx context.Context, remote RemoteService, config 
 	return selection
 }
 
-func (m *Manager) establishLocal(ctx context.Context, config LocalConfig, snapshot NetworkSnapshot, cfg model.LocalProbeConfiguration) error {
+func (m *Manager) establishLocal(ctx context.Context, config LocalConfig, snapshot NetworkSnapshot, cfg model.PrivateAPIConfiguration) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -161,11 +161,11 @@ func (m *Manager) establishLocal(ctx context.Context, config LocalConfig, snapsh
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	m.persistLocalProbeConfig(config.FNID, cfg)
+	m.persistPrivateAPIConfig(config.FNID, cfg)
 	return m.commitConnection(ctx, func() {
 		m.lastPlan = nil
 		m.lastNetworkFingerprint = snapshot.Fingerprint()
-		m.localProbeConfig = cloneLocalProbeConfiguration(&cfg)
+		m.privateAPIConfig = clonePrivateAPIConfiguration(&cfg)
 		m.setDirectDiagnostics(model.DirectDiagnostics{Reason: "local_network", LocalPublicIPv6: snapshot.HasPublicIPv6})
 		m.setStatus(model.ClientLocal, "local", "", nil)
 	})
@@ -174,10 +174,10 @@ func (m *Manager) establishLocal(ctx context.Context, config LocalConfig, snapsh
 // Called only by the serialized worker. A failed upgrade never tears down a
 // healthy DIRECT/RELAY connection; the normal health check remains independent.
 func (m *Manager) tryLocalUpgrade(ctx context.Context, config LocalConfig) bool {
-	if m.localProbeConfig == nil {
-		m.loadLocalProbeCache(config.FNID)
+	if m.privateAPIConfig == nil {
+		m.loadPrivateAPICache(config.FNID)
 	}
-	cached := cloneLocalProbeConfiguration(m.localProbeConfig)
+	cached := clonePrivateAPIConfiguration(m.privateAPIConfig)
 	if cached == nil {
 		return false
 	}

@@ -18,6 +18,7 @@ try {
     & "$PSScriptRoot/windows/test-setup-tools.ps1"
     Invoke-Check 'go' @('test', './...')
     Invoke-Check 'go' @('vet', './...')
+    & "$PSScriptRoot/windows/test-maintenance-compatibility.ps1"
     if (-not $SkipPackage) {
         $hostArch = $env:PROCESSOR_ARCHITEW6432
         if (-not $hostArch) { $hostArch = $env:PROCESSOR_ARCHITECTURE }

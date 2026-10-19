@@ -75,7 +75,7 @@ func TestCookiePersistenceMatchesJar(t *testing.T) {
 			for _, update := range test.updates {
 				set.ApplyResponse(&http.Response{
 					Request: &http.Request{URL: origin},
-					Header: http.Header{"Set-Cookie": []string{update}},
+					Header:  http.Header{"Set-Cookie": []string{update}},
 				})
 			}
 			target, _ := url.Parse(test.target)
@@ -94,7 +94,7 @@ func TestCookieMaxAgePersistsAnAbsoluteExpiry(t *testing.T) {
 	before := time.Now()
 	set.ApplyResponse(&http.Response{
 		Request: &http.Request{URL: origin},
-		Header: http.Header{"Set-Cookie": []string{"session=secret; Max-Age=60"}},
+		Header:  http.Header{"Set-Cookie": []string{"session=secret; Max-Age=60"}},
 	})
 	records := set.Records()
 	if len(records) != 1 || records[0].Expires.Before(before.Add(59*time.Second)) ||
