@@ -4,7 +4,7 @@
 格式遵循 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)，版本规则见
 [版本与兼容性](docs/versioning-and-compatibility.md)。
 
-## [Unreleased]
+## [1.1.0]
 
 ### Added
 
@@ -22,7 +22,7 @@
 
 ### 验证范围
 
-- Go 自动化、DNS 查询与清理、数据迁移、历史 IPC 维护退出、Windows 本地化和跨架构构建验证见 [验证记录](docs/validation.md)。Windows ARM64 候选已由用户确认；NAS mDNS / 家庭 DNS 联调、macOS 系统 resolver、Windows Dnscache / NRPT、第三方 VPN 冲突、升级卸载清理和历史正式产物互通仍待专项验收。
+- Go 自动化、DNS 查询与清理、数据迁移、历史 IPC 维护退出、Windows 本地化和跨架构构建验证见 [验证记录](docs/validation.md)。用户确认 1.1.0 候选的 macOS 与 Windows 真机测试已完成；正式历史版本互通矩阵仍待验收。
 
 ## [1.0.10] - 2026-10-15
 

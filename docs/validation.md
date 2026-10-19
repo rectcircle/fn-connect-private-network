@@ -39,9 +39,9 @@ DIRECT/RELAY 的网段冲突过滤，以及暂停、切换 NAS、越界地址限
 不等同于每个历史 MSI 的完整实机升级；用户已确认当前 Windows ARM64 候选“无问题”，
 历史完整安装矩阵及其他网络环境仍不属于此次验证范围。
 
-## 1.1.0 DNS 工作区候选（2026-10-18）
+## 1.1.0 DNS 候选与真机验收（2026-10-19）
 
-基于 `0e07a4a` 的未提交实现，未创建 tag、未发布或替换产物。新增 mDNS / LAN DNS 地址解析，
+当前候选来自 `v1.1.0` tag，GitHub Release 草稿尚未公开。新增 mDNS / LAN DNS 地址解析，
 默认 `<FN Connect ID>.fncpn`，保留自定义后缀；安装/升级后随原连接意图自动应用。
 新增服务端要求通过 MINOR 1.1 表达，不能通过关闭 DNS 放行 1.1 client → 1.0 server。
 
@@ -52,11 +52,11 @@ DIRECT/RELAY 的网段冲突过滤，以及暂停、切换 NAS、越界地址限
 | 系统计划 | 测试替身验证 LOCAL 自动应用、后缀更新、断开清理、journal 恢复、进程与 generation 隔离、不覆盖外部规则；不在开发主机安装真实 resolver/NRPT 规则 |
 | 升级 | schema 1 server / schema 2 client 输入的备份和原子升级测试，验证设备、网络、私钥及连接意图保留；旧版本请求头与版本准入回归 |
 | 页面及原生界面 | Web 测试 32 项通过，iframe 浏览器专项因未配置 Playwright 跳过；Swift 完整编译及 `FNCPN_LAYOUT_CHECK=1` 离屏布局测试通过；本地化、版本和 IPC 同步检查通过 |
-| 跨平台构建 | Windows amd64/arm64、Linux amd64/arm64 的 Go CLI 编译通过；Windows 原生 C++ UI 尚未在 Windows 工具链重建 |
+| 跨平台构建 | Windows amd64/arm64、Linux amd64/arm64 的 Go CLI 编译通过；PR Checks 与 1.1.0 Release workflow 在 macOS / Windows runner 均通过，构建了 macOS、fnOS 和 Windows ARM64/x64 安装包 |
 
-发布前仍需真实 NAS mDNS responder / 家庭 DNS 联调，macOS 系统 resolver 与 Windows Dnscache/NRPT
-实机验证、第三方 VPN 冲突、暂停/崩溃/升级/卸载清理，以及同 MAJOR 历史正式产物互通矩阵。
-当前测试中的历史格式样本和版本请求不能替代真实历史二进制验收。
+用户于 2026-10-19 确认当前 1.1.0 候选的 macOS 与 Windows 真机测试全部完成，包含实际连接和 DNS 功能验收；此前记录的 Windows ARM64 LOCAL DNS 回归是其中一项。此处按用户确认记录整体结论，不补写未提供的系统版本、设备型号、逐项日志或性能数据。
+
+正式发布前仍需按版本契约使用实际已发布的同 MAJOR 历史 client/server 二进制完成互通矩阵；当前历史源码夹具和候选 Release 构建不能替代该项验收。
 DNS 已统一为 NAS LAN IP 的 HTTP 54790，LOCAL 使用物理 LAN，DIRECT/RELAY 使用 WireGuard LAN 路由。
 DNS 已移除新增签名、时间窗口和防重放；回归覆盖无密钥查询、重复请求成功、不依赖设备注册状态、请求参数及路由冲突；不使用 HTTPS 网关回退。
 `/api/v1/probe` 与 `/probe` 共用证明逻辑；后者保留 v1.x.x 兼容，v2.x.x 将废弃。
