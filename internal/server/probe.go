@@ -25,57 +25,59 @@ import (
 )
 
 const (
-	DefaultLocalProbePort  uint16 = 54790
+	DefaultPrivateAPIPort  uint16 = 54790
 	probeMasterKeyFileName        = "probe.key"
 	probeKeySize                  = 32
 	probeNonceSize                = 32
 	maxProbeRequestSize           = 4 * 1024
 )
 
-type LocalProbeService struct {
+// PrivateAPIService serves identity probes and DNS queries on the
+// same private LAN listener; login, configuration and administration stay on the gateway.
+type PrivateAPIService struct {
 	mu        sync.RWMutex
 	store     *Service
 	masterKey []byte
 	port      uint16
-	listeners map[string]localProbeListener
+	listeners map[string]privateAPIListener
 	endpoints []string
 	errors    chan error
 	closed    bool
 	listen    func(string, string) (net.Listener, error)
 }
 
-type localProbeListener struct {
+type privateAPIListener struct {
 	listener net.Listener
 	server   *http.Server
 }
 
-func OpenLocalProbeService(
+func OpenPrivateAPIService(
 	stateDirectory string,
 	store *Service,
 	port uint16,
-) (*LocalProbeService, error) {
+) (*PrivateAPIService, error) {
 	if store == nil {
 		return nil, errors.New("local probe store is required")
 	}
 	if port == 0 {
-		port = DefaultLocalProbePort
+		port = DefaultPrivateAPIPort
 	}
 	masterKey, err := loadOrCreateProbeMasterKey(stateDirectory)
 	if err != nil {
 		return nil, err
 	}
-	service := &LocalProbeService{
+	service := &PrivateAPIService{
 		store:     store,
 		masterKey: masterKey,
 		port:      port,
-		listeners: make(map[string]localProbeListener),
+		listeners: make(map[string]privateAPIListener),
 		errors:    make(chan error, 1),
 		listen:    net.Listen,
 	}
 	return service, nil
 }
 
-func (s *LocalProbeService) Run(
+func (s *PrivateAPIService) Run(
 	ctx context.Context,
 	detect func() ([]string, error),
 	events <-chan struct{},
@@ -112,7 +114,7 @@ func (s *LocalProbeService) Run(
 	}
 }
 
-func (s *LocalProbeService) Reconcile(addresses []string) error {
+func (s *PrivateAPIService) Reconcile(addresses []string) error {
 	seen := make(map[netip.Addr]struct{}, len(addresses))
 	for _, value := range addresses {
 		address, parseErr := netip.ParseAddr(value)
@@ -126,8 +128,8 @@ func (s *LocalProbeService) Reconcile(addresses []string) error {
 	if s.closed {
 		return errors.New("local probe service is closed")
 	}
-	next := make(map[string]localProbeListener, len(seen))
-	opened := make(map[string]localProbeListener, len(seen))
+	next := make(map[string]privateAPIListener, len(seen))
+	opened := make(map[string]privateAPIListener, len(seen))
 	for address := range seen {
 		endpoint := net.JoinHostPort(address.String(), fmt.Sprint(s.port))
 		if existing, ok := s.listeners[endpoint]; ok {
@@ -141,13 +143,13 @@ func (s *LocalProbeService) Reconcile(addresses []string) error {
 			}
 			return fmt.Errorf("listen for local probes on %s: %w", endpoint, listenErr)
 		}
-		entry := localProbeListener{
+		entry := privateAPIListener{
 			listener: listener,
 			server: &http.Server{
 				Handler:           s,
 				ReadHeaderTimeout: 2 * time.Second,
 				ReadTimeout:       2 * time.Second,
-				WriteTimeout:      2 * time.Second,
+				WriteTimeout:      5 * time.Second,
 				IdleTimeout:       5 * time.Second,
 				MaxHeaderBytes:    4 * 1024,
 			},
@@ -155,7 +157,7 @@ func (s *LocalProbeService) Reconcile(addresses []string) error {
 		next[endpoint] = entry
 		opened[endpoint] = entry
 	}
-	var removed []localProbeListener
+	var removed []privateAPIListener
 	for endpoint, entry := range s.listeners {
 		if _, keep := next[endpoint]; !keep {
 			removed = append(removed, entry)
@@ -172,29 +174,29 @@ func (s *LocalProbeService) Reconcile(addresses []string) error {
 	return nil
 }
 
-func (s *LocalProbeService) Configuration(
+func (s *PrivateAPIService) Configuration(
 	deviceID string,
-) (model.LocalProbeConfiguration, error) {
+) (model.PrivateAPIConfiguration, error) {
 	s.mu.RLock()
 	endpoints := slices.Clone(s.endpoints)
 	closed := s.closed
 	s.mu.RUnlock()
 	if closed || len(endpoints) == 0 {
-		return model.LocalProbeConfiguration{}, model.NewError(
+		return model.PrivateAPIConfiguration{}, model.NewError(
 			model.ErrorUnavailable,
-			"local probe is unavailable",
+			"private API is unavailable",
 			true,
 		)
 	}
 	device, err := FindDevice(s.store.Snapshot(), deviceID)
 	if err != nil || !device.Enabled {
-		return model.LocalProbeConfiguration{}, model.NewError(
+		return model.PrivateAPIConfiguration{}, model.NewError(
 			model.ErrorDeviceRevoked,
 			"device was not found",
 			false,
 		)
 	}
-	return model.LocalProbeConfiguration{
+	return model.PrivateAPIConfiguration{
 		Endpoints: endpoints,
 		Key: base64.RawURLEncoding.EncodeToString(
 			s.deviceKey(device),
@@ -202,9 +204,9 @@ func (s *LocalProbeService) Configuration(
 	}, nil
 }
 
-func (s *LocalProbeService) serve(
+func (s *PrivateAPIService) serve(
 	endpoint string,
-	entry localProbeListener,
+	entry privateAPIListener,
 ) {
 	err := entry.server.Serve(entry.listener)
 	if err == nil || errors.Is(err, http.ErrServerClosed) {
@@ -221,12 +223,12 @@ func (s *LocalProbeService) serve(
 		return
 	}
 	select {
-	case s.errors <- fmt.Errorf("serve local probes on %s: %w", endpoint, err):
+	case s.errors <- fmt.Errorf("serve private API on %s: %w", endpoint, err):
 	default:
 	}
 }
 
-func (s *LocalProbeService) refreshEndpointsLocked() {
+func (s *PrivateAPIService) refreshEndpointsLocked() {
 	s.endpoints = s.endpoints[:0]
 	for endpoint := range s.listeners {
 		s.endpoints = append(s.endpoints, endpoint)
@@ -234,14 +236,14 @@ func (s *LocalProbeService) refreshEndpointsLocked() {
 	slices.Sort(s.endpoints)
 }
 
-func (s *LocalProbeService) Close() {
+func (s *PrivateAPIService) Close() {
 	s.mu.Lock()
 	if s.closed {
 		s.mu.Unlock()
 		return
 	}
 	s.closed = true
-	listeners := make([]localProbeListener, 0, len(s.listeners))
+	listeners := make([]privateAPIListener, 0, len(s.listeners))
 	for _, entry := range s.listeners {
 		listeners = append(listeners, entry)
 	}
@@ -253,7 +255,7 @@ func (s *LocalProbeService) Close() {
 	}
 }
 
-func (s *LocalProbeService) ServeHTTP(
+func (s *PrivateAPIService) ServeHTTP(
 	writer http.ResponseWriter,
 	request *http.Request,
 ) {
@@ -265,8 +267,14 @@ func (s *LocalProbeService) ServeHTTP(
 	writer.Header().Set("X-Request-ID", requestID)
 	writer.Header().Set("Cache-Control", "no-store")
 	writer.Header().Set("X-Content-Type-Options", "nosniff")
-	if request.Method != http.MethodPost || request.URL.Path != "/probe" {
-		writeHTTPError(s.store.logger, writer, request, model.NewError(model.ErrorNotFound, "local probe endpoint was not found", false))
+	if request.Method == http.MethodPost && request.URL.Path == model.DNSQueryPath {
+		s.privateDNSQuery(writer, request)
+		return
+	}
+	// /probe is retained for v1.x.x client compatibility; deprecated in v2.x.x.
+	// Both paths intentionally share the exact legacy request/proof semantics.
+	if request.Method != http.MethodPost || (request.URL.Path != model.LocalProbePath && request.URL.Path != model.LegacyLocalProbePath) {
+		writeHTTPError(s.store.logger, writer, request, model.NewError(model.ErrorNotFound, "private API endpoint was not found", false))
 		return
 	}
 	if request.Header.Get("Cookie") != "" {
@@ -305,7 +313,7 @@ func (s *LocalProbeService) ServeHTTP(
 	}
 }
 
-func (s *LocalProbeService) deviceKey(device model.Device) []byte {
+func (s *PrivateAPIService) deviceKey(device model.Device) []byte {
 	mac := hmac.New(sha256.New, s.masterKey)
 	_, _ = mac.Write([]byte(device.ID))
 	_, _ = mac.Write([]byte{0})

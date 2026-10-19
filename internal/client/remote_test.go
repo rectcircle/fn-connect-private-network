@@ -91,7 +91,7 @@ func TestRemoteClientMapsAuthenticationFailure(t *testing.T) {
 	}
 }
 
-func TestRemoteClientLoadsLocalProbeConfiguration(t *testing.T) {
+func TestRemoteClientLoadsPrivateAPIConfiguration(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(
 		writer http.ResponseWriter,
 		request *http.Request,
@@ -100,7 +100,7 @@ func TestRemoteClientLoadsLocalProbeConfiguration(t *testing.T) {
 			gatewayApplicationPath+"/api/v1/devices/device-1/local-probe" {
 			t.Errorf("path = %q", request.URL.Path)
 		}
-		_ = json.NewEncoder(writer).Encode(model.LocalProbeConfiguration{
+		_ = json.NewEncoder(writer).Encode(model.PrivateAPIConfiguration{
 			Endpoints: []string{"192.168.1.10:54790"},
 			Key:       "probe-key",
 		})
@@ -115,7 +115,7 @@ func TestRemoteClientLoadsLocalProbeConfiguration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new client: %v", err)
 	}
-	configuration, err := client.LocalProbeConfiguration(
+	configuration, err := client.PrivateAPIConfiguration(
 		context.Background(),
 		"device-1",
 	)

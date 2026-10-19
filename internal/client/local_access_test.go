@@ -25,7 +25,7 @@ func TestLocalAccessWaitGrantSkipAndTimeout(t *testing.T) {
 				m, _, _, _, _ := coordinationFixture(t)
 				p := &permissionProbe{LocalProbe: m.probe, events: make(chan localAccessState, 2)}
 				m.probe = p
-				m.localProbeConfig = &model.LocalProbeConfiguration{Endpoints: []string{"192.168.71.2:54790"}}
+				m.privateAPIConfig = &model.PrivateAPIConfiguration{Endpoints: []string{"192.168.71.2:54790"}}
 				m.localAccessContext = t.Context()
 				ctx, cancel := context.WithCancel(t.Context())
 				defer cancel()

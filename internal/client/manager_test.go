@@ -587,7 +587,7 @@ func TestManagerHealthMaintenanceDoesNotPollConfiguration(t *testing.T) {
 		t.Fatalf("new manager: %v", err)
 	}
 	manager.setStatus(model.ClientLocal, "local", "", nil)
-	manager.localProbeConfig = &model.LocalProbeConfiguration{
+	manager.privateAPIConfig = &model.PrivateAPIConfiguration{
 		Endpoints: []string{"192.168.71.2:54790"},
 		Key:       "probe-key",
 	}
@@ -648,7 +648,7 @@ func TestManagerConfigurationWatchNotifiesAfterRecovery(t *testing.T) {
 		t.Fatalf("new manager: %v", err)
 	}
 	manager.setStatus(model.ClientLocal, "local", "", nil)
-	manager.localProbeConfig = &model.LocalProbeConfiguration{
+	manager.privateAPIConfig = &model.PrivateAPIConfiguration{
 		Endpoints: []string{"192.168.71.2:54790"},
 		Key:       "probe-key",
 	}
@@ -764,7 +764,7 @@ func TestManagerMaintenanceReportsLocalConfigurationReadFailure(t *testing.T) {
 		t.Fatalf("new manager: %v", err)
 	}
 	manager.setStatus(model.ClientLocal, "local", "", nil)
-	manager.localProbeConfig = &model.LocalProbeConfiguration{
+	manager.privateAPIConfig = &model.PrivateAPIConfiguration{
 		Endpoints: []string{"192.168.71.2:54790"},
 		Key:       "probe-key",
 	}
@@ -810,7 +810,7 @@ func TestManagerMaintenanceAppliesConfigurationContentChange(t *testing.T) {
 		t.Fatalf("new manager: %v", err)
 	}
 	manager.setStatus(model.ClientLocal, "local", "", nil)
-	manager.localProbeConfig = &model.LocalProbeConfiguration{
+	manager.privateAPIConfig = &model.PrivateAPIConfiguration{
 		Endpoints: []string{"192.168.71.2:54790"},
 		Key:       "probe-key",
 	}
@@ -907,7 +907,7 @@ func TestManagerPrivilegedMaintenanceRecordsStatusFailure(t *testing.T) {
 func TestManagerMaintainsLocalWithCachedProbeConfiguration(t *testing.T) {
 	remote := &fakeRemoteService{
 		configuration: managerClientConfiguration(),
-		probeConfiguration: model.LocalProbeConfiguration{
+		probeConfiguration: model.PrivateAPIConfiguration{
 			Endpoints: []string{"192.168.71.2:54790"},
 			Key:       "probe-key",
 		},
@@ -1106,7 +1106,7 @@ func TestSystemLocalProbeUsesDeviceHMACWithoutCookies(t *testing.T) {
 		Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
 			requestSeen = true
 			if request.Method != http.MethodPost ||
-				request.URL.String() != "http://192.168.1.10:54790/probe" {
+				request.URL.String() != "http://192.168.1.10:54790/api/v1/probe" {
 				t.Fatalf("probe URL = %s", request.URL)
 			}
 			if request.Header.Get("Cookie") != "" {
@@ -1143,7 +1143,7 @@ func TestSystemLocalProbeUsesDeviceHMACWithoutCookies(t *testing.T) {
 	}}
 	reachable, err := probe.Reachable(
 		context.Background(),
-		model.LocalProbeConfiguration{
+		model.PrivateAPIConfiguration{
 			Endpoints: []string{"192.168.1.10:54790"},
 			Key:       base64.RawURLEncoding.EncodeToString(key),
 		},
@@ -1159,7 +1159,7 @@ func TestSystemLocalProbeUsesDeviceHMACWithoutCookies(t *testing.T) {
 	wrongKey := make([]byte, sha256.Size)
 	reachable, err = probe.Reachable(
 		context.Background(),
-		model.LocalProbeConfiguration{
+		model.PrivateAPIConfiguration{
 			Endpoints: []string{"192.168.1.10:54790"},
 			Key:       base64.RawURLEncoding.EncodeToString(wrongKey),
 		},
@@ -1257,7 +1257,7 @@ type fakeRemoteService struct {
 	bootstrap             Bootstrap
 	registration          model.DeviceRegistration
 	configuration         model.ClientConfiguration
-	probeConfiguration    model.LocalProbeConfiguration
+	probeConfiguration    model.PrivateAPIConfiguration
 	err                   error
 	probeErr              error
 	registrations         int
@@ -1318,10 +1318,10 @@ func (s *fakeRemoteService) Configuration(
 	return s.configuration, s.err
 }
 
-func (s *fakeRemoteService) LocalProbeConfiguration(
+func (s *fakeRemoteService) PrivateAPIConfiguration(
 	context.Context,
 	string,
-) (model.LocalProbeConfiguration, error) {
+) (model.PrivateAPIConfiguration, error) {
 	s.probeRequests++
 	return s.probeConfiguration, errors.Join(s.err, s.probeErr)
 }
@@ -1414,7 +1414,7 @@ type fakeLocalProbe struct {
 
 func (p fakeLocalProbe) Reachable(
 	context.Context,
-	model.LocalProbeConfiguration,
+	model.PrivateAPIConfiguration,
 	string,
 	NetworkSnapshot,
 ) (bool, error) {

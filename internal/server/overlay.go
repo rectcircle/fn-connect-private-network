@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/netip"
 
+	dnsresolver "github.com/rectcircle/fn-connect-private-network/internal/dns"
 	"github.com/rectcircle/fn-connect-private-network/internal/model"
 	wgconfig "github.com/rectcircle/fn-connect-private-network/internal/wireguard"
 )
@@ -17,6 +18,11 @@ const (
 var sharedAddressPrefix = netip.MustParsePrefix("100.64.0.0/10")
 
 func ValidateSettings(settings model.ServerSettings) error {
+	if settings.DNSSuffix != "" {
+		if err := dnsresolver.ValidateSuffix(settings.DNSSuffix); err != nil {
+			return err
+		}
+	}
 	overlay, err := parseOverlay(settings.OverlayCIDR)
 	if err != nil {
 		return err

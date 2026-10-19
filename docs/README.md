@@ -10,6 +10,7 @@
 | [接口契约](interfaces.md) | FnCPN HTTP/WSS、本地 IPC 与局域网探测 |
 | [网络恢复](network-recovery.md) | 调度、物理网络身份、选路、超时与取消 |
 | [fnOS 协议研究](fnos-protocols.md) | 地址发现、原生登录、Cookie、会话恢复、独立 Web 会话及验证 |
+| [故障排查](troubleshooting.md) | 系统要求、登录限制、端口与防火墙、连接及域名问题自查 |
 | [诊断](diagnostics.md) | 错误契约、日志、排障与安全边界 |
 | [开发、构建与发布](development.md) | 环境、测试、打包、版本、GitHub 草稿公开、Homebrew 与夸克镜像；含首次 CLI 安装授权及重试命令 |
 | [版本与兼容性](versioning-and-compatibility.md) | 从 1.0.0 生效的版本、协议、数据升级和发布约束 |

@@ -97,7 +97,7 @@ type flakyLocalProbe struct {
 }
 
 func (f *flakyLocalProbe) Reachable(
-	context.Context, model.LocalProbeConfiguration, string, NetworkSnapshot,
+	context.Context, model.PrivateAPIConfiguration, string, NetworkSnapshot,
 ) (bool, error) {
 	call := f.calls.Add(1)
 	reachable := f.successCall > 0 && call >= f.successCall
@@ -116,7 +116,7 @@ func TestLocalPathStillHealthyRetriesTransientFailure(t *testing.T) {
 	m := &Manager{
 		probe:  probe,
 		logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
-		localProbeConfig: &model.LocalProbeConfiguration{
+		privateAPIConfig: &model.PrivateAPIConfiguration{
 			Endpoints: []string{"192.168.71.2:54790"},
 		},
 	}
@@ -136,7 +136,7 @@ func TestLocalPathStillHealthyDeclaresLostAfterConsecutiveFailures(t *testing.T)
 	m := &Manager{
 		probe:  probe,
 		logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
-		localProbeConfig: &model.LocalProbeConfiguration{
+		privateAPIConfig: &model.PrivateAPIConfiguration{
 			Endpoints: []string{"192.168.71.2:54790"},
 		},
 	}
@@ -153,7 +153,7 @@ func TestLocalPathStillHealthyDeclaresLostAfterConsecutiveFailures(t *testing.T)
 // public gateway — the core fix for the "LOCAL requires WAN" chicken-and-egg.
 func TestManagerUsesPersistedLocalProbeCacheWithoutGateway(t *testing.T) {
 	store := configuredManagerStore(t)
-	if err := store.SaveLocalProbeConfig("home-nas", model.LocalProbeConfiguration{
+	if err := store.SavePrivateAPIConfig("home-nas", model.PrivateAPIConfiguration{
 		Endpoints: []string{"192.168.71.2:54790"},
 		Key:       "probe-key",
 	}); err != nil {
@@ -191,7 +191,7 @@ func TestManagerPersistsLocalProbeCacheAfterConnect(t *testing.T) {
 	store := configuredManagerStore(t)
 	remote := &fakeRemoteService{
 		configuration: managerClientConfiguration(),
-		probeConfiguration: model.LocalProbeConfiguration{
+		probeConfiguration: model.PrivateAPIConfiguration{
 			Endpoints: []string{"192.168.71.2:54790"},
 			Key:       "probe-key",
 		},
@@ -215,7 +215,7 @@ func TestManagerPersistsLocalProbeCacheAfterConnect(t *testing.T) {
 	if manager.Status().State != model.ClientLocal {
 		t.Fatalf("state = %s, want LOCAL", manager.Status().State)
 	}
-	cached, found, _, err := store.LoadLocalProbeConfig("home-nas")
+	cached, found, _, err := store.LoadPrivateAPIConfig("home-nas")
 	if err != nil || !found {
 		t.Fatalf("LOCAL config not persisted: found=%v err=%v", found, err)
 	}

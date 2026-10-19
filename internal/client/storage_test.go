@@ -60,7 +60,7 @@ func TestConfigStoreRejectsUnsupportedSchemasWithoutChangingData(t *testing.T) {
 	}{
 		{name: "unversioned development data", data: `{"version":0,"fnId":"home-nas"}`},
 		{name: "older schema", data: `{"version":1,"fnId":"home-nas"}`},
-		{name: "newer schema", data: `{"version":3,"fnId":"home-nas"}`},
+		{name: "newer schema", data: `{"version":99,"fnId":"home-nas"}`},
 		{name: "unknown field", data: `{"version":2,"fnId":"home-nas","futureField":true}`},
 	}
 	for _, test := range tests {
@@ -149,19 +149,19 @@ func TestConfigStoreKeepsSecretsOutsideConfigFile(t *testing.T) {
 	}
 }
 
-func TestConfigStorePersistsLocalProbeConfiguration(t *testing.T) {
+func TestConfigStorePersistsPrivateAPIConfiguration(t *testing.T) {
 	store := NewConfigStore(
 		filepath.Join(t.TempDir(), "config.json"),
 		newMemorySecretStore(),
 	)
-	cfg := model.LocalProbeConfiguration{
+	cfg := model.PrivateAPIConfiguration{
 		Endpoints: []string{"192.168.71.2:54790"},
 		Key:       "probe-hmac-key",
 	}
-	if err := store.SaveLocalProbeConfig("home-nas", cfg); err != nil {
+	if err := store.SavePrivateAPIConfig("home-nas", cfg); err != nil {
 		t.Fatalf("save local probe: %v", err)
 	}
-	reloaded, found, checkedAt, err := store.LoadLocalProbeConfig("home-nas")
+	reloaded, found, checkedAt, err := store.LoadPrivateAPIConfig("home-nas")
 	if err != nil || !found {
 		t.Fatalf("load local probe: found=%v err=%v", found, err)
 	}
@@ -171,33 +171,33 @@ func TestConfigStorePersistsLocalProbeConfiguration(t *testing.T) {
 	if checkedAt.IsZero() {
 		t.Fatal("local probe cache did not record a check time")
 	}
-	if err := store.ClearLocalProbeConfig("home-nas"); err != nil {
+	if err := store.ClearPrivateAPIConfig("home-nas"); err != nil {
 		t.Fatalf("clear local probe: %v", err)
 	}
-	if _, found, _, err := store.LoadLocalProbeConfig("home-nas"); err != nil || found {
+	if _, found, _, err := store.LoadPrivateAPIConfig("home-nas"); err != nil || found {
 		t.Fatalf("local probe cache not cleared: found=%v err=%v", found, err)
 	}
 }
 
-func TestConfigStoreRejectsInvalidLocalProbeConfiguration(t *testing.T) {
+func TestConfigStoreRejectsInvalidPrivateAPIConfiguration(t *testing.T) {
 	store := NewConfigStore(
 		filepath.Join(t.TempDir(), "config.json"),
 		newMemorySecretStore(),
 	)
 	// Missing key is invalid and must not be persisted.
-	if err := store.SaveLocalProbeConfig("home-nas", model.LocalProbeConfiguration{
+	if err := store.SavePrivateAPIConfig("home-nas", model.PrivateAPIConfiguration{
 		Endpoints: []string{"192.168.71.2:54790"},
 	}); err == nil {
 		t.Fatal("expected invalid local probe configuration to be rejected")
 	}
 	// Missing/invalid endpoint is invalid.
-	if err := store.SaveLocalProbeConfig("home-nas", model.LocalProbeConfiguration{
+	if err := store.SavePrivateAPIConfig("home-nas", model.PrivateAPIConfiguration{
 		Endpoints: []string{"not-an-endpoint"},
 		Key:       "probe-hmac-key",
 	}); err == nil {
 		t.Fatal("expected invalid endpoint to be rejected")
 	}
-	if _, found, _, err := store.LoadLocalProbeConfig("home-nas"); err != nil || found {
+	if _, found, _, err := store.LoadPrivateAPIConfig("home-nas"); err != nil || found {
 		t.Fatalf("invalid config was stored: found=%v err=%v", found, err)
 	}
 }

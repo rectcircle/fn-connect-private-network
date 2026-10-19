@@ -20,13 +20,13 @@ import (
 )
 
 const (
-	localConfigVersion  = 2
+	localConfigVersion  = 3
 	maxLocalConfigSize  = 256 * 1024
 	wireGuardSecret     = privileged.WireGuardSecret
 	cookieSecret        = privileged.CookieSecret
 	nativeSessionSecret = privileged.NativeSessionSecret
 	adminWebSecret      = privileged.AdminWebSecret
-	localProbeSecret    = privileged.LocalProbeSecret
+	privateAPISecret    = privileged.LocalProbeSecret // Keep the released secret-store key.
 )
 
 type Cookie struct {
@@ -102,8 +102,21 @@ func (s *ConfigStore) Load() (_ *LocalConfig, failure error) {
 	if err := model.DecodeStrict(data, &config); err != nil {
 		return nil, model.WrapError(model.ErrorFailedPrecondition, "invalid client configuration JSON", false, err)
 	}
+	migrate := config.Version == 2
+	if migrate {
+		config.Version = localConfigVersion
+	}
 	if err := validateLocalConfig(config); err != nil {
 		return nil, err
+	}
+	if migrate {
+		backup := s.path + ".schema-2.backup"
+		if err := writeClientFileAtomic(backup, data); err != nil {
+			return nil, err
+		}
+		if err := s.Save(config); err != nil {
+			return nil, err
+		}
 	}
 	return &config, nil
 }
@@ -422,15 +435,15 @@ func (s *ConfigStore) ClearAdminWebSession(fnID string) (failure error) {
 	return s.secrets.Delete(adminWebSecret, account)
 }
 
-// persistedLocalProbe wraps the cached LAN probe configuration together with the
+// persistedPrivateAPI wraps the cached NAS private API configuration together with the
 // time it was last validated. It lets the manager reuse the LAN endpoints without
 // hitting the public gateway first, while still knowing when the cache is stale.
-type persistedLocalProbe struct {
-	Configuration model.LocalProbeConfiguration `json:"configuration"`
+type persistedPrivateAPI struct {
+	Configuration model.PrivateAPIConfiguration `json:"configuration"`
 	CheckedAt     time.Time                     `json:"checkedAt,omitempty"`
 }
 
-func (s *ConfigStore) SaveLocalProbeConfig(fnID string, cfg model.LocalProbeConfiguration) (failure error) {
+func (s *ConfigStore) SavePrivateAPIConfig(fnID string, cfg model.PrivateAPIConfiguration) (failure error) {
 	s.credentialMu.Lock()
 	defer s.credentialMu.Unlock()
 	defer func() {
@@ -441,23 +454,23 @@ func (s *ConfigStore) SaveLocalProbeConfig(fnID string, cfg model.LocalProbeConf
 	if s.secrets == nil {
 		return errors.New("client secret store is unavailable")
 	}
-	if !validLocalProbeConfig(cfg) {
-		return errors.New("invalid local probe configuration")
+	if !validPrivateAPIConfig(cfg) {
+		return errors.New("invalid private API configuration")
 	}
 	account, err := normalizeFNID(fnID)
 	if err != nil {
 		return err
 	}
-	data, err := json.Marshal(persistedLocalProbe{Configuration: cfg, CheckedAt: time.Now().UTC()})
+	data, err := json.Marshal(persistedPrivateAPI{Configuration: cfg, CheckedAt: time.Now().UTC()})
 	if err != nil {
-		return fmt.Errorf("encode local probe configuration: %w", err)
+		return fmt.Errorf("encode private API configuration: %w", err)
 	}
-	return s.secrets.Put(localProbeSecret, account, data)
+	return s.secrets.Put(privateAPISecret, account, data)
 }
 
-func (s *ConfigStore) LoadLocalProbeConfig(
+func (s *ConfigStore) LoadPrivateAPIConfig(
 	fnID string,
-) (_ model.LocalProbeConfiguration, found bool, checkedAt time.Time, failure error) {
+) (_ model.PrivateAPIConfiguration, found bool, checkedAt time.Time, failure error) {
 	s.credentialMu.Lock()
 	defer s.credentialMu.Unlock()
 	defer func() {
@@ -466,31 +479,31 @@ func (s *ConfigStore) LoadLocalProbeConfig(
 		}
 	}()
 	if s.secrets == nil {
-		return model.LocalProbeConfiguration{}, false, time.Time{}, errors.New("client secret store is unavailable")
+		return model.PrivateAPIConfiguration{}, false, time.Time{}, errors.New("client secret store is unavailable")
 	}
 	account, err := normalizeFNID(fnID)
 	if err != nil {
-		return model.LocalProbeConfiguration{}, false, time.Time{}, err
+		return model.PrivateAPIConfiguration{}, false, time.Time{}, err
 	}
-	data, found, err := s.secrets.Get(localProbeSecret, account)
+	data, found, err := s.secrets.Get(privateAPISecret, account)
 	if err != nil {
-		return model.LocalProbeConfiguration{}, false, time.Time{}, fmt.Errorf("read local probe configuration: %w", err)
+		return model.PrivateAPIConfiguration{}, false, time.Time{}, fmt.Errorf("read private API configuration: %w", err)
 	}
 	if !found {
-		return model.LocalProbeConfiguration{}, false, time.Time{}, nil
+		return model.PrivateAPIConfiguration{}, false, time.Time{}, nil
 	}
-	var persisted persistedLocalProbe
+	var persisted persistedPrivateAPI
 	if err := model.DecodeStrict(data, &persisted); err != nil {
-		return model.LocalProbeConfiguration{}, false, time.Time{}, fmt.Errorf("decode local probe configuration: %w", err)
+		return model.PrivateAPIConfiguration{}, false, time.Time{}, fmt.Errorf("decode private API configuration: %w", err)
 	}
-	if !validLocalProbeConfig(persisted.Configuration) {
+	if !validPrivateAPIConfig(persisted.Configuration) {
 		// Silently treat an invalid cache as absent so the caller refetches.
-		return model.LocalProbeConfiguration{}, false, time.Time{}, nil
+		return model.PrivateAPIConfiguration{}, false, time.Time{}, nil
 	}
 	return persisted.Configuration, true, persisted.CheckedAt, nil
 }
 
-func (s *ConfigStore) ClearLocalProbeConfig(fnID string) (failure error) {
+func (s *ConfigStore) ClearPrivateAPIConfig(fnID string) (failure error) {
 	s.credentialMu.Lock()
 	defer s.credentialMu.Unlock()
 	defer func() {
@@ -505,10 +518,10 @@ func (s *ConfigStore) ClearLocalProbeConfig(fnID string) (failure error) {
 	if err != nil {
 		return err
 	}
-	return s.secrets.Delete(localProbeSecret, account)
+	return s.secrets.Delete(privateAPISecret, account)
 }
 
-func validLocalProbeConfig(cfg model.LocalProbeConfiguration) bool {
+func validPrivateAPIConfig(cfg model.PrivateAPIConfiguration) bool {
 	if len(cfg.Endpoints) == 0 || cfg.Key == "" {
 		return false
 	}
@@ -554,7 +567,7 @@ func (s *ConfigStore) Forget(fnID string) (failure error) {
 			s.secrets.Delete(cookieSecret, account),
 			s.secrets.Delete(nativeSessionSecret, account),
 			s.secrets.Delete(adminWebSecret, account),
-			s.secrets.Delete(localProbeSecret, account),
+			s.secrets.Delete(privateAPISecret, account),
 		)
 	}
 	cleanupErrors = append(cleanupErrors, s.Clear())

@@ -616,6 +616,10 @@ func authorizationID() (string, error) {
 
 func cloneStatus(status model.ClientStatus) model.ClientStatus {
 	cloned := status
+	if status.DNS.LastError != nil {
+		copied := *status.DNS.LastError
+		cloned.DNS.LastError = &copied
+	}
 	if status.LastError != nil {
 		copied := *status.LastError
 		cloned.LastError = &copied

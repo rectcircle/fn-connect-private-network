@@ -27,7 +27,7 @@ func TestNativeLoginSucceedsBeforeTunnelAndSurvivesLoginRequestEnd(t *testing.T)
 		stop := runCoordinated(t, m)
 		defer stop()
 		p.reachable.Store(false)
-		m.localProbeConfig = &model.LocalProbeConfiguration{}
+		m.privateAPIConfig = &model.PrivateAPIConfiguration{}
 		entered, release := make(chan struct{}, 1), make(chan struct{})
 		var canceled atomic.Bool
 		n.apply = func(ctx context.Context, _ model.ClientPlan) (model.ClientPrivilegedStatus, error) {
@@ -66,7 +66,7 @@ type coordinatedProbe struct {
 }
 
 func (p *coordinatedProbe) Snapshot() (NetworkSnapshot, error) { return *p.snapshot.Load(), nil }
-func (p *coordinatedProbe) Reachable(ctx context.Context, _ model.LocalProbeConfiguration, _ string, _ NetworkSnapshot) (bool, error) {
+func (p *coordinatedProbe) Reachable(ctx context.Context, _ model.PrivateAPIConfiguration, _ string, _ NetworkSnapshot) (bool, error) {
 	n := p.calls.Add(1)
 	if p.reach != nil {
 		return p.reach(ctx, n), ctx.Err()
@@ -151,7 +151,7 @@ func coordinationFixture(t *testing.T) (*Manager, *coordinatedProbe, *coordinate
 	discoverer := &coordinatedDiscoverer{}
 	events := make(chan model.NetworkChange, 32)
 	store := configuredManagerStore(t)
-	if err := store.SaveLocalProbeConfig("home-nas", model.LocalProbeConfiguration{Endpoints: []string{"192.168.71.2:54790"}, Key: "probe-key"}); err != nil {
+	if err := store.SavePrivateAPIConfig("home-nas", model.PrivateAPIConfiguration{Endpoints: []string{"192.168.71.2:54790"}, Key: "probe-key"}); err != nil {
 		t.Fatal(err)
 	}
 	manager, err := NewManager(ManagerOptions{
@@ -303,7 +303,7 @@ func TestCoordinatorRetriesWithoutNewNetworkNotification(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		m, p, n, d, _ := coordinationFixture(t)
 		// No LOCAL endpoints in this scenario; relay fails once and then recovers.
-		m.localProbeConfig = &model.LocalProbeConfiguration{}
+		m.privateAPIConfig = &model.PrivateAPIConfiguration{}
 		p.reachable.Store(false)
 		var applies atomic.Int32
 		n.apply = func(ctx context.Context, plan model.ClientPlan) (model.ClientPrivilegedStatus, error) {

@@ -4,6 +4,36 @@
 产品要求见 [产品需求](product.md)，升级保证见 [版本契约](versioning-and-compatibility.md)。
 自动化通过、用户确认和带日志的实测分别记录；旧版证据不代表新版的所有专项通过。
 
+## 1.1.0 DNS 工作区候选（2026-10-18）
+
+基于 `0e07a4a` 的未提交实现，未创建 tag、未发布或替换产物。新增 mDNS / LAN DNS 地址解析，
+默认 `<FN Connect ID>.fncpn`，保留自定义后缀；安装/升级后随原连接意图自动应用。
+新增服务端要求通过 MINOR 1.1 表达，不能通过关闭 DNS 放行 1.1 client → 1.0 server。
+
+| 范围 | 自动化证据 |
+| --- | --- |
+| Go | `go test -race ./...`、`go vet ./...` 通过；后续解析/生命周期修改对 dns/client/server/privileged/command 包重跑竞态测试 |
+| 解析 | 家庭 DNS 缺失/超时/不存在回退 mDNS；LAN 优先及故障回退、IPv4 A、AAAA 本地空答案且不查询 NAS、地址范围及路由冲突、后缀隔离；真实 loopback UDP/TCP 前端及 LAN DNS CNAME/负缓存/截断转 TCP 测试 |
+| 系统计划 | 测试替身验证 LOCAL 自动应用、后缀更新、断开清理、journal 恢复、进程与 generation 隔离、不覆盖外部规则；不在开发主机安装真实 resolver/NRPT 规则 |
+| 升级 | schema 1 server / schema 2 client 输入的备份和原子升级测试，验证设备、网络、私钥及连接意图保留；旧版本请求头与版本准入回归 |
+| 页面及原生界面 | Web 测试 32 项通过，iframe 浏览器专项因未配置 Playwright 跳过；Swift 完整编译及 `FNCPN_LAYOUT_CHECK=1` 离屏布局测试通过；本地化、版本和 IPC 同步检查通过 |
+| 跨平台构建 | Windows amd64/arm64、Linux amd64/arm64 的 Go CLI 编译通过；Windows 原生 C++ UI 尚未在 Windows 工具链重建 |
+
+发布前仍需真实 NAS mDNS responder / 家庭 DNS 联调，macOS 系统 resolver 与 Windows Dnscache/NRPT
+实机验证、第三方 VPN 冲突、暂停/崩溃/升级/卸载清理，以及同 MAJOR 历史正式产物互通矩阵。
+当前测试中的历史格式样本和版本请求不能替代真实历史二进制验收。
+DNS 已统一为 NAS LAN IP 的 HTTP 54790，LOCAL 使用物理 LAN，DIRECT/RELAY 使用 WireGuard LAN 路由。
+DNS 已移除新增签名、时间窗口和防重放；回归覆盖无密钥查询、重复请求成功、不依赖设备注册状态、请求参数及路由冲突；不使用 HTTPS 网关回退。
+`/api/v1/probe` 与 `/probe` 共用证明逻辑；后者保留 v1.x.x 兼容，v2.x.x 将废弃。
+管理页已拆分网络连接、域名访问与解析诊断，增加字段说明及折叠高级配置；已用本地模拟 API 在浏览器检查布局。
+内建 `<NAS hostname>.<后缀>` 自动化覆盖 LAN 地址过滤、仅 IPv4 地址回答 和不调用上游；管理页只使用 server 本机读取的 FN ID 与管理端口，覆盖未知信息、强制 HTTPS、自定义后缀保留和忽略 URL 参数。
+server 本机信息读取已在 fnOS 1.2.0800 实机以 `fncpn` 用户运行 Go 读取器冒烟测试通过，直接读取 Unix Socket 与管理端口配置；未替换运行中的服务或修改 NAS 设置。
+Windows loopback 候选选择、候选耗尽、双传输部分绑定回滚和特权端参数校验已有自动化回归；
+Windows 检测到组策略接管 NRPT 时报告 DNS 受限，不修改组策略或谎报就绪。
+
+回滚恢复升级前程序与配套 `state.schema-1.backup.json`、`config.json.schema-2.backup`；
+server schema 2 / client schema 3 不由旧程序直接读取，本地 IPC 升为 5，本地组件成套更新。
+
 ## 1.0.0-rc.2 验证汇总（2026-10-09）
 
 `1.0.0-rc.2` 安装由用户确认通过。以下范围记录截至 2026-10-09 收到的验证证据。

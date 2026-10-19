@@ -1,8 +1,31 @@
 # fnOS / FN Connect 协议与验证
 
-本文记录 2026-09-27 至 2026-10-04 的协议研究与实测，不是 fnOS 官方稳定 API 承诺。
+本文记录 2026-09-27 至 2026-10-18 的协议研究与实测，不是 fnOS 官方稳定 API 承诺。
 上游变动需重新验证；适配实现见 `internal/client/discovery.go`、`native_session.go`、`cookies.go`、`adminproxy.go` 为准。
 FnCPN 自有接口见 [接口契约](interfaces.md)。
+
+## NAS 本机 FN Connect 信息读取（2026-10-18）
+
+在 fnOS 1.2.0800 实机经 SSH 做只读验证，以实际应用用户 `fncpn`（UID 978）执行，未修改系统配置。
+
+- Unix Socket：`/run/trim-connect.sock`（`/var/run` 指向 `/run`），模式 `0666`。
+- `GET http://localhost/trimfn` 经该 Socket 请求，返回 HTTP 200、`text/plain; charset=utf-8`，
+  正文为当前 FN Connect ID；本次与系统设置页一致，响应耗时约 0.5ms。
+- `/usr/trim/etc/network_gateway_setting.conf` 为 `0644` JSON，普通应用用户可读。
+  `schema.http.port` / `schema.https.port` 分别为 HTTP / HTTPS 管理端口，
+  `force_https` 表示是否强制 HTTPS，`redirect` 表示重定向设置。本机实测为 5666 / 5667、false / true。
+- 两项读取均无需用户登录 token、密码、前端宿主桥接或 root IPC。
+
+复核 FN ID 的只读命令：
+
+```sh
+curl --fail --max-time 5 --unix-socket /run/trim-connect.sock http://localhost/trimfn
+```
+
+推荐由 server daemon 用 Go HTTP Unix Socket transport 读取 FN ID，并只读解析端口 JSON，
+通过自有 bootstrap 下发默认后缀和 NAS 访问地址。读取应设超时及大小限制，明确区分未配置与暂时读取失败，
+不将失败解释为清空已有自定义后缀。这是当前实机验证的内部接口，不视为所有 fnOS 版本的稳定承诺。
+已通过 `internal/server/fnos_info.go` 接入 bootstrap；前端只使用服务端元数据，客户端不再向管理页 URL 传入 FN ID 和端口。
 
 ## 地址发现接口
 

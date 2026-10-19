@@ -260,10 +260,11 @@ func runCleanup(
 	case "client":
 		return runCleanupNetwork(ctx, *role, *stateDirectory, defaultPrivilegedLog(*role), func(ctx context.Context, stateDirectory string) error {
 			engine := platform.NewClientEngine(processLogger, stateDirectory)
+			dnsErr := privileged.NewDNSRules(stateDirectory).Recover(ctx)
 			if err := engine.Recover(ctx); err != nil {
-				return err
+				return errors.Join(dnsErr, err)
 			}
-			return engine.Remove(ctx)
+			return errors.Join(dnsErr, engine.Remove(ctx))
 		})
 	case "server":
 		return runCleanupNetwork(ctx, *role, *stateDirectory, defaultPrivilegedLog(*role), func(ctx context.Context, stateDirectory string) error {
@@ -710,7 +711,7 @@ func runPrivilegedDaemonWithReady(
 		service = privileged.NewClientService(
 			platform.NewClientEngine(processLogger, *stateDirectory),
 			secrets,
-		)
+		).WithDNSRules(privileged.NewDNSRules(*stateDirectory))
 	case "server":
 		service = privileged.NewServerService(
 			platform.NewServerEngine(processLogger, *stateDirectory),
@@ -867,18 +868,18 @@ func runServerDaemon(
 			processLogger.Error("reconcile server network", "error", err)
 		}
 	}
-	localProbe, err := server.OpenLocalProbeService(
-		*stateDirectory, store, server.DefaultLocalProbePort,
+	privateAPI, err := server.OpenPrivateAPIService(
+		*stateDirectory, store, server.DefaultPrivateAPIPort,
 	)
 	if err != nil {
-		return fmt.Errorf("initialize local probe: %w", err)
+		return fmt.Errorf("initialize private API: %w", err)
 	}
-	defer localProbe.Close()
+	defer privateAPI.Close()
 	probeEvents, monitorErr := platform.LANAddressEvents(ctx)
 	if monitorErr != nil {
-		processLogger.Error("monitor local probe addresses", "error", monitorErr)
+		processLogger.Error("monitor private API addresses", "error", monitorErr)
 	}
-	go localProbe.Run(ctx, platform.DetectLANAddresses, probeEvents, processLogger)
+	go privateAPI.Run(ctx, platform.DetectLANAddresses, probeEvents, processLogger)
 	listener, cleanup, err := openHTTPListener(*socketPath)
 	if err != nil {
 		return err
@@ -886,7 +887,7 @@ func runServerDaemon(
 	defer cleanup()
 	processLogger.Info("server HTTP listener ready", "socket", *socketPath)
 
-	handler := server.NewHTTPHandler(store, localProbe)
+	handler := server.NewHTTPHandler(store, privateAPI)
 	go handler.Run(ctx)
 	httpServer := &http.Server{
 		Handler:           handler,

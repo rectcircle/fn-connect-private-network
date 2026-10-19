@@ -29,7 +29,7 @@ private func L(_ key: String, _ arguments: String...) -> String {
     return result
 }
 
-private let ipcProtocolVersion = 4
+private let ipcProtocolVersion = 5
 private let maximumFrameSize = 256 * 1024
 
 private func failureSummary(_ failure: [String: Any]) -> String {
@@ -458,6 +458,9 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
     private let serverValue = NSTextField(labelWithString: "")
     private let pathValue = NSTextField(labelWithString: "-")
     private let addressValue = NSTextField(labelWithString: "-")
+    private let dnsValue = NSTextField(labelWithString: "-")
+    private var dnsSuffix = ""
+    private var copyDNSButton: NSButton!
     private let nasValue = NSTextField(labelWithString: "-")
     private let interfaceValue = NSTextField(labelWithString: "-")
     private let handshakeValue = NSTextField(labelWithString: "-")
@@ -679,10 +682,16 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
             browserButton.trailingAnchor.constraint(equalTo: nasContainer.trailingAnchor),
         ])
 
+        copyDNSButton = iconButton("doc.on.doc", action: #selector(copyDNSSuffix), help: L("复制 DNS 后缀"))
+        copyDNSButton.isEnabled = false
+        let dnsContainer = NSStackView(views: [dnsValue, copyDNSButton])
+        dnsContainer.orientation = .horizontal
+        dnsContainer.spacing = 8
+        dnsContainer.alignment = .centerY
         let grid = NSGridView(views: [
             row(L("连接路径"), pathValue), row(L("隧道地址"), addressValue),
             row(L("网络接口"), interfaceValue), row(L("最近握手"), handshakeValue),
-            row(L("特权服务"), rootValue), row(L("IPv6 检测"), directValue),
+            [nasLabel("DNS"), dnsContainer], row(L("特权服务"), rootValue), row(L("IPv6 检测"), directValue),
             [nasLabel("NAS IP"), nasContainer]
         ])
         grid.column(at: 0).width = 84
@@ -1361,6 +1370,13 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         rootValue.stringValue = !privilegedAvailable ? L("不可用") :
             diagnostics["privilegedDegraded"] as? Bool == true ? L("降级") :
             diagnostics["privilegedActive"] as? Bool == true ? L("活动") : L("就绪")
+        let dns = status["dns"] as? [String: Any] ?? [:]
+        let dnsState = dns["state"] as? String ?? "inactive"
+        dnsSuffix = dns["suffix"] as? String ?? ""
+        copyDNSButton.isEnabled = !dnsSuffix.isEmpty
+        let dnsLabel = ["ready": L("就绪"), "preparing": L("正在读取"), "degraded": L("降级"), "inactive": L("未连接")][dnsState] ?? L("未连接")
+        dnsValue.stringValue = "\(dnsLabel) · \(dnsSuffix)"
+        dnsValue.isSelectable = true
         let nasAddress = displayed["nasAddress"] as? String ?? ""
         nasValue.stringValue = nasAddress.isEmpty ? "-" : nasAddress
         nasValue.isHidden = setup || nasAddress.isEmpty
@@ -1377,7 +1393,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         let direct = displayed["direct"] as? [String: Any] ?? [:]
         directValue.stringValue = directSummary(direct)
-        var messages = [describeFailure(status["lastError"] as? [String: Any])]
+        var messages = [describeFailure(status["lastError"] as? [String: Any]), describeFailure(dns["lastError"] as? [String: Any])]
         let directError = describeFailure(direct["lastError"] as? [String: Any])
         if !directError.isEmpty { messages.append("IPv6: \(directError)") }
         if let endpoint = direct["endpoint"] as? String { messages.append("UDP \(endpoint)") }
@@ -1412,6 +1428,12 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         window.setContentSize(NSSize(width: window.contentLayoutRect.width, height: targetHeight))
         window.contentMinSize = NSSize(width: 680, height: targetHeight)
         window.contentMaxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: targetHeight)
+    }
+
+    @objc private func copyDNSSuffix() {
+        guard !dnsSuffix.isEmpty else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(dnsSuffix, forType: .string)
     }
 
     @objc private func copyDiagnostics() {

@@ -503,7 +503,7 @@ func TestBootstrapDoesNotWaitForDeviceRegistration(t *testing.T) {
 	}
 }
 
-func TestLocalProbeConfigurationRequiresAuthentication(t *testing.T) {
+func TestPrivateAPIConfigurationRequiresAuthentication(t *testing.T) {
 	store, err := OpenService(t.TempDir(), nil, nil)
 	if err != nil {
 		t.Fatalf("open store: %v", err)
@@ -512,7 +512,7 @@ func TestLocalProbeConfigurationRequiresAuthentication(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create device: %v", err)
 	}
-	probe := &LocalProbeService{
+	probe := &PrivateAPIService{
 		store:     store,
 		masterKey: bytes.Repeat([]byte{7}, probeKeySize),
 		endpoints: []string{"192.168.1.10:54790"},
@@ -542,7 +542,7 @@ func TestLocalProbeConfigurationRequiresAuthentication(t *testing.T) {
 			response.Body.String(),
 		)
 	}
-	var configuration model.LocalProbeConfiguration
+	var configuration model.PrivateAPIConfiguration
 	if err := json.NewDecoder(response.Body).Decode(&configuration); err != nil {
 		t.Fatalf("decode probe configuration: %v", err)
 	}
