@@ -6,6 +6,24 @@
 
 ## [Unreleased]
 
+### Added
+
+- 新增基于 NAS 局域网 DNS 与 mDNS 的 FnCPN 域名解析；默认使用 `<FN Connect ID>.fncpn`，可配置自定义后缀。连接后自动应用，断开时清理。
+
+### Changed
+
+- DNS 服务端要求通过产品 MINOR 版本表达，1.1.0 client 需要 1.1 或更高 MINOR 的同 MAJOR server；不关闭 DNS 功能绕过版本准入。
+- 客户端与服务端数据 schema 分别升级至 3 和 2，本地 IPC 升至 5；同 MAJOR 原子迁移保留身份、配置、密钥与连接意图，并保留配套回滚备份。
+
+### Fixed
+
+- 修复 Windows 虚拟机 NAT 网络中 LOCAL DNS 查询被错误限制为网卡直连网段的问题。
+- 修复 Windows 1.0.x 升级到 1.1.0 时安装器因业务 IPC 版本变化无法停止旧 daemon 的问题；新增独立维护协议并保留历史 IPC 退出适配。
+
+### 验证范围
+
+- Go 自动化、DNS 查询与清理、数据迁移、历史 IPC 维护退出、Windows 本地化和跨架构构建验证见 [验证记录](docs/validation.md)。Windows ARM64 候选已由用户确认；NAS mDNS / 家庭 DNS 联调、macOS 系统 resolver、Windows Dnscache / NRPT、第三方 VPN 冲突、升级卸载清理和历史正式产物互通仍待专项验收。
+
 ## [1.0.10] - 2026-10-15
 
 ### Added
