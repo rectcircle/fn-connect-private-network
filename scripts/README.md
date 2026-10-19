@@ -6,7 +6,7 @@ Windows 日常开发只需要三个入口：
 |---|---|
 | `setup-windows.ps1` | 准备工具和依赖；默认编译验收，`-SkipSmoke` 只跳过编译；Node/GitHub CLI 分别通过 `-IncludeServerTools` / `-IncludeReleaseTools` 选择 |
 | `build-windows.ps1` | 构建 ARM64/x64 原生 UI、Go 和 MSI；支持 `-Architecture`、`-OutputRoot` |
-| `check-windows.ps1` | Go test/vet、生成资源、setup 回归及已有候选检查；支持 `-SkipPackage`、`-Architecture`、`-PackageRoot` |
+| `check-windows.ps1` | Go test/vet、生成资源、setup 回归、安装维护历史/未来兼容及已有候选检查；支持 `-SkipPackage`、`-Architecture`、`-PackageRoot` |
 
 需要 PowerShell 7 的入口声明了 `#Requires`；setup 可从 Windows PowerShell 5.1 启动。
 详细依赖、产物目录和验证范围见 [Windows 开发](../docs/windows-development.md)。

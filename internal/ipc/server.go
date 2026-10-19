@@ -34,14 +34,16 @@ func (function HandlerFunc) Handle(ctx context.Context, request Request) Respons
 }
 
 type Server struct {
-	SocketPath             string
-	Mode                   os.FileMode
-	PipeSecurityDescriptor string
-	Authorize              Authorizer
-	Handler                Handler
-	Logger                 *slog.Logger
-	Timeout                time.Duration
-	OnReady                func()
+	// PrepareMaintenanceShutdown validates shutdown and returns a callback run after acknowledgment.
+	PrepareMaintenanceShutdown func() (func(), error)
+	SocketPath                 string
+	Mode                       os.FileMode
+	PipeSecurityDescriptor     string
+	Authorize                  Authorizer
+	Handler                    Handler
+	Logger                     *slog.Logger
+	Timeout                    time.Duration
+	OnReady                    func()
 }
 
 func (s Server) Serve(ctx context.Context) error {
@@ -121,7 +123,15 @@ func (s Server) handleConnection(
 		parent = WithPeerIdentity(parent, identity)
 	}
 
-	request, err := ReadRequest(connection)
+	payload, err := ReadFrame(connection)
+	if err != nil {
+		s.writeFailure(connection, "", normalizeRequestFailure(err), logger)
+		return
+	}
+	if s.handleMaintenance(connection, payload) {
+		return
+	}
+	request, err := decodeRequest(payload)
 	if err != nil {
 		s.writeFailure(connection, "", err, logger)
 		return

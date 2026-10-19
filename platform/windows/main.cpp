@@ -922,20 +922,25 @@ void Layout(HWND window) {
         Move(window, g_state, margin, 142, contentWidth, 36);
         const int valueX = margin + 126;
         for (int i = 0; i < 7; ++i) {
-            Move(window, g_fieldLabels[i], margin, 197 + i * 32, 118, 26);
-            Move(window, g_values[i], valueX, 197 + i * 32, contentWidth - 126, 26);
+            const int row = i < 4 ? i : i + 1; // DNS follows the handshake, matching macOS.
+            Move(window, g_fieldLabels[i], margin, 197 + row * 32, 118, 26);
+            Move(window, g_values[i], valueX, 197 + row * 32, contentWidth - 126, 26);
         }
-        Move(window, g_values[6], valueX, 197 + 6 * 32, 158, 26);
+        Move(window, g_values[6], valueX, 197 + 7 * 32, 158, 26);
         auto valueDc=GetDC(g_values[6]); auto previousValueFont=SelectObject(valueDc,g_font); SIZE ipSize{}; auto ip=GetText(g_values[6]);
         GetTextExtentPoint32W(valueDc,ip.c_str(),static_cast<int>(ip.size()),&ipSize); SelectObject(valueDc,previousValueFont); ReleaseDC(g_values[6],valueDc);
-        Move(window, g_openNas, valueX + MulDiv(ipSize.cx,96,GetDpiForWindow(window)) + 6, 197 + 6 * 32, 22, 26);
-        Move(window, g_dnsLabel, margin, 421, 126, 26);
-        Move(window, g_dnsValue, valueX, 421, contentWidth - 126 - 32, 26);
+        Move(window, g_openNas, valueX + MulDiv(ipSize.cx,96,GetDpiForWindow(window)) + 6, 197 + 7 * 32, 22, 26);
+        const int dnsY = 197 + 4 * 32;
+        Move(window, g_dnsLabel, margin, dnsY, 118, 26);
         auto dnsDc = GetDC(g_dnsValue); auto dnsFont = SelectObject(dnsDc, g_font); SIZE dnsSize{};
         auto dnsText = GetText(g_dnsValue);
         GetTextExtentPoint32W(dnsDc, dnsText.c_str(), static_cast<int>(dnsText.size()), &dnsSize);
         SelectObject(dnsDc, dnsFont); ReleaseDC(g_dnsValue, dnsDc);
-        Move(window, g_copyDNSSuffix, std::min(valueX + MulDiv(dnsSize.cx, 96, GetDpiForWindow(window)) + 6, width - margin - 26), 421, 26, 26);
+        // Static controls must not cover the icon's hit-test/paint area. Keep the
+        // copy action next to short text and reserve room when text is truncated.
+        const int dnsWidth = std::clamp(MulDiv(dnsSize.cx, 96, GetDpiForWindow(window)) + 2, 1, std::max(1, contentWidth - 126 - 32));
+        Move(window, g_dnsValue, valueX, dnsY, dnsWidth, 26);
+        Move(window, g_copyDNSSuffix, valueX + dnsWidth + 6, dnsY, 26, 26);
         EnableWindow(g_copyDNSSuffix, !g_dnsSuffix.empty());
         Move(window, g_connect, margin, 469, 150, 34);
         Move(window, g_relogin, margin + 160, 469, 130, 34);
@@ -1481,7 +1486,7 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
         g_changeServer = AddControl(L"BUTTON", L("更换 NAS"), BS_PUSHBUTTON, kChangeServer);
         g_admin = AddControl(L"BUTTON", L("管理后台"), BS_PUSHBUTTON, kAdmin);
         g_dnsLabel = AddControl(L"STATIC", L"DNS", SS_LEFT | SS_CENTERIMAGE, 0);
-        g_dnsValue = AddControl(L"STATIC", L"-", SS_LEFT | SS_CENTERIMAGE, 0);
+        g_dnsValue = AddControl(L"STATIC", L"-", SS_LEFT | SS_CENTERIMAGE | SS_ENDELLIPSIS, 0);
         g_copyDNSSuffix = AddControl(L"BUTTON", L("复制 DNS 后缀"), BS_PUSHBUTTON, kCopyDNSSuffix);
         g_copyDiagnostics = AddControl(L"BUTTON", L("复制"), BS_PUSHBUTTON, kCopyDiagnostics);
         g_openLog = AddControl(L"BUTTON", L("日志"), BS_PUSHBUTTON, kOpenLog);
@@ -1552,7 +1557,7 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
         COLORREF color = GetSysColor(COLOR_WINDOWTEXT);
         if (!g_highContrast) {
             color = RGB(35, 38, 43);
-            if (control == g_versionLabel || control == g_diagnosticsLabel || std::find(std::begin(g_fieldLabels), std::end(g_fieldLabels), control) != std::end(g_fieldLabels)) color = RGB(112, 117, 125);
+            if (control == g_versionLabel || control == g_diagnosticsLabel || control == g_dnsLabel || std::find(std::begin(g_fieldLabels), std::end(g_fieldLabels), control) != std::end(g_fieldLabels)) color = RGB(112, 117, 125);
             if (control == g_state) color = (g_remoteState == L"LOCAL" || g_remoteState == L"DIRECT" || g_remoteState == L"RELAY") ? RGB(35, 164, 82) : RGB(112, 117, 125);
             if (control == g_statusError || control == g_loginError) color = RGB(181, 49, 49);
         }

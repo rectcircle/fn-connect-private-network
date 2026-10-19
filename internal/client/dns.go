@@ -300,11 +300,11 @@ func (m *Manager) dnsAddressAllowed(config *LocalConfig, address string) bool {
 	}
 	prefixes := routedPrefixes(latest.Configuration, snapshot.Prefixes)
 	if current.State == model.ClientLocal {
-		prefixes = nil
-		for _, prefix := range snapshot.Prefixes {
-			prefixes = append(prefixes, prefix.String())
-		}
-		return dns.AllowedAddress(address, prefixes) && dns.AllowedAddress(address, latest.Configuration.AllowedIPs)
+		// LOCAL is established by an authenticated NAS probe, not by sharing
+		// an on-link prefix. A VM/NAT or routed LAN can reach the NAS through
+		// its default gateway. Keep the NAS-authorized address boundary, but
+		// do not incorrectly require the destination to be on-link.
+		return dns.AllowedAddress(address, latest.Configuration.AllowedIPs)
 	}
 	return dns.AllowedAddress(address, prefixes)
 }

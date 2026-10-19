@@ -4,6 +4,41 @@
 产品要求见 [产品需求](product.md)，升级保证见 [版本契约](versioning-and-compatibility.md)。
 自动化通过、用户确认和带日志的实测分别记录；旧版证据不代表新版的所有专项通过。
 
+## Windows 虚拟机 LOCAL DNS 修复（2026-10-19）
+
+本机处于虚拟机 NAT 网段，NAS 私网探测成功并进入 LOCAL，但 DNS 地址检查额外要求目的地址
+属于本机网卡直连前缀，导致可经网关访问的 NAS DNS API 被提前拒绝、查询返回 SERVFAIL。
+LOCAL 现使用 NAS 已授权的 `AllowedIPs` 限制查询目标和回答，不再要求同一直连子网；
+DIRECT/RELAY 的网段冲突过滤，以及暂停、切换 NAS、越界地址限制保留。
+
+- client/dns 包测试及 vet 通过；增加 LOCAL 同网段 / 虚拟机 NAT 的完整查询与清理回归，
+  并覆盖越界、公网、loopback、暂停以及 DIRECT/RELAY 网段冲突。
+- 在隔离配置和隔离本机 DNS listener 中使用真实 NAS HTTP DNS API 验证，用户指定的
+  NAS 域名经 UDP / TCP 均返回正确 LAN IPv4；未修改用户 NRPT、配置或运行中的 daemon。
+- 修复前旧安装版本的系统解析为 SERVFAIL；修复后的当前 Windows ARM64 候选由用户确认“无问题”。
+  此确认与上述隔离 UDP/TCP 自动化证据分别记录，不扩展为历史版本完整安装矩阵验收。
+
+## Windows 安装维护协议修复（2026-10-19）
+
+`codex/feature-lan-dns` 的本地 1.1.0 候选，未发布。修复 1.0.9 → 1.1.0 安装时
+`StopCurrentUserDaemon` 因产品版本 / IPC 4→5 检查失败而返回 MSI 1722 的问题。
+安装维护 v1 独立于业务 IPC；旧 IPC 4/5 的退出适配保留，不读取业务状态，不放宽正常业务版本检查。
+
+- `scripts/check-windows.ps1 -SkipPackage`、全量 `go test ./...` 与 `go vet ./...` 通过。
+- `scripts/windows/test-maintenance-compatibility.ps1` 使用 v1.0.7、v1.0.8、v1.0.9、v1.0.10
+  原始 IPC 源码构建隔离进程；另构建等价旧 IPC 5 样本、当前维护 v1、业务 IPC 99 / 产品 9.0.0 样本。
+  当前和模拟未来的维护客户端分别测试这 7 种进程的正常退出、拒绝退出、身份拒绝，共 42 项通过。
+  IPC 5 样本基于 v1.0.10，只将 IPC 改为 5、产品改为 1.1.0；已核对其 IPC 源码与 `10f5512` 等价，
+  不要求未发布分支提交长期可达。每次运行在 `.dev/maintenance-compatibility/` 保存源码 commit 和二进制哈希清单。
+- 单元回归覆盖普通业务版本检查、非法维护方法、未知维护版本、缺失/错误响应、请求 ID 不匹配、
+  拒绝关闭、身份校验、未收到确认不执行关闭，以及存活进程超时不能视为退出。
+- 修复 Windows schema 2→3 配置迁移前未关闭读取句柄、导致原子替换失败的问题；
+  原有身份、私钥、连接意图和精确回滚备份保留测试已通过。
+
+这些是安装维护和迁移的自动化证据。历史测试使用原始 IPC 实现及隔离测试 handler，
+不等同于每个历史 MSI 的完整实机升级；用户已确认当前 Windows ARM64 候选“无问题”，
+历史完整安装矩阵及其他网络环境仍不属于此次验证范围。
+
 ## 1.1.0 DNS 工作区候选（2026-10-18）
 
 基于 `0e07a4a` 的未提交实现，未创建 tag、未发布或替换产物。新增 mDNS / LAN DNS 地址解析，

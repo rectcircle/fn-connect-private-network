@@ -45,7 +45,7 @@ pwsh -NoProfile -File scripts/check-windows.ps1
 build 默认按 ARM64、x64 构建，可指定 `-Architecture arm64` 或 `x64`，并通过 `-OutputRoot dist/<目录>` 选择输出位置。
 默认产物位于 `dist/windows-native/<架构>/`，包含未签名 MSI、解包 payload 和 `build-manifest.json`。清单记录产品版本、commit、dirty 状态、源码指纹、架构、构建时间及 MSI SHA256；构建拒绝覆盖输出目录中的未登记文件。
 
-check 验证版本/本地化生成资源、setup 回归、Go test/vet、原生 UI 与 MSI。它使用已有候选，不自动重建或安装；只检查源码用 `-SkipPackage`，单架构用 `-Architecture`，自定义产物目录用 `-PackageRoot`。
+check 验证版本/本地化生成资源、setup 回归、Go test/vet、安装维护协议历史/未来版本互通、原生 UI 与 MSI。它使用已有候选，不自动重建或安装；只检查源码用 `-SkipPackage`，单架构用 `-Architecture`，自定义产物目录用 `-PackageRoot`。
 
 原生 UI 源码位于 `platform/windows/`，独立编译示例：
 
@@ -56,6 +56,10 @@ ctest --test-dir .dev/windows-ui-arm64 -C Release --output-on-failure
 ```
 
 首次执行先运行 setup。构建 x64 时替换构建目录并使用 `-A x64`。UI 的中英文资源位于 `platform/windows/messages.json`，执行 `python scripts/sync-native-localizations.py` 更新 `Localization.h`。
+维护协议测试需要完整 Git 历史（含 v1.0.7–v1.0.10 tag），
+在 `.dev/maintenance-compatibility/` 构建隔离进程并保存 commit/哈希清单；不会安装软件或操作用户 daemon。
+测试还把业务 IPC 改为 99、产品版本改为 9.0.0，验证新旧维护客户端双向退出和拒绝行为。
+
 自动测试使用隔离窗口和管道，不操作已安装 daemon 或用户连接，覆盖 IPC 分片、字段校验、导航边界、授权取消、过期结果、退出资源回收、DPI/布局和 MSI 元数据。
 
 ## 安装与运行

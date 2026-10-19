@@ -150,6 +150,31 @@ int main(int argc, char** argv) {
         Check(SendMessageW(g_retry, WM_SETCURSOR, reinterpret_cast<WPARAM>(g_retry), MAKELPARAM(HTCLIENT, WM_MOUSEMOVE)) == TRUE &&
             GetCursor() == LoadCursorW(nullptr, IDC_HAND), "enabled button uses hand cursor");
         g_viewLogin = false; Layout(window);
+        // DNS follows handshake, and the copy icon owns a separate clickable
+        // rectangle even when a long suffix must be ellipsized.
+        auto controlRect = [window](HWND control) {
+            RECT rect{}; GetWindowRect(control, &rect);
+            MapWindowPoints(nullptr, window, reinterpret_cast<POINT*>(&rect), 2);
+            return rect;
+        };
+        for (const auto& suffix : {std::wstring(L"home.fncpn"), std::wstring(180, L'w') + L".fncpn"}) {
+            g_dnsSuffix = suffix;
+            SetWindowTextW(g_dnsValue, (L"Ready · " + suffix).c_str());
+            Layout(window);
+            const auto dns = controlRect(g_dnsValue), copy = controlRect(g_copyDNSSuffix);
+            const auto handshake = controlRect(g_values[3]), privileged = controlRect(g_values[4]);
+            Check(handshake.bottom <= dns.top && dns.bottom <= privileged.top, "DNS row matches macOS order");
+            Check(dns.right < copy.left && dns.top == copy.top, "DNS text does not cover copy icon");
+            RECT client{}; GetClientRect(window, &client);
+            Check(copy.right <= client.right, "long DNS suffix keeps copy icon in bounds");
+            POINT center{(copy.left + copy.right) / 2, (copy.top + copy.bottom) / 2};
+            Check(ChildWindowFromPointEx(window, center, CWP_SKIPINVISIBLE | CWP_SKIPDISABLED) == g_copyDNSSuffix,
+                "DNS copy icon receives pointer hit testing");
+            Check((GetWindowLongW(g_copyDNSSuffix, GWL_STYLE) & WS_VISIBLE) && IsWindowEnabled(g_copyDNSSuffix) && g_dnsButtonIcon,
+                "DNS copy button is visible, enabled and has an icon");
+        }
+        g_dnsSuffix.clear(); Layout(window);
+        Check(!IsWindowEnabled(g_copyDNSSuffix), "empty DNS suffix disables copy");
         SetWindowTextW(g_diagnosticValue, L"Short diagnostic"); UpdateDiagnosticScrollBar();
         Check(!(GetWindowLongW(g_diagnosticValue, GWL_STYLE) & WS_VSCROLL), "short diagnostic hides scrollbar");
         std::wstring longDiagnostic;

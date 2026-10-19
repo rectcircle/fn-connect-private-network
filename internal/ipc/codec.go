@@ -10,16 +10,25 @@ import (
 	"github.com/rectcircle/fn-connect-private-network/internal/version"
 )
 
-func ReadRequest(reader io.Reader) (_ Request, failure error) {
-	defer func() {
-		if failure != nil {
-			failure = model.WithOperation(model.NormalizeError(failure, model.ErrorProtocol, "invalid IPC request", false), "ipc.read_request")
-		}
-	}()
+func ReadRequest(reader io.Reader) (Request, error) {
 	payload, err := ReadFrame(reader)
 	if err != nil {
-		return Request{}, err
+		return Request{}, normalizeRequestFailure(err)
 	}
+	return decodeRequest(payload)
+}
+
+func normalizeRequestFailure(err error) error {
+	return model.WithOperation(model.NormalizeError(err, model.ErrorProtocol, "invalid IPC request", false), "ipc.read_request")
+}
+
+func decodeRequest(payload []byte) (_ Request, failure error) {
+	defer func() {
+		if failure != nil {
+			failure = normalizeRequestFailure(failure)
+		}
+	}()
+
 	var request Request
 	if err := model.DecodeStrict(payload, &request); err != nil {
 		return Request{}, fmt.Errorf("decode IPC request: %w", err)

@@ -229,11 +229,9 @@ func (s *Service) Handle(
 	case MethodForget:
 		err = s.runtime.Forget(ctx)
 	case MethodShutdown:
-		s.mu.RLock()
-		shutdown := s.shutdown
-		s.mu.RUnlock()
-		if shutdown == nil {
-			return ipc.Failure(request.ID, model.NewError(model.ErrorFailedPrecondition, "client daemon cannot be stopped", false))
+		shutdown, shutdownErr := s.PrepareMaintenanceShutdown()
+		if shutdownErr != nil {
+			return ipc.Failure(request.ID, shutdownErr)
 		}
 		go shutdown()
 	default:
@@ -625,4 +623,16 @@ func cloneStatus(status model.ClientStatus) model.ClientStatus {
 		cloned.LastError = &copied
 	}
 	return cloned
+}
+
+// PrepareMaintenanceShutdown shares the normal shutdown lifecycle without reading
+// user status or depending on the business IPC request/response schema.
+func (s *Service) PrepareMaintenanceShutdown() (func(), error) {
+	s.mu.RLock()
+	shutdown := s.shutdown
+	s.mu.RUnlock()
+	if shutdown == nil {
+		return nil, model.NewError(model.ErrorFailedPrecondition, "client daemon cannot be stopped", false)
+	}
+	return shutdown, nil
 }

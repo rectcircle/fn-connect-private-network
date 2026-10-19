@@ -46,8 +46,18 @@ func (n *dnsTestNetwork) RemoveDNS(context.Context, model.DNSPlan) error {
 }
 
 func TestDNSAutomaticallyAppliesOnAllPathsAndCleansOnDisconnect(t *testing.T) {
-	for _, state := range []model.ClientState{model.ClientLocal, model.ClientDirect, model.ClientRelay} {
-		t.Run(string(state), func(t *testing.T) {
+	for _, scenario := range []struct {
+		name        string
+		state       model.ClientState
+		localPrefix string
+	}{
+		{"local-on-link", model.ClientLocal, "192.168.71.0/24"},
+		{"local-vm-nat", model.ClientLocal, "10.211.55.0/24"},
+		{"direct", model.ClientDirect, "10.77.0.0/24"},
+		{"relay", model.ClientRelay, "10.77.0.0/24"},
+	} {
+		state := scenario.state
+		t.Run(scenario.name, func(t *testing.T) {
 			store := configuredManagerStore(t)
 			network := &dnsTestNetwork{}
 			key := bytes.Repeat([]byte{4}, 32)
@@ -55,10 +65,7 @@ func TestDNSAutomaticallyAppliesOnAllPathsAndCleansOnDisconnect(t *testing.T) {
 				t.Fatal(e)
 			}
 			client := privateDNSHTTPClient(t)
-			prefixes := []netip.Prefix{netip.MustParsePrefix("10.77.0.0/24")}
-			if state == model.ClientLocal {
-				prefixes = []netip.Prefix{netip.MustParsePrefix("192.168.71.0/24")}
-			}
+			prefixes := []netip.Prefix{netip.MustParsePrefix(scenario.localPrefix)}
 			m, e := NewManager(ManagerOptions{DNSHTTPClient: client, Store: store, Discoverer: fakeDiscoverer{}, Remote: func(string, []Cookie, func([]Cookie) error) (RemoteService, error) {
 				t.Fatal("DNS must not use the FN Connect gateway")
 				return nil, nil
@@ -174,5 +181,40 @@ func TestPrivateDNSRejectsRouteConflictWithoutSendingRequest(t *testing.T) {
 	}
 	if _, e = c.QueryDNS(t.Context(), model.DNSQuery{Name: "abc", Type: "A"}); e == nil || model.AsError(e).Code != model.ErrorUnavailable {
 		t.Fatal(e)
+	}
+}
+
+func TestDNSAddressBoundariesAcrossPaths(t *testing.T) {
+	for _, state := range []model.ClientState{model.ClientLocal, model.ClientDirect, model.ClientRelay, model.ClientPaused} {
+		for _, prefix := range []string{"192.168.71.0/24", "10.211.55.0/24"} {
+			t.Run(string(state)+"/"+prefix, func(t *testing.T) {
+				store := configuredManagerStore(t)
+				m, err := NewManager(ManagerOptions{Store: store, Discoverer: fakeDiscoverer{}, Remote: func(string, []Cookie, func([]Cookie) error) (RemoteService, error) { return &fakeRemoteService{}, nil }, Privileged: &dnsTestNetwork{}, Bridge: &fakeBridge{}, Probe: fakeLocalProbe{prefixes: []netip.Prefix{netip.MustParsePrefix(prefix)}}})
+				if err != nil {
+					t.Fatal(err)
+				}
+				m.setStatus(state, string(state), "", nil)
+				config, err := store.Load()
+				if err != nil {
+					t.Fatal(err)
+				}
+				wantAllowed := state == model.ClientLocal || ((state == model.ClientDirect || state == model.ClientRelay) && prefix != "192.168.71.0/24")
+				if got := m.dnsAddressAllowed(config, "192.168.71.2"); got != wantAllowed {
+					t.Fatalf("NAS permission = %v, want %v", got, wantAllowed)
+				}
+				for _, address := range []string{"192.168.72.2", "10.211.55.3", "8.8.8.8", "127.0.0.1", "169.254.1.1", "::1"} {
+					if m.dnsAddressAllowed(config, address) {
+						t.Fatalf("accepted out-of-scope %s", address)
+					}
+				}
+				config.AutoConnect = false
+				if err := store.Save(*config); err != nil {
+					t.Fatal(err)
+				}
+				if m.dnsAddressAllowed(config, "192.168.71.2") {
+					t.Fatal("paused connection still permits DNS")
+				}
+			})
+		}
 	}
 }

@@ -1,0 +1,39 @@
+package main
+
+import (
+ "context"
+ "fmt"
+ "os"
+ "time"
+
+ "github.com/rectcircle/fn-connect-private-network/internal/ipc"
+ "github.com/rectcircle/fn-connect-private-network/internal/model"
+)
+
+func main() {
+ ctx,cancel:=context.WithTimeout(context.Background(),20*time.Second)
+ defer cancel()
+ socket, mode:=os.Args[1],os.Args[2]
+ prepare:=func()(func(),error){
+  if mode=="refuse" {return nil,model.NewError(model.ErrorPermissionDenied,"fixture refusal",false)}
+  return cancel,nil
+ }
+ server:=ipc.Server{SocketPath:socket,OnReady:func(){fmt.Println("ready")},
+  Authorize:func(context.Context,ipc.PeerIdentity)error{
+   if mode=="deny" {return model.NewError(model.ErrorPermissionDenied,"fixture peer denied",false)}
+   return nil
+  },
+  Handler:ipc.HandlerFunc(func(_ context.Context,request ipc.Request)ipc.Response{
+   // Model the released LocalSystem policy: no status access. The decoder,
+   // framing, authorization dispatch and response generation are original code.
+   if request.Method!="shutdown-client-daemon" {return ipc.Failure(request.ID,model.NewError(model.ErrorPermissionDenied,"only shutdown allowed",false))}
+   shutdown,err:=prepare()
+   if err!=nil{return ipc.Failure(request.ID,err)}
+   // Released shutdown cancels asynchronously; give its response time to flush.
+   go func(){time.Sleep(20*time.Millisecond);shutdown()}()
+   return ipc.Success(request.ID,nil)
+  }),
+ }
+ // MAINTENANCE_HOOK
+ if err:=server.Serve(ctx);err!=nil{fmt.Fprintln(os.Stderr,err);os.Exit(1)}
+}

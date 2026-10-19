@@ -95,6 +95,11 @@ func (s *ConfigStore) Load() (_ *LocalConfig, failure error) {
 	if err != nil {
 		return nil, fmt.Errorf("read client config: %w", err)
 	}
+	// Migration replaces this path atomically. Windows cannot replace a file
+	// while this read handle is open (it does not share delete access).
+	if err := file.Close(); err != nil {
+		return nil, fmt.Errorf("close client config before migration: %w", err)
+	}
 	if len(data) > maxLocalConfigSize {
 		return nil, errors.New("client config exceeds size limit")
 	}

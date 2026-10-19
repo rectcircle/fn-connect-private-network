@@ -556,11 +556,12 @@ func runClientProcess(
 		clientService.Logger = processLogger
 		clientService.SetShutdownHandler(stop)
 		serveErr := ipc.Server{
-			SocketPath: *socket,
-			Mode:       0o600,
-			Authorize:  defaultClientPipeAuthorizer(),
-			Handler:    clientService,
-			Logger:     processLogger,
+			SocketPath:                 *socket,
+			Mode:                       0o600,
+			Authorize:                  defaultClientPipeAuthorizer(),
+			Handler:                    clientService,
+			PrepareMaintenanceShutdown: clientService.PrepareMaintenanceShutdown,
+			Logger:                     processLogger,
 		}.Serve(runContext)
 		stop()
 		<-runDone

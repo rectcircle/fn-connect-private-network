@@ -8,6 +8,7 @@ inline std::wstring L(std::wstring_view source) {
     static const bool english = PRIMARYLANGID(GetUserDefaultUILanguage()) == LANG_ENGLISH;
     if (!english) return std::wstring(source);
     static const std::unordered_map<std::wstring_view, std::wstring_view> catalog = {
+        {L"复制 DNS 后缀", L"Copy DNS suffix"},
         {L"需要重新登录", L"Sign in required"},
         {L"尚未连接", L"Not connected"},
         {L"正在登录", L"Signing in"},
@@ -279,6 +280,7 @@ inline std::wstring L(std::wstring_view source) {
 struct NativeTranslation { std::wstring_view english; std::wstring_view chinese; };
 inline const wchar_t* L(const char* source) {
     static const std::unordered_map<std::string_view, NativeTranslation> catalog = {
+        {"复制 DNS 后缀", {L"Copy DNS suffix", L"复制 DNS 后缀"}},
         {"需要重新登录", {L"Sign in required", L"需要重新登录"}},
         {"尚未连接", {L"Not connected", L"尚未连接"}},
         {"正在登录", {L"Signing in", L"正在登录"}},
