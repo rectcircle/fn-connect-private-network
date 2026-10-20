@@ -25,7 +25,7 @@
 
 - 本次为适配 fnOS 访问码与两步验证的客户端认证兼容修复，版本为 1.1.1；不新增 FnCPN server 接口、字段或行为要求，不改变既有远程协议。client 1.1.1 可连接现有 server 1.1.x，无需升级 server；仍按相同 MAJOR 且 client MINOR 不高于 server MINOR 的统一规则准入，PATCH 不参与判定。
 - 本地 IPC 新增 `detect-access-code` 方法与登录参数扩展，IPC 版本保持 5，客户端与服务端数据 schema 不变；本地组件成套升级，不保证 App 与历史 daemon 任意混用。
-- Windows 原生界面已接入访问码、OTP 与“信任此设备”，支持探测、分阶段重试和取消授权；Windows 实机验证待草稿构建后完成。macOS 已由用户确认验证通过。
+- Windows 原生界面已接入访问码、OTP 与“信任此设备”，支持探测、分阶段重试和取消授权；用户已确认本轮 macOS、Windows 图形客户端及 Go CLI 登录流程验证通过；具体证据与范围见 [验证记录](docs/validation.md)。
 
 ## [1.1.0]
 

@@ -13,19 +13,23 @@
 
 ## 登录失败：两步验证、访问码与会话
 
-macOS 客户端和 Go CLI 的原生登录支持 FN Connect ID、fnOS 用户名和密码，并在此基础上处理 **FN Connect 访问码**与 **fnOS 两步验证（2FA）**：输入 FN ID 后会以一次无凭证请求探测该 NAS 是否开启访问码，开启时登录表单显示访问码字段；账号要求两步验证时，客户端在同一登录流程中请求六位 OTP，并可勾选"信任此设备"。Windows 客户端界面尚未提供这两个输入项，遇到相应要求时会直接报错。
+从 1.1.1 起，macOS、Windows 客户端和 Go CLI 的原生登录支持 **FN Connect 访问码**与 **fnOS 两步验证（OTP）**。输入 FN Connect ID 后会探测访问码要求；图形客户端在有需要时显示访问码字段。提交账号密码后，若需要两步验证，进入独立 OTP 步骤，只显示 OTP 和“信任此设备”，可用“上一步”返回修改账号密码。管理后台使用独立 Web 登录会话，并复用访问码网关会话。
 
 - 提示 `ACCESS_CODE_REQUIRED` / "该 NAS 开启了访问码"：FN Connect 网关拦截了未验证的请求，输入访问码后重试。忘记访问码时，管理员可在 NAS SSH 中执行 `/usr/trim/bin/security_service --access-code` 查看。
-- 提示 `ACCESS_CODE_INVALID`：访问码字段保留内容以便重填，用户名和密码不会被清空。
+- 提示 `ACCESS_CODE_INVALID`：重新填写访问码后重试，已填写的用户名和密码会保留。
 - 提示 `ACCESS_CODE_RATE_LIMITED`（HTTP 429）：网关已临时封禁尝试，等待后重试，不要连续提交。
-- 提示 `TWO_FACTOR_REQUIRED` / `TWO_FACTOR_CODE_INVALID`：输入当前有效的六位 TOTP 码；勾选"信任此设备"后，同一设备的后续登录不再要求 OTP。
+- 提示 `TWO_FACTOR_REQUIRED` / `TWO_FACTOR_CODE_INVALID`：输入当前有效的六位 TOTP 码；勾选“信任此设备”后，fnOS 可能在后续登录中跳过该设备的 OTP，具体由 NAS 的信任策略决定。
 - 提示 `TWO_FACTOR_SETUP_REQUIRED`：该账号强制两步验证但尚未绑定密钥，需先在 fnOS 网页端完成绑定，客户端不会代为绑定。
 - 提示密码错误：核对 FN ID、用户名和密码，确认使用的是目标 NAS 的 fnOS 账号。
 - 提示登录过期、`AUTH_REQUIRED`、401 或 `invalid token`：在客户端重新登录。密码不会持久化保存；长期会话失效后需要再次输入。访问码验证结果以 `os-access-code` 会话 cookie 保存，重连时自动重放，无需重复输入。
 - 提示 403 / `PERMISSION_DENIED`：检查当前操作是否需要管理员，以及网关或访问策略是否拒绝请求；403 不一定表示密码错误。
 - 提示发现失败、429 或超时：检查 FN Connect、DNS 和网络出口，避免连续点击重试触发上游限流。
 
-浏览器中能登录，不代表 Windows 客户端已支持同一验证流程。支持范围及后续能力见 [产品需求](product.md)。
+如果在 fnOS 关闭 OTP 后仍停留在原 OTP 页面，点击“上一步”重新提交账号密码，让客户端获取新的认证结果。关闭或取消勾选“信任此设备”不会撤销 fnOS 已保存的设备信任。
+
+需要重新触发 OTP 验证时，可执行 `fncpn logout` 后重新登录：这会清除原生登录、访问码及管理后台会话，保留 NAS 配置与隧道设备身份，并在下次登录生成新的 fnOS 登录设备标识。
+
+支持范围及后续能力见 [产品需求](product.md)。
 
 ## 服务端端口与防火墙
 

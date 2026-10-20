@@ -4,27 +4,28 @@
 产品要求见 [产品需求](product.md)，升级保证见 [版本契约](versioning-and-compatibility.md)。
 自动化通过、用户确认和带日志的实测分别记录；旧版证据不代表新版的所有专项通过。
 
-## 1.1.1 认证兼容修复与草稿准备（2026-10-20）
+## 1.1.1 认证兼容修复与候选验收（2026-10-20）
 
-用户确认本轮 macOS 实机验证已完成。按用户整体确认记录，不补写未提供的系统版本、
-设备型号、逐项日志或其他架构实测结论；随后“验证码”统一改称 OTP 的文案调整已通过
-中英文 AppKit 布局及本地化验证。
+用户于 2026-10-20 确认“macos 和 windows 都测好了”，随后确认“cli 也测试了，没问题”。
+本轮用户确认覆盖 macOS、Windows 图形客户端与 Go CLI 登录流程。按用户对本轮候选的整体确认记录，
+不补写未提供的系统版本、设备型号、逐项日志或架构组合，不将该结论扩展为所有平台与历史版本互通验收。
 
-- 修复访问码探测与验证的 `mode=relay` 路由、访问码挑战到重新登录状态及表单字段的传递，
-  登录 WSS、远程 API 和管理后台代理复用已保存的 `os-access-code` 会话。
-- OTP 使用 `user.2fa.loginVerify`、`isTrustedDevice`、当前连接的 `si` 和本次登录设备信息；
-  回归覆盖正确请求、成功会话、错误 OTP 与其他服务端拒绝的区分，以及访问码与 OTP 分阶段重试。
-- 当前工作区完整执行 `scripts/check-release.sh` 通过：发布辅助脚本测试、全量 Go 测试及
-  race、vet、32 项 Web 测试、Linux amd64/arm64 构建和 Swift 类型检查通过。
-  `FNCPN_LAYOUT_CHECK=1` 的中英文实际 AppKit 布局验证、Windows amd64/arm64 Go 构建，
-  原生本地化资源同步检查另行通过。
-- 产品版本为 1.1.1，模板与发布说明已同步。此修复不新增 FnCPN server 要求，不改变远程
-  版本准入规则、本地 IPC 5 或持久化 schema；现有 1.1.x server 无需配套升级。
-- Windows 原生界面尚未提供访问码和 OTP 输入，CLI 交互及共享认证逻辑有自动化覆盖；
-  不将 macOS 用户确认扩展为 Windows 原生界面、新版安装包或 Intel Mac 的实机验证。
-- 本记录为提交与构建草稿的准备证据。尚未创建本版提交、tag 或发布草稿；最终草稿需由
-  对应干净 tag 在 CI 构建，核对产物版本、commit、SHA256，并完成候选验收后再公开。
-  未据此宣称完成历史正式 client/server 二进制互通矩阵或本版全平台实机升级验收。
+- macOS、Windows 原生界面及 Go CLI 支持访问码、OTP 和设备信任；图形界面 OTP 为独立步骤，
+  支持返回账号密码表单，并处理访问码异步探测后的焦点与 Tab 顺序。
+- 访问码探测和验证携带 `mode=relay`；登录 WSS、远程 API、管理后台代理复用
+  `os-access-code`。管理后台保留独立 Browser 设备身份和 Web token，并完成其 OTP 验证。
+- macOS 安装包加入当前用户会话中的“稍后 / 启动 FnCPN”提示；不阻塞安装器，
+  命令行或无人值守安装不弹窗。
+- 候选源码提交为 `1fb9f90626d298f55c0fae90697bdf41b9e71561`，tag 为 `v1.1.1`。
+  [常规 CI](https://github.com/rectcircle/fn-connect-private-network/actions/runs/39397395883)
+  与[草稿构建](https://github.com/rectcircle/fn-connect-private-network/actions/runs/39397395527)
+  均通过：Go 测试、race、vet、发布辅助脚本、Web 测试、Swift 类型检查、Windows 原生 UI
+  回归及 ARM64/x64 安装包构建通过。本轮开发阶段另有中英文 AppKit 实际布局检查通过。
+- 草稿包含 macOS、Windows、fnOS 的 ARM64/x64 六个安装包及清单、SHA256 文件；
+  上传后回读验证通过，下载清单的 commit 与候选一致。草稿尚未公开；本次文档更新不等于正式发布。
+- 产品版本为 1.1.1，不新增 FnCPN server 要求，不改变远程版本准入规则、本地 IPC 5 或
+  持久化 schema；现有 1.1.x server 无需配套升级。仍不据此宣称已完成历史正式 client/server
+  二进制互通矩阵或所有平台的实机升级验收。
 
 ## Windows 虚拟机 LOCAL DNS 修复（2026-10-19）
 
