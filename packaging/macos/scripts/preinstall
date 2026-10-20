@@ -6,13 +6,6 @@ HELPER_ROOT="/Library/PrivilegedHelperTools"
 TOOL="${HELPER_ROOT}/cn.rectcircle.fncpn/fncpn"
 AGENT_LABEL="cn.rectcircle.fncpn.client"
 
-# Dismiss a previous installation's prompt before replacing its app bundle.
-console_uid="$(/usr/bin/stat -f %u /dev/console 2>/dev/null || true)"
-case "$console_uid" in
-  ''|*[!0-9]*|0) ;;
-  *) /bin/launchctl bootout "gui/${console_uid}/cn.rectcircle.fncpn.install-prompt" 2>/dev/null || true ;;
-esac
-
 # Protect the shared parent before the package writes any privileged executable.
 if [ -L "$HELPER_ROOT" ]; then
   echo "FnCPN helper parent must not be a symbolic link: $HELPER_ROOT" >&2
@@ -22,6 +15,13 @@ fi
 /usr/sbin/chown root:wheel "$HELPER_ROOT"
 /bin/chmod -N "$HELPER_ROOT"
 /bin/chmod 0755 "$HELPER_ROOT"
+
+# Dismiss a previous installation's prompt before replacing its app bundle.
+console_uid="$(/usr/bin/stat -f %u /dev/console 2>/dev/null || true)"
+case "$console_uid" in
+  ''|*[!0-9]*|0) ;;
+  *) /bin/launchctl bootout "gui/${console_uid}/cn.rectcircle.fncpn.install-prompt" 2>/dev/null || true ;;
+esac
 
 # Stop the running UI before replacing its daemon and app bundle.
 /bin/ps -axo uid=,pid=,command= | while read -r uid pid command; do
