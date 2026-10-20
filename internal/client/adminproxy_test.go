@@ -113,11 +113,13 @@ func TestAdminWebSessionProbeClassifiesOnlyAuthenticationFailure(t *testing.T) {
 	}{
 		{name: "valid", code: http.StatusOK, body: `{"devices":[]}`},
 		{name: "expired", code: http.StatusOK, body: "invalid token", want: model.ErrorAuthRequired},
+		{name: "access-code challenge", code: http.StatusOK, body: "<html>fetch('/access_code_verify')</html>", want: model.ErrorFailedPrecondition},
 		{name: "unavailable", code: http.StatusServiceUnavailable, body: "offline", want: model.ErrorUnavailable},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if !strings.Contains(r.Header.Get("Cookie"), "fnos-token=web-token") {
+				if !strings.Contains(r.Header.Get("Cookie"), "fnos-token=web-token") ||
+					!strings.Contains(r.Header.Get("Cookie"), "os-access-code=access-session") {
 					t.Errorf("probe cookie = %q", r.Header.Get("Cookie"))
 				}
 				w.WriteHeader(test.code)
@@ -126,13 +128,18 @@ func TestAdminWebSessionProbeClassifiesOnlyAuthenticationFailure(t *testing.T) {
 			defer server.Close()
 			err := probeAdminWebSessionWithClient(
 				context.Background(), server.Client(), server.URL,
-				"web-token",
+				[]Cookie{{Name: "mode", Value: "relay", Domain: "127.0.0.1", Path: "/"},
+					{Name: "fnos-token", Value: "web-token", Domain: "127.0.0.1", Path: "/"},
+					{Name: accessCodeCookieName, Value: "access-session", Domain: "127.0.0.1", Path: "/"}},
 			)
 			if test.want == "" {
 				if err != nil {
 					t.Fatalf("probe error = %v", err)
 				}
 				return
+			}
+			if test.want == model.ErrorFailedPrecondition && !RequiresAdditionalCredential(err) {
+				t.Fatalf("access-code challenge was accepted or lost: %v", err)
 			}
 			if err == nil || model.AsError(err).Code != test.want {
 				t.Fatalf("probe error = %#v, want %s", err, test.want)

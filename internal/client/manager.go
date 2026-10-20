@@ -159,7 +159,10 @@ type ManagerOptions struct {
 	Monitor          NetworkMonitor
 	Authenticator    NativeAuthenticator
 	WebAuthenticator AdminWebAuthenticator
-	AdminWebProbe    func(context.Context, string, string) error
+	AdminWebProbe    func(context.Context, string, []Cookie) error
+	// AccessCodeVerify exchanges a user-supplied gateway access code for its
+	// session cookie. When nil, the FN Connect gateway endpoint is used.
+	AccessCodeVerify func(context.Context, string, string) (Cookie, error)
 	DeviceName       string
 	Logger           *slog.Logger
 	HandshakeTimeout time.Duration
@@ -182,7 +185,8 @@ type Manager struct {
 	monitor          NetworkMonitor
 	authenticator    NativeAuthenticator
 	webAuthenticator AdminWebAuthenticator
-	adminWebProbe    func(context.Context, string, string) error
+	adminWebProbe    func(context.Context, string, []Cookie) error
+	accessCodeVerify func(context.Context, string, string) (Cookie, error)
 	deviceName       string
 	logger           *slog.Logger
 	handshakeTimeout time.Duration
@@ -248,7 +252,10 @@ func NewManager(options ManagerOptions) (*Manager, error) {
 	authenticator := options.Authenticator
 	webAuthenticator := options.WebAuthenticator
 	if authenticator == nil {
-		authenticator = NativeSessionClient{}
+		// The default authenticator must replay the stored gateway cookies,
+		// because the FN Connect gateway blocks the login WebSocket until the
+		// access-code session has been established.
+		authenticator = NativeSessionClient{CookieHeader: gatewayCookieHeaderForStore(options.Store)}
 	}
 	if webAuthenticator == nil {
 		webAuthenticator, _ = authenticator.(AdminWebAuthenticator)
@@ -256,6 +263,10 @@ func NewManager(options ManagerOptions) (*Manager, error) {
 	adminWebProbe := options.AdminWebProbe
 	if adminWebProbe == nil {
 		adminWebProbe = probeAdminWebSession
+	}
+	accessCodeVerify := options.AccessCodeVerify
+	if accessCodeVerify == nil {
+		accessCodeVerify = verifyAccessCode
 	}
 	ipv6RouteChecker := options.IPv6RouteChecker
 	if ipv6RouteChecker == nil {
@@ -273,6 +284,7 @@ func NewManager(options ManagerOptions) (*Manager, error) {
 		authenticator:    authenticator,
 		webAuthenticator: webAuthenticator,
 		adminWebProbe:    adminWebProbe,
+		accessCodeVerify: accessCodeVerify,
 		deviceName:       deviceName,
 		logger:           managerLogger,
 		handshakeTimeout: handshakeTimeout,
@@ -345,11 +357,28 @@ func (m *Manager) Authorize(
 	return m.authorize(ctx, fnID, cookies)
 }
 
+// NativeCredentials are one sign-in attempt collected by the UI or CLI.
+// AccessCode, TwofaCode and TrustDevice are optional; an empty value means the
+// gateway or account did not ask for them.
+type NativeCredentials struct {
+	FNID        string
+	Username    string
+	Password    string
+	AccessCode  string
+	TwofaCode   string
+	TrustDevice bool
+}
+
+// DetectAccessCode reports whether the NAS gateway currently requires an
+// access code. It performs one credential-free probe and never verifies a code,
+// so it cannot consume the gateway's failed-attempt budget.
+func (m *Manager) DetectAccessCode(ctx context.Context, fnID string) (bool, error) {
+	return detectAccessCode(ctx, fnID)
+}
+
 func (m *Manager) AuthorizeNative(
 	ctx context.Context,
-	fnID string,
-	username string,
-	password string,
+	credentials NativeCredentials,
 ) error {
 	authorized := false
 	defer func() {
@@ -361,13 +390,30 @@ func (m *Manager) AuthorizeNative(
 	m.suspendConnections()
 	m.operation.Lock()
 	defer m.operation.Unlock()
-	fnID, err := normalizeFNID(fnID)
+	fnID, err := normalizeFNID(credentials.FNID)
 	if err != nil {
 		return model.WrapError(model.ErrorInvalidArgument, "invalid FN ID", false, err)
 	}
-	username = strings.TrimSpace(username)
-	if err := validateLoginInput(username, password); err != nil {
+	username := strings.TrimSpace(credentials.Username)
+	if err := validateLoginInput(username, credentials.Password); err != nil {
 		return err
+	}
+	if err := validateAccessCode(credentials.AccessCode); err != nil {
+		return err
+	}
+	if err := validateTwofaCode(credentials.TwofaCode); err != nil {
+		return err
+	}
+	// The access code is a gateway-layer gate: it must be exchanged before any
+	// fnOS RPC runs, otherwise the login WebSocket is blocked outright.
+	if credentials.AccessCode != "" {
+		sessionCookie, verifyErr := m.accessCodeVerify(ctx, fnID, credentials.AccessCode)
+		if verifyErr != nil {
+			return m.fail(verifyErr)
+		}
+		if err := m.store.SaveAccessCodeCookie(fnID, sessionCookie); err != nil {
+			return m.fail(err)
+		}
 	}
 	var deviceID string
 	if existing, found, loadErr := m.store.LoadNativeSession(fnID); loadErr != nil {
@@ -375,7 +421,15 @@ func (m *Manager) AuthorizeNative(
 	} else if found && existing.Username == username {
 		deviceID = existing.DeviceID
 	}
-	session, err := m.authenticator.Login(ctx, fnID, username, password, deviceID, m.deviceName)
+	session, err := m.authenticator.Login(ctx, NativeLogin{
+		FNID:        fnID,
+		Username:    username,
+		Password:    credentials.Password,
+		DeviceID:    deviceID,
+		DeviceName:  m.deviceName,
+		TwofaCode:   credentials.TwofaCode,
+		TrustDevice: credentials.TrustDevice,
+	})
 	if err != nil {
 		return m.fail(err)
 	}
@@ -393,8 +447,26 @@ func (m *Manager) AuthorizeNative(
 		return err
 	}
 	authorized = true
-	m.refreshAdminWebSession(ctx, fnID, username, password, session.DeviceID)
+	m.refreshAdminWebSession(ctx, fnID, username, credentials.Password, session.DeviceID)
 	return nil
+}
+
+// gatewayCookieHeaderForStore builds the Cookie header for the fnOS native
+// authentication WebSocket: relay routing plus the access-code session when the
+// NAS has one.
+func gatewayCookieHeaderForStore(store *ConfigStore) func(context.Context, string) (string, error) {
+	return func(_ context.Context, fnID string) (string, error) {
+		cookies, err := store.LoadCookies(fnID)
+		if err != nil {
+			return "", err
+		}
+		set, err := newCookieSet(append(cookies, nativeRelayCookie(fnID)))
+		if err != nil {
+			return "", err
+		}
+		target := &url.URL{Scheme: "https", Host: fnID + ".fnos.net", Path: "/websocket"}
+		return set.Header(target), nil
+	}
 }
 
 func (m *Manager) authorize(
@@ -1045,7 +1117,7 @@ func (m *Manager) watchConfiguration(ctx context.Context) {
 		}
 		if err != nil {
 			typed := model.AsError(err)
-			if typed.Code == model.ErrorAuthRequired || typed.Code == model.ErrorDeviceRevoked || isAdmissionFailure(err) {
+			if typed.Code == model.ErrorAuthRequired || typed.Code == model.ErrorDeviceRevoked || RequiresAdditionalCredential(err) || isAdmissionFailure(err) {
 				_ = m.fail(err)
 				m.bridge.Stop()
 				m.convergeStoppedNetwork(ctx, *current, m.Status())
@@ -1607,8 +1679,8 @@ func (m *Manager) Diagnose(ctx context.Context) model.ClientDiagnostics {
 }
 
 // AdminProxyURL starts (or reuses) the local reverse proxy that fronts the NAS
-// management UI. It reads only the independent Web session; the CLI session and
-// its gateway cookie remain owned by the tunnel path.
+// management UI. It combines the independent Web session with the gateway
+// access-code session, without exposing the CLI login token to the browser path.
 func (m *Manager) AdminProxyURL(ctx context.Context) (string, error) {
 	// The management UI uses its dedicated Web token, not the CLI tunnel token.
 	config, err := m.store.Load()
@@ -1634,7 +1706,11 @@ func (m *Manager) AdminProxyURL(ctx context.Context) (string, error) {
 			model.ErrorAuthRequired, "fnOS management session is unavailable; sign in again", false,
 		), "admin_proxy.probe")
 	}
-	if err := m.adminWebProbe(ctx, config.FNID, session.Token); err != nil {
+	cookies, err := m.adminGatewayCookies(config.FNID, session.Token)
+	if err != nil {
+		return "", err
+	}
+	if err := m.adminWebProbe(ctx, config.FNID, cookies); err != nil {
 		if model.AsError(err).Code == model.ErrorAuthRequired {
 			_ = m.store.ClearAdminWebSession(config.FNID)
 			m.closeAdminProxy()
@@ -1662,7 +1738,7 @@ func (m *Manager) AdminProxyURL(ctx context.Context) (string, error) {
 				if err != nil || !found {
 					return nil, err
 				}
-				return nativeGatewayCookies(fnID, session.Token), nil
+				return m.adminGatewayCookies(fnID, session.Token)
 			},
 			Logger: m.logger,
 		}
@@ -1681,7 +1757,23 @@ func (m *Manager) AdminProxyURL(ctx context.Context) (string, error) {
 	return base.String(), nil
 }
 
-func probeAdminWebSession(ctx context.Context, fnID string, token string) error {
+// adminGatewayCookies shares only the gateway access-code session. The account
+// token always comes from the independent management Web login.
+func (m *Manager) adminGatewayCookies(fnID, webToken string) ([]Cookie, error) {
+	stored, err := m.store.LoadCookies(fnID)
+	if err != nil {
+		return nil, err
+	}
+	cookies := nativeGatewayCookies(fnID, webToken)
+	for _, cookie := range stored {
+		if cookie.Name == accessCodeCookieName {
+			cookies = append(cookies, cookie)
+		}
+	}
+	return cookies, nil
+}
+
+func probeAdminWebSession(ctx context.Context, fnID string, cookies []Cookie) error {
 	target := "https://" + fnID + ".fnos.net/app/fncpn/api/v1/admin/snapshot"
 	client := &http.Client{
 		Timeout: 15 * time.Second,
@@ -1693,21 +1785,24 @@ func probeAdminWebSession(ctx context.Context, fnID string, token string) error 
 			return http.ErrUseLastResponse
 		},
 	}
-	return probeAdminWebSessionWithClient(ctx, client, target, token)
+	return probeAdminWebSessionWithClient(ctx, client, target, cookies)
 }
 
 func probeAdminWebSessionWithClient(
 	ctx context.Context,
 	client *http.Client,
 	target string,
-	token string,
+	cookies []Cookie,
 ) error {
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
 	if err != nil {
 		return model.WithOperation(err, "admin_proxy.probe")
 	}
-	request.Header.Set("Cookie", (&http.Cookie{Name: "mode", Value: "relay"}).String()+
-		"; "+(&http.Cookie{Name: "fnos-token", Value: token}).String())
+	set, err := newCookieSet(cookies)
+	if err != nil {
+		return model.WithOperation(err, "admin_proxy.probe")
+	}
+	request.Header.Set("Cookie", set.Header(request.URL))
 	response, err := client.Do(request)
 	if err != nil {
 		return model.WithOperation(model.NormalizeError(
@@ -1720,6 +1815,12 @@ func probeAdminWebSessionWithClient(
 		return model.WithOperation(model.NormalizeError(
 			readErr, model.ErrorUnavailable, "read fnOS management session probe", true,
 		), "admin_proxy.probe")
+	}
+	if accessCodeChallengeDetected(response.Header, data) {
+		failure := model.AsError(accessCodeRequiredError())
+		failure.Operation = "admin_proxy.probe"
+		failure.HTTPStatus = response.StatusCode
+		return failure
 	}
 	if authErr := gatewayAuthenticationError(response, data); authErr != nil {
 		authErr.Operation = "admin_proxy.probe"
@@ -1752,10 +1853,13 @@ func (m *Manager) refreshAdminWebSession(
 	if m.webAuthenticator == nil {
 		return
 	}
-	webSession, err := m.webAuthenticator.WebLogin(
-		ctx, fnID, username, password,
-		adminWebDeviceID(nativeDeviceID), m.deviceName,
-	)
+	webSession, err := m.webAuthenticator.WebLogin(ctx, NativeLogin{
+		FNID:       fnID,
+		Username:   username,
+		Password:   password,
+		DeviceID:   adminWebDeviceID(nativeDeviceID),
+		DeviceName: m.deviceName,
+	})
 	if err != nil {
 		m.logger.Warn("admin auth: encrypted Web token login unavailable",
 			"fn_id", fnID, "error", err)
@@ -2586,7 +2690,7 @@ func (m *Manager) fail(err error) error {
 	state := model.ClientError
 	switch {
 	case typed.Code == model.ErrorAuthRequired ||
-		typed.Code == model.ErrorDeviceRevoked:
+		typed.Code == model.ErrorDeviceRevoked || RequiresAdditionalCredential(err):
 		m.cancelConfigurationWatch()
 		state = model.ClientAuthRequired
 		// A terminal auth state must not keep stale "probing" diagnostics.

@@ -41,7 +41,9 @@ func TestNativeLoginSucceedsBeforeTunnelAndSurvivesLoginRequestEnd(t *testing.T)
 			}
 		}
 		loginContext, cancelLogin := context.WithCancel(t.Context())
-		if err := m.AuthorizeNative(loginContext, "home-nas", "admin", "password"); err != nil {
+		if err := m.AuthorizeNative(loginContext, NativeCredentials{
+			FNID: "home-nas", Username: "admin", Password: "password",
+		}); err != nil {
 			t.Fatalf("successful authorization reported as login failure: %v", err)
 		}
 		cancelLogin()

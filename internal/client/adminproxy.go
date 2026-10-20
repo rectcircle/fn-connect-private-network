@@ -19,7 +19,8 @@ import (
 
 // AdminProxy exposes the fnOS management UI (/app/fncpn) to a local browser or
 // WebView without relying on the browser's own fnOS cookies. Its providers are
-// backed only by the dedicated Web session, never by the tunnel's CLI session.
+// backed by the dedicated Web session and gateway access-code cookie, never by
+// the tunnel's CLI login token.
 type AdminProxy struct {
 	ListenAddress  string
 	FNIDProvider   func() (string, error)
@@ -156,7 +157,8 @@ func (p *AdminProxy) targetOrigin() (*url.URL, error) {
 
 func (p *AdminProxy) director(req *http.Request) {
 	// Never forward cookies supplied by the local browser. Only the isolated
-	// Web session loaded by CookieProvider may authenticate an upstream request.
+	// Web and gateway access-code cookies loaded by CookieProvider may authenticate
+	// an upstream request.
 	req.Header.Del("Cookie")
 	target, err := p.targetOrigin()
 	if err != nil {

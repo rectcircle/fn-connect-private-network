@@ -554,6 +554,22 @@ func (s *ConfigStore) SaveNativeGatewayCookies(fnID, token string) error {
 	return s.saveCookies(fnID, current)
 }
 
+// SaveAccessCodeCookie stores the FN Connect access-code session cookie. It is
+// independent of the login token: the gateway checks it before any HTTP or
+// WebSocket request reaches the NAS.
+func (s *ConfigStore) SaveAccessCodeCookie(fnID string, cookie Cookie) error {
+	s.credentialMu.Lock()
+	defer s.credentialMu.Unlock()
+	current, err := s.loadCookies(fnID)
+	if err != nil {
+		return err
+	}
+	current = slices.DeleteFunc(current, func(existing Cookie) bool {
+		return existing.Name == accessCodeCookieName
+	})
+	return s.saveCookies(fnID, append(current, cookie))
+}
+
 func (s *ConfigStore) Forget(fnID string) (failure error) {
 	defer func() {
 		if failure != nil {

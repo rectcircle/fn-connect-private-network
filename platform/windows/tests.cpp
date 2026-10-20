@@ -6,7 +6,9 @@
 LRESULT TestSendMessage(HWND window,UINT message,WPARAM parameter,LPARAM extra) {
     if(parameter) switch(message) {
     case kStatusReady: parameter=RegisterPayload(message,reinterpret_cast<RefreshResult*>(parameter)); break;
-    case kLoginResult: case kAuthorizationStarted: case kOperationReady: parameter=RegisterPayload(message,reinterpret_cast<std::wstring*>(parameter)); break;
+    case kLoginResult: parameter=RegisterPayload(message,reinterpret_cast<LoginResult*>(parameter)); break;
+    case kAccessProbeReady: parameter=RegisterPayload(message,reinterpret_cast<AccessProbeResult*>(parameter)); break;
+    case kAuthorizationStarted: case kOperationReady: parameter=RegisterPayload(message,reinterpret_cast<std::wstring*>(parameter)); break;
     case kAdminReady: parameter=RegisterPayload(message,reinterpret_cast<std::pair<std::wstring,std::wstring>*>(parameter)); break;
     case kActivationReceived: parameter=RegisterPayload(message,reinterpret_cast<std::vector<std::wstring>*>(parameter)); break;
     }
@@ -97,6 +99,22 @@ int main(int argc, char** argv) {
         bool rejected = false;
         try { ValidateEnvelope(envelope, L"different"); } catch (...) { rejected = true; }
         Check(rejected, "response identity mismatch");
+        for (const auto* remote : {L"ACCESS_CODE_REQUIRED", L"ACCESS_CODE_INVALID", L"ACCESS_CODE_RATE_LIMITED",
+            L"TWO_FACTOR_REQUIRED", L"TWO_FACTOR_CODE_INVALID", L"TWO_FACTOR_SETUP_REQUIRED"}) {
+            auto failed = JsonObject::Parse(envelope.Stringify());
+            failed.Insert(L"ok", JsonValue::CreateBooleanValue(false)); failed.Remove(L"result");
+            auto error = JsonObject::Parse(L"{\"code\":\"FAILED_PRECONDITION\",\"message\":\"challenge\",\"retryable\":false,\"futureField\":true}");
+            error.Insert(L"remoteCode", JsonValue::CreateStringValue(remote)); failed.Insert(L"error", error);
+            bool preserved = false;
+            try { ValidateEnvelope(failed, L"request"); }
+            catch (const IpcFailure& failure) { preserved = failure.remoteCode == remote && !failure.message().empty(); }
+            Check(preserved, "structured credential challenge survives IPC validation");
+        }
+        auto native = NativeAuthorizationParameters(L"demo", L"user", L"password", L"pending", L"access", L"012345", true);
+        Check(JsonString(native, L"accessCode") == L"access" && JsonString(native, L"twofaCode") == L"012345" &&
+            JsonBool(native, L"trustDevice") && JsonString(native, L"requestId") == L"pending", "native credentials and OTP leading zero preserved");
+        native = NativeAuthorizationParameters(L"demo", L"user", L"password", L"pending", L"", L"", true);
+        Check(!native.HasKey(L"accessCode") && !native.HasKey(L"twofaCode") && !native.HasKey(L"trustDevice"), "unused factors omitted for ordinary login");
         CheckPipeRoundTrip();
 
         // Real window/message handling with no daemon, credentials, network or registry writes.
@@ -142,10 +160,42 @@ int main(int argc, char** argv) {
         Check(g_viewLogin && GetText(g_fnIdInput) == L"new-target", "refresh preserves explicit target edit");
         Check(!(GetWindowLongW(g_connect, GWL_STYLE) & WS_VISIBLE), "details hidden during login");
         g_loginInFlight = true; g_loginGeneration = 2;
-        SendMessageW(window, kLoginResult, reinterpret_cast<WPARAM>(new std::wstring(L"stale error")), 1);
+        SendMessageW(window, kLoginResult, reinterpret_cast<WPARAM>(new LoginResult{L"stale error", L""}), 1);
         Check(g_loginInFlight && GetText(g_loginError) != L"stale error", "stale login result ignored");
-        SendMessageW(window, kLoginResult, reinterpret_cast<WPARAM>(new std::wstring(L"current error")), 2);
+        SendMessageW(window, kLoginResult, reinterpret_cast<WPARAM>(new LoginResult{L"current error", L""}), 2);
         Check(!g_loginInFlight && GetText(g_loginError) == L"current error", "current failure retained");
+        SetWindowTextW(g_passwordInput, L"retained-password");
+        g_authorizationRequest = L"pending"; g_loginInFlight = true;
+        SendMessageW(window, kLoginResult, reinterpret_cast<WPARAM>(new LoginResult{L"access required", L"ACCESS_CODE_REQUIRED"}), 2);
+        Check(g_accessCodeRequired && !g_otpRequired && g_authorizationRequest == L"pending" &&
+            GetText(g_passwordInput) == L"retained-password", "access challenge retains password and authorization");
+        Check((GetWindowLongW(g_accessCodeInput, GWL_STYLE) & WS_VISIBLE) != 0, "access input visible on challenge");
+        SetWindowTextW(g_accessCodeInput, L"access-secret");
+        g_loginInFlight = true;
+        SendMessageW(window, kLoginResult, reinterpret_cast<WPARAM>(new LoginResult{L"OTP required", L"TWO_FACTOR_REQUIRED"}), 2);
+        Check(!g_accessCodeRequired && g_otpRequired && GetText(g_accessCodeInput).empty() &&
+            g_authorizationRequest == L"pending", "OTP stage reuses gateway session and authorization");
+        Check((GetWindowLongW(g_otpInput, GWL_STYLE) & WS_VISIBLE) &&
+            !(GetWindowLongW(g_accessCodeInput, GWL_STYLE) & WS_VISIBLE), "only current factor is visible");
+        SetWindowTextW(g_otpInput, L"123456"); SendMessageW(g_trustDevice, BM_SETCHECK, BST_CHECKED, 0);
+        g_loginInFlight = true;
+        SendMessageW(window, kLoginResult, reinterpret_cast<WPARAM>(new LoginResult{L"wrong OTP", L"TWO_FACTOR_CODE_INVALID"}), 2);
+        Check(GetText(g_otpInput).empty() && GetText(g_passwordInput) == L"retained-password" &&
+            SendMessageW(g_trustDevice, BM_GETCHECK, 0, 0) == BST_CHECKED, "OTP rejection clears only the OTP");
+        const auto probeGeneration = g_probeGeneration;
+        SetWindowTextW(g_fnIdInput, L"another-target");
+        Check(!g_otpRequired && !g_accessCodeRequired && g_authorizationRequest.empty() &&
+            GetText(g_passwordInput).empty(), "edit notifications clear old NAS credentials and pending request");
+        SendMessageW(window, kAccessProbeReady, reinterpret_cast<WPARAM>(new AccessProbeResult{L"new-target", probeGeneration, true, true}), 0);
+        Check(!g_accessCodeRequired, "stale target probe ignored");
+        SendMessageW(window, kAccessProbeReady, reinterpret_cast<WPARAM>(new AccessProbeResult{L"another-target", g_probeGeneration, true, true}), 0);
+        Check(g_accessCodeRequired, "current target probe reveals access field");
+        // A CLI-owned request must survive the programmatic target change.
+        HandleActivationArguments({L"fncpn://authorize/cli-target?request=cli-request"});
+        Check(g_authorizationRequest == L"cli-request" && g_externalAuthorization, "CLI activation preserves its authorization request");
+        SendMessageW(window, WM_COMMAND, kLoginCancel, 0);
+        Check(!g_externalAuthorization && g_authorizationRequest.empty() && !g_accessCodeRequired && !g_otpRequired,
+            "cancel clears pending authorization and factors");
         EnableWindow(g_retry, TRUE);
         Check(SendMessageW(g_retry, WM_SETCURSOR, reinterpret_cast<WPARAM>(g_retry), MAKELPARAM(HTCLIENT, WM_MOUSEMOVE)) == TRUE &&
             GetCursor() == LoadCursorW(nullptr, IDC_HAND), "enabled button uses hand cursor");

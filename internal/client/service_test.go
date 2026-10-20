@@ -194,6 +194,101 @@ func TestRuntimeServiceAcceptsNativeAuthorizationFromApp(t *testing.T) {
 	}
 }
 
+func TestRuntimeServiceDetectsAccessCodeRequirement(t *testing.T) {
+	runtime := &recordingRuntime{detectAccessCode: func() (bool, error) { return true, nil }}
+	service := NewWithRuntime(runtime)
+	request, _ := ipc.NewRequest(
+		"detect", MethodDetectAccessCode, AccessCodeRequest{FNID: "home-nas"},
+	)
+	response := service.Handle(context.Background(), request)
+	if !response.OK {
+		t.Fatalf("detect-access-code failed: %+v", response.Error)
+	}
+	var result AccessCodeStatus
+	if err := json.Unmarshal(response.Result, &result); err != nil {
+		t.Fatal(err)
+	}
+	if !result.Required || runtime.fnID != "home-nas" {
+		t.Fatalf("access-code requirement = %+v, probed fn_id = %q", result, runtime.fnID)
+	}
+}
+
+func TestRuntimeServiceKeepsAuthorizationPendingForAnotherFactor(t *testing.T) {
+	twoFactor := model.NewError(model.ErrorFailedPrecondition, "a two-factor code is required", false)
+	twoFactor.RemoteCode = "TWO_FACTOR_REQUIRED"
+	calls := 0
+	runtime := &recordingRuntime{
+		status: model.ClientStatus{State: model.ClientPaused},
+		authorizeNative: func(_ context.Context, credentials NativeCredentials) error {
+			calls++
+			if credentials.TwofaCode == "" {
+				return twoFactor
+			}
+			return nil
+		},
+	}
+	service := NewWithRuntime(runtime)
+	beginRequest, _ := ipc.NewRequest(
+		"begin", MethodAuthorizationBegin, AuthorizationRequest{FNID: "home-nas"},
+	)
+	beginResponse := service.Handle(context.Background(), beginRequest)
+	var pending AuthorizationResult
+	if err := json.Unmarshal(beginResponse.Result, &pending); err != nil {
+		t.Fatal(err)
+	}
+
+	first, _ := ipc.NewRequest(
+		"first", MethodAuthorizeNative,
+		NativeAuthorization{RequestID: pending.RequestID, FNID: "home-nas", Username: "admin", Password: "canary"},
+	)
+	firstResponse := service.Handle(context.Background(), first)
+	if firstResponse.OK {
+		t.Fatal("a missing two-factor code was reported as a completed sign-in")
+	}
+	if firstResponse.Error == nil || firstResponse.Error.RemoteCode != "TWO_FACTOR_REQUIRED" {
+		t.Fatalf("challenge error = %+v", firstResponse.Error)
+	}
+	statusRequest, _ := ipc.NewRequest(
+		"status", MethodAuthorizationStatus, AuthorizationRequest{RequestID: pending.RequestID},
+	)
+	statusResponse := service.Handle(context.Background(), statusRequest)
+	var status AuthorizationResult
+	if err := json.Unmarshal(statusResponse.Result, &status); err != nil {
+		t.Fatal(err)
+	}
+	if status.State != "pending" {
+		t.Fatalf("authorization state after a factor challenge = %q, want pending", status.State)
+	}
+
+	second, _ := ipc.NewRequest(
+		"second", MethodAuthorizeNative,
+		NativeAuthorization{
+			RequestID: pending.RequestID, FNID: "home-nas", Username: "admin", Password: "canary",
+			TwofaCode: "123456", TrustDevice: true,
+		},
+	)
+	secondResponse := service.Handle(context.Background(), second)
+	if !secondResponse.OK {
+		t.Fatalf("retry with the two-factor code failed: %+v", secondResponse.Error)
+	}
+	if calls != 2 {
+		t.Fatalf("authorize-native calls = %d, want 2", calls)
+	}
+	if runtime.username != "admin" || runtime.password != "canary" {
+		t.Fatalf("retried credentials = %q/%q", runtime.username, runtime.password)
+	}
+	finalRequest, _ := ipc.NewRequest(
+		"final", MethodAuthorizationStatus, AuthorizationRequest{RequestID: pending.RequestID},
+	)
+	finalResponse := service.Handle(context.Background(), finalRequest)
+	if err := json.Unmarshal(finalResponse.Result, &status); err != nil {
+		t.Fatal(err)
+	}
+	if status.State != "succeeded" {
+		t.Fatalf("authorization state after the retry = %q", status.State)
+	}
+}
+
 func TestRuntimeServiceRejectsExpiredAuthorization(t *testing.T) {
 	runtime := &recordingRuntime{
 		status: model.ClientStatus{State: model.ClientPaused},
@@ -450,7 +545,8 @@ type recordingRuntime struct {
 	username        string
 	password        string
 	authorize       func(context.Context, string, []Cookie) error
-	authorizeNative func(context.Context, string, string, string) error
+	authorizeNative func(context.Context, NativeCredentials) error
+	detectAccessCode func() (bool, error)
 }
 
 func (r *recordingRuntime) Status() model.ClientStatus {
@@ -480,15 +576,13 @@ func (r *recordingRuntime) Authorize(
 
 func (r *recordingRuntime) AuthorizeNative(
 	ctx context.Context,
-	fnID string,
-	username string,
-	password string,
+	credentials NativeCredentials,
 ) error {
-	r.fnID = fnID
-	r.username = username
-	r.password = password
+	r.fnID = credentials.FNID
+	r.username = credentials.Username
+	r.password = credentials.Password
 	if r.authorizeNative != nil {
-		return r.authorizeNative(ctx, fnID, username, password)
+		return r.authorizeNative(ctx, credentials)
 	}
 	return nil
 }
@@ -516,6 +610,17 @@ func (r *recordingRuntime) Logout(context.Context) error {
 func (r *recordingRuntime) Forget(context.Context) error {
 	r.lastCommand = MethodForget
 	return nil
+}
+
+func (r *recordingRuntime) DetectAccessCode(
+	_ context.Context,
+	fnID string,
+) (bool, error) {
+	r.fnID = fnID
+	if r.detectAccessCode != nil {
+		return r.detectAccessCode()
+	}
+	return false, nil
 }
 
 type watchingRuntime struct {

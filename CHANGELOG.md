@@ -4,6 +4,25 @@
 格式遵循 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)，版本规则见
 [版本与兼容性](docs/versioning-and-compatibility.md)。
 
+## [1.1.1]
+
+### Fixed
+
+- macOS、Windows 客户端与 Go CLI 登录支持 fnOS 访问码：输入 FN Connect ID 后无凭证探测该 NAS 是否开启访问码，开启时登录表单显示访问码字段；访问码在原生登录之前于 FN Connect 网关验证，验证结果以 `os-access-code` 会话 cookie 保存并在后续网关与登录 WebSocket 请求中自动重放。
+- macOS、Windows 客户端与 Go CLI 登录支持 fnOS 两步验证（TOTP）：`user.login` 返回挑战后在同一登录连接上提交六位 OTP，可选"信任此设备"；区分需要 OTP、需要先绑定两步验证和 OTP 错误三种提示。
+- 遇到访问码或 OTP 要求时登录请求保持待完成，用户在原表单补填后重试，不丢失已填内容；已通过访问码验证后，补填 OTP 直接复用网关会话。
+- 访问码探测与验证请求携带 `mode=relay` 路由 Cookie，避免请求落到 FN Connect 入口页；主窗口将访问码挑战显示为需要重新登录，登录页立即展示已知挑战对应的输入框，并保留表单提示和已填内容。
+- 登录表单随访问码、OTP 行调整高度和 Tab 顺序；切换 NAS 时清除旧验证内容并补发目标 NAS 的探测。
+- 管理后台代理与打开前的 Web 会话探测复用 `os-access-code` 网关会话；继续使用独立的 Web 登录 token，访问码失效时提示重新登录，不误清除仍有效的 Web token。
+
+- 修正两步验证的 fnOS RPC 为 `user.2fa.loginVerify`，携带 `isTrustedDevice`、连接完整性值及设备字段；保留服务端失败原因，避免将所有拒绝都误报为 OTP 错误。OTP 标签与其他登录标签统一对齐。
+
+### 升级与验证范围
+
+- 本次为适配 fnOS 访问码与两步验证的客户端认证兼容修复，版本为 1.1.1；不新增 FnCPN server 接口、字段或行为要求，不改变既有远程协议。client 1.1.1 可连接现有 server 1.1.x，无需升级 server；仍按相同 MAJOR 且 client MINOR 不高于 server MINOR 的统一规则准入，PATCH 不参与判定。
+- 本地 IPC 新增 `detect-access-code` 方法与登录参数扩展，IPC 版本保持 5，客户端与服务端数据 schema 不变；本地组件成套升级，不保证 App 与历史 daemon 任意混用。
+- Windows 原生界面已接入访问码、OTP 与“信任此设备”，支持探测、分阶段重试和取消授权；Windows 实机验证待草稿构建后完成。macOS 已由用户确认验证通过。
+
 ## [1.1.0]
 
 ### Added

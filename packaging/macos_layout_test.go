@@ -112,6 +112,32 @@ extension AppDelegate {
             check(detailsView.isHidden, "first launch must show native login")
             check(fnIDField.nextKeyView === usernameField &&
                   usernameField.nextKeyView === passwordField, "login tab order")
+            for access in [true, false, true] {
+                accessCodeRequired = access
+                twofaChallenge = true
+                render()
+                content.layoutSubtreeIfNeeded()
+                if access { checkVisible(accessCodeField) }
+                checkVisible(twofaField)
+                if let label = loginForm.cell(atColumnIndex: 0, rowIndex: 4).contentView as? NSTextField,
+                   let passwordLabel = loginForm.cell(atColumnIndex: 0, rowIndex: 3).contentView as? NSTextField {
+                    check(label.alignment == .right && label.textColor == .secondaryLabelColor,
+                          "two-factor label matches other login labels")
+                    let labelRect = label.convert(label.bounds, to: loginForm)
+                    let passwordRect = passwordLabel.convert(passwordLabel.bounds, to: loginForm)
+                    let fieldRect = twofaField.convert(twofaField.bounds, to: loginForm)
+                    check(abs(labelRect.maxX - passwordRect.maxX) < 1, "two-factor label right edge aligned")
+                    check(abs(labelRect.midY - fieldRect.midY) < 1, "two-factor label vertically aligned")
+                } else { check(false, "missing two-factor or password label") }
+                checkVisible(trustDeviceButton)
+                checkVisible(setupButton)
+                checkVisible(quitButton)
+                check(fnIDField.nextKeyView === (access ? accessCodeField : usernameField),
+                      "access-code tab order")
+                check(passwordField.nextKeyView === twofaField, "two-factor tab order")
+            }
+            accessCodeRequired = false
+            twofaChallenge = false
             for size in [NSSize(width: 680, height: 620), NSSize(width: 800, height: 800)] {
                 testWindow.setContentSize(size)
                 for state in ["DIRECT", "RELAY", "AUTH_REQUIRED", "PAUSED", "RECONNECTING", "ERROR"] {
@@ -170,6 +196,42 @@ extension AppDelegate {
                 "code": "PERMISSION_DENIED", "httpStatus": 403
             ]])
             check(remoteDenied.needsLogin, "remote permission rejection offers login")
+            let accessFailure: [String: Any] = [
+                "code": "FAILED_PRECONDITION", "remoteCode": "ACCESS_CODE_REQUIRED"
+            ]
+            check(ConnectionPresentation(["state": "ERROR", "lastError": accessFailure]).needsLogin,
+                  "access-code challenge offers login even with an older daemon state")
+            check(failureSummary(accessFailure) == L("该 NAS 开启了访问码，请输入访问码"),
+                  "access-code summary names the required credential")
+            applyDiagnostics([
+                "fnId": "home-nas", "username": "rectcircle",
+                "status": ["state": "AUTH_REQUIRED", "lastError": accessFailure],
+                "privilegedAvailable": true
+            ])
+            presentLogin(fnID: "home-nas", username: "rectcircle")
+            content.layoutSubtreeIfNeeded()
+            checkVisible(accessCodeField)
+            check(setupError.stringValue.isEmpty, "fresh login must not repeat the previous operation error")
+            passwordField.stringValue = "password-canary"
+            let challengeError = NSError(domain: "FnCPN", code: 1, userInfo: ["failure": accessFailure])
+            check(showLoginChallenge(challengeError, requestID: "request"), "access challenge handled")
+            render()
+            content.layoutSubtreeIfNeeded()
+            checkVisible(accessCodeField)
+            check(passwordField.stringValue == "password-canary", "challenge preserves password")
+            check(setupError.stringValue == L("该 NAS 开启了访问码，请输入访问码"),
+                  "status refresh preserves login feedback")
+            accessCodeField.stringValue = "access-code-canary"
+            let twofaError = NSError(domain: "FnCPN", code: 1, userInfo: ["failure": [
+                "code": "FAILED_PRECONDITION", "remoteCode": "TWO_FACTOR_REQUIRED"
+            ]])
+            check(showLoginChallenge(twofaError, requestID: "request"), "two-factor challenge handled")
+            content.layoutSubtreeIfNeeded()
+            checkVisible(twofaField)
+            check(accessCodeField.stringValue.isEmpty && !accessCodeRequired,
+                  "two-factor retry reuses the accepted access-code session")
+            check(passwordField.stringValue == "password-canary", "two-factor challenge preserves password")
+            externalAuthorizationRequest = ""
             editingServer = false
             applyDiagnostics([
                 "fnId": "home-nas",

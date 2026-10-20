@@ -15,6 +15,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"io"
 	"math/big"
 	"net/http"
 	"net/url"
@@ -55,34 +56,55 @@ type AdminWebSession struct {
 }
 
 type NativeAuthenticator interface {
-	Login(context.Context, string, string, string, string, string) (NativeSession, error)
+	Login(context.Context, NativeLogin) (NativeSession, error)
 	Recover(context.Context, NativeSession, string) (NativeSession, error)
 }
 
 type AdminWebAuthenticator interface {
-	WebLogin(context.Context, string, string, string, string, string) (AdminWebSession, error)
+	WebLogin(context.Context, NativeLogin) (AdminWebSession, error)
+}
+
+// NativeLogin carries one sign-in attempt. TwofaCode is the account two-factor
+// code, and TrustDevice asks
+// fnOS to remember this device so later logins skip the two-factor challenge.
+// Empty optional fields mean "not supplied".
+type NativeLogin struct {
+	FNID        string
+	Username    string
+	Password    string
+	DeviceID    string
+	DeviceName  string
+	TwofaCode   string
+	TrustDevice bool
 }
 
 type NativeSessionClient struct {
-	Dial func(context.Context, string) (*websocket.Conn, error)
+	// Dial mirrors websocket.Dial: the second argument is the fnID and the
+	// third the gateway Cookie header. The HTTP response is returned so a
+	// failed handshake can still be classified (see nativeDialFailure).
+	Dial func(context.Context, string, string) (*websocket.Conn, *http.Response, error)
+	// CookieHeader supplies the gateway cookies for the authentication
+	// WebSocket handshake (relay routing plus any access-code session). When
+	// nil, only the relay cookie is sent.
+	CookieHeader func(context.Context, string) (string, error)
 }
 
 func (c NativeSessionClient) Login(
 	ctx context.Context,
-	fnID string,
-	username string,
-	password string,
-	deviceID string,
-	deviceName string,
+	login NativeLogin,
 ) (NativeSession, error) {
-	fnID, err := normalizeFNID(fnID)
+	fnID, err := normalizeFNID(login.FNID)
 	if err != nil {
 		return NativeSession{}, model.WrapError(model.ErrorInvalidArgument, "invalid FN ID", false, err)
 	}
-	username = strings.TrimSpace(username)
-	if err := validateLoginInput(username, password); err != nil {
+	username := strings.TrimSpace(login.Username)
+	if err := validateLoginInput(username, login.Password); err != nil {
 		return NativeSession{}, err
 	}
+	if err := validateTwofaCode(login.TwofaCode); err != nil {
+		return NativeSession{}, err
+	}
+	deviceID := login.DeviceID
 	if deviceID == "" {
 		deviceID, err = nativeDeviceID()
 		if err != nil {
@@ -98,27 +120,30 @@ func (c NativeSessionClient) Login(
 		"req":        "user.login",
 		"reqid":      nativeRequestID(),
 		"user":       username,
-		"password":   password,
+		"password":   login.Password,
 		"stay":       1,
-		"deviceName": valueOrDefault(deviceName, "FnCPN for macOS"),
+		"deviceName": valueOrDefault(login.DeviceName, "FnCPN for macOS"),
 		"deviceType": "CLI",
 		"did":        deviceID,
 	}, "")
 	if err != nil {
 		return NativeSession{}, err
 	}
-	if nativeString(response, "token") == "" &&
-		(nativeBool(response, "isTwofaEnforced") || nativeString(response, "accessToken") != "") {
-		failure := model.WithOperation(model.NewError(
-			model.ErrorFailedPrecondition,
-			"this fnOS account requires two-factor authentication, which is not supported yet",
-			false,
-		), "native_session.login")
-		failure.RemoteCode = "TWO_FACTOR_REQUIRED"
-		return NativeSession{}, failure
+	if accessToken := nativeString(response, "accessToken"); nativeString(response, "token") == "" &&
+		(accessToken != "" || nativeBool(response, "isTwofaEnforced")) {
+		login.DeviceID = deviceID
+		response, err = submitTwofaCode(ctx, connection, response, accessToken, login)
+		if err != nil {
+			return NativeSession{}, err
+		}
 	}
 	if !nativeSuccess(response) {
 		return NativeSession{}, nativeAuthenticationError("fnOS username or password is invalid", response)
+	}
+	if nativeString(response, "token") == "" {
+		return NativeSession{}, model.WithOperation(model.NewError(
+			model.ErrorProtocol, "fnOS login did not complete", false,
+		), "native_session.login")
 	}
 	session := NativeSession{
 		Version:   nativeSessionVersion,
@@ -139,6 +164,88 @@ func (c NativeSessionClient) Login(
 	return session, nil
 }
 
+// submitTwofaCode answers a fnOS two-factor challenge on the same WebSocket
+// session that produced it. Without a code it surfaces the challenge kind so the
+// UI can collect one; fnOS only issues a full session after the code is accepted.
+func submitTwofaCode(
+	ctx context.Context,
+	connection *websocket.Conn,
+	challenge map[string]any,
+	accessToken string,
+	login NativeLogin,
+) (map[string]any, error) {
+	if login.TwofaCode == "" || (nativeBool(challenge, "isTwofaEnforced") && !nativeBool(challenge, "isBindTwofaSecret")) {
+		failure := model.NewError(
+			model.ErrorFailedPrecondition,
+			"this fnOS account requires a two-factor code",
+			false,
+		)
+		if nativeBool(challenge, "isTwofaEnforced") && !nativeBool(challenge, "isBindTwofaSecret") {
+			failure.RemoteCode = "TWO_FACTOR_SETUP_REQUIRED"
+			failure.Message = "this fnOS account enforces two-factor authentication but has not bound it yet"
+		} else {
+			failure.RemoteCode = "TWO_FACTOR_REQUIRED"
+		}
+		if email := nativeString(challenge, "secureEmail"); email != "" {
+			failure.Detail = model.SafeText(email)
+		}
+		return nil, model.WithOperation(failure, "native_session.twofa_challenge")
+	}
+	si := nativeString(challenge, "si")
+	if si == "" {
+		integrity, err := nativeRPC(ctx, connection, map[string]any{
+			"req": "util.getSI", "reqid": nativeRequestID(),
+		}, "")
+		if err != nil {
+			return nil, err
+		}
+		si = nativeString(integrity, "si")
+	}
+	if si == "" || accessToken == "" {
+		return nil, model.WithOperation(model.NewError(
+			model.ErrorProtocol, "fnOS two-factor challenge is incomplete", false,
+		), "native_session.twofa_submit")
+	}
+	// submitTwofaCode is a client helper name, not an fnOS RPC method. The
+	// verification RPC also binds the challenge to this connection and device.
+	response, err := nativeRPC(ctx, connection, map[string]any{
+		"req":             "user.2fa.loginVerify",
+		"reqid":           nativeRequestID(),
+		"accessToken":     accessToken,
+		"code":            login.TwofaCode,
+		"isTrustedDevice": login.TrustDevice,
+		"stay":            1,
+		"deviceName":      valueOrDefault(login.DeviceName, "FnCPN for macOS"),
+		"deviceType":      "CLI",
+		"did":             login.DeviceID,
+		"si":              si,
+	}, "")
+	if err != nil {
+		return nil, err
+	}
+	if !nativeSuccess(response) {
+		failure := model.NewError(
+			model.ErrorProtocol,
+			"fnOS rejected the two-factor verification request",
+			false,
+		)
+		if errno, found := response["errno"]; found {
+			failure.RemoteCode = fmt.Sprint(errno)
+			failure.Detail = "fnOS errno " + failure.RemoteCode
+			if failure.RemoteCode == "135168" {
+				failure.Code = model.ErrorFailedPrecondition
+				failure.Message = "the two-factor code was rejected"
+				failure.RemoteCode = "TWO_FACTOR_CODE_INVALID"
+			}
+		}
+		if detail := nativeString(response, "errmsg"); detail != "" {
+			failure.Detail += "; " + model.SafeText(detail)
+		}
+		return nil, model.WithOperation(failure, "native_session.twofa_submit")
+	}
+	return response, nil
+}
+
 func (c NativeSessionClient) Recover(
 	ctx context.Context,
 	session NativeSession,
@@ -153,6 +260,8 @@ func (c NativeSessionClient) Recover(
 		ctx, session, "user.authToken", session.Token, deviceName,
 	); err == nil {
 		return recovered, nil
+	} else if RequiresAdditionalCredential(err) {
+		return NativeSession{}, err
 	}
 	recovered, err := c.recoverToken(
 		ctx, session, "user.tokenLogin", session.LongToken, deviceName,
@@ -181,26 +290,24 @@ func (c NativeSessionClient) Recover(
 //  5. A single `{"req":"encrypted","iv","rsa","aes"}` frame carries both.
 func (c NativeSessionClient) WebLogin(
 	ctx context.Context,
-	fnID string,
-	username string,
-	password string,
-	deviceID string,
-	deviceName string,
+	login NativeLogin,
 ) (AdminWebSession, error) {
-	return c.webLogin(ctx, fnID, username, password, deviceID, deviceName)
+	return c.webLogin(ctx, login)
 }
 
 func (c NativeSessionClient) webLogin(
-	ctx context.Context, fnID, username, password, deviceID, deviceName string,
+	ctx context.Context,
+	login NativeLogin,
 ) (AdminWebSession, error) {
-	fnID, err := normalizeFNID(fnID)
+	fnID, err := normalizeFNID(login.FNID)
 	if err != nil {
 		return AdminWebSession{}, model.WrapError(model.ErrorInvalidArgument, "invalid FN ID", false, err)
 	}
-	username = strings.TrimSpace(username)
-	if err := validateLoginInput(username, password); err != nil {
+	username := strings.TrimSpace(login.Username)
+	if err := validateLoginInput(username, login.Password); err != nil {
 		return AdminWebSession{}, err
 	}
+	deviceID := login.DeviceID
 	if deviceID == "" {
 		deviceID, err = nativeDeviceID()
 		if err != nil {
@@ -291,9 +398,9 @@ func (c NativeSessionClient) webLogin(
 		"req":        "user.login",
 		"reqid":      reqid,
 		"user":       username,
-		"password":   password,
+		"password":   login.Password,
 		"stay":       1,
-		"deviceName": valueOrDefault(deviceName, "FnCPN for macOS"),
+		"deviceName": valueOrDefault(login.DeviceName, "FnCPN for macOS"),
 		"deviceType": "Browser",
 		"did":        deviceID,
 		"si":         si,
@@ -322,6 +429,16 @@ func (c NativeSessionClient) webLogin(
 	}
 	if !nativeSuccess(response) {
 		return AdminWebSession{}, nativeAuthenticationError("fnOS web login failed", response)
+	}
+	// The management Web session has no interactive two-factor step; a challenge
+	// here means the admin proxy stays unavailable while the tunnel session,
+	// which already answered the challenge, keeps working.
+	if nativeString(response, "token") == "" && nativeString(response, "accessToken") != "" {
+		return AdminWebSession{}, model.WithOperation(model.NewError(
+			model.ErrorFailedPrecondition,
+			"fnOS web login requires a two-factor code",
+			false,
+		), "native_session.web_login.twofa")
 	}
 	session := AdminWebSession{
 		Version:   adminWebSessionVersion,
@@ -447,10 +564,14 @@ func (c NativeSessionClient) recoverToken(
 }
 
 func (c NativeSessionClient) dial(ctx context.Context, fnID string) (*websocket.Conn, error) {
+	cookieHeader, err := c.gatewayCookieHeader(ctx, fnID)
+	if err != nil {
+		return nil, model.WithOperation(err, "native_session.gateway_cookies")
+	}
 	if c.Dial != nil {
-		connection, err := c.Dial(ctx, fnID)
-		if err != nil {
-			return nil, nativeTransportError("connect", err)
+		connection, response, dialErr := c.Dial(ctx, fnID, cookieHeader)
+		if dialErr != nil {
+			return nil, nativeDialFailure(dialErr, response)
 		}
 		connection.SetReadLimit(nativeRPCReadLimit)
 		return connection, nil
@@ -462,7 +583,7 @@ func (c NativeSessionClient) dial(ctx context.Context, fnID string) (*websocket.
 		RawQuery: "type=main",
 	}
 	headers := make(http.Header)
-	headers.Set("Cookie", "mode=relay")
+	headers.Set("Cookie", cookieHeader)
 	headers.Set("Origin", "https://"+target.Host)
 	dialContext, cancel := context.WithTimeout(ctx, nativeRPCTimeout)
 	defer cancel()
@@ -474,13 +595,42 @@ func (c NativeSessionClient) dial(ctx context.Context, fnID string) (*websocket.
 		},
 	})
 	if err != nil {
-		if response != nil && response.Body != nil {
-			response.Body.Close()
-		}
-		return nil, nativeTransportError("connect", err)
+		return nil, nativeDialFailure(err, response)
 	}
 	connection.SetReadLimit(nativeRPCReadLimit)
 	return connection, nil
+}
+
+// nativeDialFailure classifies a failed authentication WebSocket handshake. The
+// FN Connect gateway answers the access-code interception page instead of
+// upgrading, so a handshake failure whose response carries the challenge is
+// reported as a missing access code rather than a transport outage.
+func nativeDialFailure(err error, response *http.Response) error {
+	if response != nil {
+		var body []byte
+		if response.Body != nil {
+			body, _ = io.ReadAll(io.LimitReader(response.Body, accessCodeBodyLimit))
+			_ = response.Body.Close()
+		}
+		if accessCodeChallengeDetected(response.Header, body) {
+			return accessCodeRequiredError()
+		}
+	}
+	return nativeTransportError("connect", err)
+}
+
+func (c NativeSessionClient) gatewayCookieHeader(ctx context.Context, fnID string) (string, error) {
+	if c.CookieHeader == nil {
+		return nativeRelayCookie(fnID).requestValue(), nil
+	}
+	header, err := c.CookieHeader(ctx, fnID)
+	if err != nil {
+		return "", err
+	}
+	if header == "" {
+		return nativeRelayCookie(fnID).requestValue(), nil
+	}
+	return header, nil
 }
 
 func nativeRPC(
@@ -697,9 +847,17 @@ func nativeRequestID() string {
 }
 
 func nativeGatewayCookies(fnID, token string) []Cookie {
-	domain := fnID + ".fnos.net"
 	return []Cookie{
-		{Name: "mode", Value: "relay", Domain: domain, Path: "/", Secure: true, HTTPOnly: true, HostOnly: true},
-		{Name: "fnos-token", Value: token, Domain: domain, Path: "/", Secure: true, HTTPOnly: true, HostOnly: true},
+		nativeRelayCookie(fnID),
+		{Name: "fnos-token", Value: token, Domain: fnID + ".fnos.net", Path: "/", Secure: true, HTTPOnly: true, HostOnly: true},
+	}
+}
+
+// nativeRelayCookie selects the FN Connect relay route. It is not a credential;
+// every gateway request must carry it, including the login WebSocket handshake.
+func nativeRelayCookie(fnID string) Cookie {
+	return Cookie{
+		Name: "mode", Value: "relay", Domain: fnID + ".fnos.net",
+		Path: "/", Secure: true, HTTPOnly: true, HostOnly: true,
 	}
 }

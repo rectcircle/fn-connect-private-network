@@ -219,7 +219,6 @@ inline std::wstring L(std::wstring_view source) {
         {L"正在恢复客户端后台服务…", L"Recovering the client service…"},
         {L"FnCPN 网络服务不可用", L"FnCPN network service unavailable"},
         {L"请打开 FnCPN 查看诊断信息，或运行需要管理员权限的修复。", L"Open FnCPN to review diagnostics or run the repair that requires administrator permission."},
-        {L"该账号需要两步验证，当前版本暂不支持。", L"This account requires two-factor authentication, which this version does not support."},
         {L"客户端版本不兼容，请升级客户端。", L"Incompatible client version. Upgrade the client."},
         {L"服务端版本不兼容，请升级服务端。", L"Incompatible server version. Upgrade the server."},
         {L"暂时无法连接 fnOS，请检查网络后重试。", L"Cannot reach fnOS right now. Check the network and try again."},
@@ -273,6 +272,17 @@ inline std::wstring L(std::wstring_view source) {
         {L"对应版本下载", L"Download this version"},
         {L"FN Connect ID", L"FN Connect ID"},
         {L"官网 · 捐赠", L"Website · Donate"},
+        {L"该 NAS 开启了访问码，请输入访问码", L"This NAS uses an access code. Enter it to continue."},
+        {L"访问码不正确，请重试", L"That access code is incorrect. Try again."},
+        {L"访问码尝试次数过多，请稍后重试", L"Too many access code attempts. Try again later."},
+        {L"该账号需要两步验证，请输入 OTP", L"This account requires two-factor authentication. Enter your OTP."},
+        {L"OTP 不正确，请重试", L"That OTP is incorrect. Try again."},
+        {L"该账号要求两步验证，请先在 fnOS 网页端完成绑定", L"This account enforces two-factor authentication. Bind it on the fnOS web page first."},
+        {L"访问码", L"Access code"},
+        {L"OTP", L"OTP"},
+        {L"信任此设备", L"Trust this device"},
+        {L"请输入 fnOS 访问码", L"Enter your fnOS access code"},
+        {L"请输入 6 位 OTP", L"Enter a 6-digit OTP"},
     };
     const auto found = catalog.find(source);
     return std::wstring(found == catalog.end() ? source : found->second);
@@ -491,7 +501,6 @@ inline const wchar_t* L(const char* source) {
         {"正在恢复客户端后台服务…", {L"Recovering the client service…", L"正在恢复客户端后台服务…"}},
         {"FnCPN 网络服务不可用", {L"FnCPN network service unavailable", L"FnCPN 网络服务不可用"}},
         {"请打开 FnCPN 查看诊断信息，或运行需要管理员权限的修复。", {L"Open FnCPN to review diagnostics or run the repair that requires administrator permission.", L"请打开 FnCPN 查看诊断信息，或运行需要管理员权限的修复。"}},
-        {"该账号需要两步验证，当前版本暂不支持。", {L"This account requires two-factor authentication, which this version does not support.", L"该账号需要两步验证，当前版本暂不支持。"}},
         {"客户端版本不兼容，请升级客户端。", {L"Incompatible client version. Upgrade the client.", L"客户端版本不兼容，请升级客户端。"}},
         {"服务端版本不兼容，请升级服务端。", {L"Incompatible server version. Upgrade the server.", L"服务端版本不兼容，请升级服务端。"}},
         {"暂时无法连接 fnOS，请检查网络后重试。", {L"Cannot reach fnOS right now. Check the network and try again.", L"暂时无法连接 fnOS，请检查网络后重试。"}},
@@ -545,6 +554,17 @@ inline const wchar_t* L(const char* source) {
         {"对应版本下载", {L"Download this version", L"对应版本下载"}},
         {"FN Connect ID", {L"FN Connect ID", L"FN Connect ID"}},
         {"官网 · 捐赠", {L"Website · Donate", L"官网 · 捐赠"}},
+        {"该 NAS 开启了访问码，请输入访问码", {L"This NAS uses an access code. Enter it to continue.", L"该 NAS 开启了访问码，请输入访问码"}},
+        {"访问码不正确，请重试", {L"That access code is incorrect. Try again.", L"访问码不正确，请重试"}},
+        {"访问码尝试次数过多，请稍后重试", {L"Too many access code attempts. Try again later.", L"访问码尝试次数过多，请稍后重试"}},
+        {"该账号需要两步验证，请输入 OTP", {L"This account requires two-factor authentication. Enter your OTP.", L"该账号需要两步验证，请输入 OTP"}},
+        {"OTP 不正确，请重试", {L"That OTP is incorrect. Try again.", L"OTP 不正确，请重试"}},
+        {"该账号要求两步验证，请先在 fnOS 网页端完成绑定", {L"This account enforces two-factor authentication. Bind it on the fnOS web page first.", L"该账号要求两步验证，请先在 fnOS 网页端完成绑定"}},
+        {"访问码", {L"Access code", L"访问码"}},
+        {"OTP", {L"OTP", L"OTP"}},
+        {"信任此设备", {L"Trust this device", L"信任此设备"}},
+        {"请输入 fnOS 访问码", {L"Enter your fnOS access code", L"请输入 fnOS 访问码"}},
+        {"请输入 6 位 OTP", {L"Enter a 6-digit OTP", L"请输入 6 位 OTP"}},
     };
     const auto found = catalog.find(source);
     if (found == catalog.end()) return L"";

@@ -1,43 +1,44 @@
-# fnOS / FN Connect 协议与验证
+# fnOS / FN Connect 协议参考
 
-本文记录 2026-09-27 至 2026-10-18 的协议研究与实测，不是 fnOS 官方稳定 API 承诺。
-上游变动需重新验证；适配实现见 `internal/client/discovery.go`、`native_session.go`、`cookies.go`、`adminproxy.go` 为准。
-FnCPN 自有接口见 [接口契约](interfaces.md)。
+本文记录 fnOS 与 FN Connect 的地址发现、网关认证、WebSocket 会话、访问码及两步验证协议。
+内部接口和不同 fnOS 版本的响应可能变化，本文不代表官方稳定 API 承诺。
+示例中的 ID、token、密钥和设备信息均为占位值。
 
-## NAS 本机 FN Connect 信息读取（2026-10-18）
+## NAS 本机信息接口
 
-在 fnOS 1.2.0800 实机经 SSH 做只读验证，以实际应用用户 `fncpn`（UID 978）执行，未修改系统配置。
+### FN Connect ID
 
-- Unix Socket：`/run/trim-connect.sock`（`/var/run` 指向 `/run`），模式 `0666`。
-- `GET http://localhost/trimfn` 经该 Socket 请求，返回 HTTP 200、`text/plain; charset=utf-8`，
-  正文为当前 FN Connect ID；本次与系统设置页一致，响应耗时约 0.5ms。
-- `/usr/trim/etc/network_gateway_setting.conf` 为 `0644` JSON，普通应用用户可读。
-  `schema.http.port` / `schema.https.port` 分别为 HTTP / HTTPS 管理端口，
-  `force_https` 表示是否强制 HTTPS，`redirect` 表示重定向设置。本机实测为 5666 / 5667、false / true。
-- 两项读取均无需用户登录 token、密码、前端宿主桥接或 root IPC。
+| 项目 | 值 |
+| --- | --- |
+| 传输 | HTTP over Unix Socket |
+| Socket | `/run/trim-connect.sock`（`/var/run/trim-connect.sock` 为等价路径） |
+| 方法与路径 | `GET /trimfn` |
+| Host | `localhost` |
+| 成功状态 | HTTP 200 |
+| 响应类型 | `text/plain; charset=utf-8` |
+| 响应正文 | 当前 FN Connect ID |
 
-复核 FN ID 的只读命令：
+该接口不依赖 fnOS 用户登录 token。
 
-```sh
-curl --fail --max-time 5 --unix-socket /run/trim-connect.sock http://localhost/trimfn
-```
+### 管理端口配置
 
-推荐由 server daemon 用 Go HTTP Unix Socket transport 读取 FN ID，并只读解析端口 JSON，
-通过自有 bootstrap 下发默认后缀和 NAS 访问地址。读取应设超时及大小限制，明确区分未配置与暂时读取失败，
-不将失败解释为清空已有自定义后缀。这是当前实机验证的内部接口，不视为所有 fnOS 版本的稳定承诺。
-已通过 `internal/server/fnos_info.go` 接入 bootstrap；前端只使用服务端元数据，客户端不再向管理页 URL 传入 FN ID 和端口。
+`/usr/trim/etc/network_gateway_setting.conf` 为 JSON 文件，相关字段如下：
 
-## 地址发现接口
+| 字段 | 含义 |
+| --- | --- |
+| `schema.http.port` | HTTP 管理端口 |
+| `schema.https.port` | HTTPS 管理端口 |
+| `force_https` | 是否强制 HTTPS |
+| `redirect` | 重定向设置 |
+
+这些信息属于 NAS 本机接口，不是 FN Connect 公网 API。
+
+## FN Connect 地址发现与路由
 
 ### 地址发现
 
-访问 `https://<fn-id>.fnos.net/` 时，服务会先跳转到：
-
-```text
-https://fnos.net/<fn-id>/
-```
-
-前端随后调用：
+FN Connect 入口包括 `https://<fn-id>.fnos.net/` 和 `https://fnos.net/<fn-id>/`。
+地址发现请求如下：
 
 ```http
 POST https://fnos.net/api/v1/fn/con
@@ -48,7 +49,8 @@ authx: nonce=<nonce>&timestamp=<timestamp>&sign=<md5>
 {"fnId":"<fn-id>"}
 ```
 
-2026-09-27 实测返回了局域网 IPv4、公网 IPv4、公网 IPv6、FN 中继域名、fnOS HTTP/HTTPS 端口、版本和探测校验值。该接口不依赖用户 Cookie，但包含两层由公开前端常量计算的签名：
+响应信息包括局域网 IPv4、公网 IPv4、公网 IPv6、FN 中继域名、fnOS HTTP/HTTPS 端口、
+版本和探测校验值。该请求不依赖 NAS 用户 Cookie，签名计算如下：
 
 ```text
 fn-sign = SHA256("trim_connect`" + fnId + "`" + timestamp + "`anna")
@@ -63,49 +65,37 @@ authx.sign = MD5(
 )
 ```
 
-`timestamp` 为 Unix 毫秒时间戳；`nonce` 必须使用网页端的六位十进制格式，范围为 `100000` 至 `999999`。公开脚本使用 `(Math.floor(Math.random()*9e5)+1e5).toString().padStart(6,"0")`。[cite:2]
+- `requestPath` 为 `/api/v1/fn/con`。
+- `timestamp` 为 Unix 毫秒时间戳。
+- `nonce` 为六位十进制字符串，范围 `100000` 至 `999999`。
+- `jsonBody` 为实际发送的 JSON 正文，参与摘要计算的字节与请求正文一致。
 
-2026-10-01 使用随机不存在的 FN ID 对公共接口进行对照：32 位十六进制 nonce 返回 `5000: invalid sign`，六位十进制 nonce 返回 `3000037: Not Found Error`。后者说明请求通过了签名校验，但不代表真实 NAS 连接已通过。
+相关错误码：
 
-这属于客户端校验或反滥用机制，**不是用户身份认证**。算法与常量都在公开前端资源中，不能作为本项目的安全边界。[cite:2]
+| 错误码 | 含义 |
+| --- | --- |
+| `5000` | `invalid sign`，签名校验失败 |
+| `3000037` | `Not Found Error`，目标 FN ID 未找到 |
 
-该接口是未公开的内部接口。适配逻辑隔离在 `internal/client/discovery.go` 中，并允许协议变化后快速替换。
+签名算法及常量来自公开前端资源，用于请求校验，不代表 NAS 用户身份认证。
 
+### 中继路由
 
-## 登录、Cookie 与会话恢复
+```http
+Cookie: mode=relay
+```
 
-### 链路 I：FN Connect 凭证与 fnOS 原生会话
+`mode=relay` 选择 FN Connect 中继路由，不是身份凭据。不带该 Cookie 的请求可能进入
+FN Connect 公共入口页或发生跳转，而不是直接到达 NAS。
 
-验证目标：
+NAS 应用的网关路径形式为 `/app/<app-name>/...`，支持 HTTP 请求与 WebSocket Upgrade。
+网关使用 fnOS 登录会话认证；访问码开启时，还存在独立的访问码校验层。
 
-- 完整 fnOS Cookie 快照能否通过 FN Connect 统一网关认证。
-- FN Connect 是否转发 fnOS 自带的认证 WebSocket。
-- 客户端能否从 fnOS 原生会话恢复统一网关接受的短 token。
-- 长 token 能否在短 token 失效后恢复会话。
+## WebSocket RPC 与登录会话
 
-#### Cookie 快照路径
+### 连接入口
 
-原 PoC 先验证了浏览器 Cookie 路径：
-
-- `mode=relay` 是进入 FN Connect 中继模式的路由 Cookie，不是用户身份凭证。
-- 早期 fnOS/FN Connect 实测的认证 Cookie 包含 `entry-token`、`osrt` 和 `ost`；
-  不同 fnOS 版本返回的具体 Cookie 集合可能变化，客户端不能硬编码名称。
-- Cookie 可以从 Safari Network 面板中的已认证请求获取；HttpOnly Cookie
-  不能通过 `document.cookie` 读取。
-- 将完整 Cookie 集合保存到权限 `0600` 的文件后，普通 CLI WSS bridge
-  能通过 FN Connect 统一网关认证并连接 FnCPN。
-- PoC 假设的单一 `fnos-token` 当时没有被 FN Connect 代理直接透传给应用，
-  因此不能依赖服务端导出一个固定 token 字符串。
-- 正式客户端保留通用 Cookie jar 作为兼容层，并处理 HTTP/WSS 响应中的
-  `Set-Cookie`，但主登录路径不再导出浏览器 Cookie。
-
-这条路径证明了“完整浏览器会话快照可以连接”，但快照自身不提供稳定的长期恢复语义；
-Cookie 真正失效时仍需要重新登录。
-
-#### fnOS 原生 token 路径
-
-这不是 OAuth2，而是 fnOS 自带的 WebSocket RPC 会话协议。经 FN Connect
-建立认证通道时，客户端先发送：
+经 FN Connect 建立连接：
 
 ```http
 GET /websocket?type=main HTTP/1.1
@@ -115,199 +105,262 @@ Connection: Upgrade
 Upgrade: websocket
 ```
 
-FN Connect 返回 `101 Switching Protocols` 后，客户端在 WebSocket 文本帧中
-调用以下 RPC：
+成功返回 `101 Switching Protocols`，后续使用 WebSocket 文本帧传输 JSON RPC。
+访问码开启时，握手请求的 Cookie 还包含 `os-access-code`。
 
-1. 首次原生登录使用未签名的 `user.login`，包含 `user`、`password`、
-   `stay=1`、`deviceName`、`deviceType`、稳定 `did` 和 `reqid`。
-2. 登录成功返回短期 `token`、长期 `longToken`、HMAC 密钥 `secret`、
-   请求上下文 `backId`、`uid` 和管理员标记。密码只用于本次 WSS 登录，
-   不持久化。
-3. 已有会话先调用未签名的 `util.getSI`，再使用 `secret` 对
-   `user.authToken` 请求做 HMAC-SHA256 签名，确认或刷新短 token。
-4. `user.authToken` 失败时，在新连接上重新获取 `si`，再签名调用
-   `user.tokenLogin`，其中 `token` 字段承载 `longToken`。
-5. 签名线格式为 `<base64-hmac-signature><json-body>`，没有分隔符；
-   HMAC 密钥是 `secret` 的 Base64 解码值。
-6. 恢复响应只覆盖实际返回的非空字段。实测 `user.tokenLogin` 返回了新短 token
-   和 `backId`，但没有返回新的 `longToken` 或 `secret`；客户端必须保留旧值，
-   不能把缺失字段清空。
-7. 有效短 token 作为 `fnos-token` Cookie 访问 `/app/fncpn` 的 HTTP 和 WSS
-   入口；`mode=relay` 仍只负责选择 FN Connect 中继路径。
+局域网或公网地址直连使用 NAS 的管理端口，路径同为 `/websocket?type=main`；
+这类连接不经过 FN Connect 的中继路由。
 
-2026-09-27 实测的 FN Connect 浏览器会话使用 `ost` 作为短 token，并在页面存储中保存
-`fnos-Secret`。浏览器中继会话没有暴露 `fnos-long-token`，因此仅导出浏览器
-Cookie 不能形成完整的长期恢复会话。正式客户端现已保存
-`token + longToken + secret + backId + did + username`，同时保留完整 Cookie jar
-作为统一网关的兼容层；密码只用于单次登录，不持久化。
+### 请求与响应
 
-#### 管理后台独立 Web token
+普通请求以 `req` 指定方法，以 `reqid` 标识请求。响应通过 `reqid` 关联请求，
+`result` 表示结果，失败响应可携带 `errno`、`errmsg` 等字段。
 
-管理后台与隧道会话严格隔离。用户提交密码时，client daemon 在 CLI
-`user.login` 之外，以独立 DID 执行一次加密 Web 登录：
+原生登录请求：
 
-1. `util.crypto.getRSAPub` 返回 RSA 公钥和 `si`。
-2. 客户端生成 32 字节 base62 AES key 和 16 字节 IV，以 AES-256-CBC
-   加密完整 `user.login`，再以 RSA PKCS#1 v1.5 加密 AES key。
-3. 不携带 `ver` 的 Web 登录返回管理页专用短 token；它不覆盖
-   `NativeSession`，也不进入隧道 Cookie jar。
-4. loopback AdminProxy 只允许 `/app/fncpn` 子树，清除浏览器传入 Cookie，
-   再注入 `mode=relay + Web fnos-token`。
+```json
+{
+  "req": "user.login",
+  "reqid": "<request-id>",
+  "user": "<username>",
+  "password": "<password>",
+  "stay": 1,
+  "deviceName": "<device-name>",
+  "deviceType": "CLI",
+  "did": "<device-id>"
+}
+```
 
-实机最终链路中，`GET /app/fncpn` 与
-`GET /app/fncpn/api/v1/admin/snapshot` 均返回 200，且 Web 登录后 CLI token
-仍可访问 bootstrap。此前侦察过的 ticket/ost/entry-token 属于 fnOS 首页浏览器会话，
-不是 FnCPN 管理页必需条件，正式实现不再使用。
+`user.login` 在尚未建立登录会话时使用未签名请求。完成登录后的主要响应字段：
 
-#### 真机验证
+| 字段 | 含义 |
+| --- | --- |
+| `token` | 短期登录 token |
+| `longToken` | 长期会话恢复 token |
+| `secret` | Base64 编码的请求签名密钥 |
+| `backId` | 请求上下文标识 |
+| `uid` | 用户 ID |
+| 管理员标记 | 当前账号的管理员身份信息 |
 
-在测试 NAS 上取得以下证据：
+账号需要两步验证时，`user.login` 可以先返回挑战信息，此时尚未签发完整登录会话。
 
-- 原 PoC 将浏览器已认证 Cookie 保存为 `0600` 文件后，CLI WSS bridge
-  已通过 FN Connect 统一网关建立连接。
-- Cookie 认证后的 WireGuard over FN Connect WSS 完成握手和数据传输，
-  基础 ping 及 100 次 1200-byte payload 均为 0% 丢包。
-- 未认证访问 FnCPN HTTP/WSS 均返回 `invalid token`，负向基线成立。
-- 携带 `mode=relay` 访问
-  `wss://<fn-id>.fnos.net/websocket?type=main`，FN Connect 返回 `101`。
-- 在同一条 FN Connect 认证 WebSocket 上，`util.getSI` 和签名后的
-  `user.authToken` 均成功。
-- 恢复出的短 token 经 FN Connect 请求 FnCPN bootstrap 返回结构化 HTTP `200`。
-- 同一短 token 经 FN Connect 建立 FnCPN relay WSS，Upgrade 返回 `101`。
-- 使用公网 IPv6 直连 NAS 的 `5667/WSS` 执行 `user.login`，成功取得
-  `token`、`longToken`、`secret` 和 `backId`。
-- 使用该长期会话执行 `user.tokenLogin` 成功；恢复出的短 token 再次经
-  FN Connect 通过 FnCPN HTTP `200` 和 WSS `101`。
-- 使用 Node.js WebSocket 客户端直接连接 FN Connect 域名，并在两条独立连接上
-  显式携带 `Cookie: mode=relay`：第一条执行 `user.login`，成功返回
-  `token`、`longToken`、`secret` 和 `backId`；第二条执行
-  `util.getSI + user.tokenLogin`，成功恢复短 token 和 `backId`。
-- 上述 Node.js 验证全程未使用公网 IPv6、`trim-cli` 或本地代理；恢复出的短 token
-  经同一 FN Connect 域名访问 FnCPN bootstrap 返回 HTTP `200`，建立 relay WSS
-  返回 `101`。
-- `trim-cli` 直接连接 `<fn-id>.fnos.net` 会收到跳转到
-  `fnos.net/<fn-id>/websocket` 的 `302`，原因是它不能注入
-  `mode=relay` Cookie，不代表 FN Connect 不支持该认证 WebSocket。
+### 请求签名与会话恢复
 
-验证边界：
+`util.getSI` 为未签名请求，返回当前连接的会话完整性值 `si`。
+已有会话的认证请求使用 `secret` 签名，线格式为：
 
-- Cookie 快照连接已经验证，但不同 fnOS 版本的 Cookie 名称、过期时间和续期行为
-  不能从单次快照推导。
-- `GET /websocket?type=main`、`user.login`、`user.authToken` 和
-  `user.tokenLogin` 均已通过 FN Connect 实机执行。
-- 上述实测未覆盖 2FA、信任设备、密码修改或服务端撤销设备后的恢复分支。
-- 影视 OAuth 只签发 Media token，不需要用于 FnCPN 系统网关认证。
+```text
+Base64(HMAC-SHA256(Base64Decode(secret), jsonBody)) + jsonBody
+```
 
-结论：
+签名与 JSON 正文直接拼接，中间没有分隔符。
 
-> 完整 Cookie 快照和 fnOS 原生 token 是两条均已取得真机证据的认证路径。
-> Cookie 路径已证明能够直接建立 FnCPN 中继；原生会话进一步提供短 token
-> 确认和长 token 恢复能力。正式客户端应优先管理原生会话，同时保留通用
-> Cookie jar 作为兼容路径。`user.login`、`user.tokenLogin` 及恢复后的
-> FnCPN HTTP/WSS 鉴权已全部通过 FN Connect 实机验证，无需依赖客户端具备 IPv6。
+短 token 认证请求包含 `req`、`reqid` 和以下字段：
 
+```json
+{
+  "req": "user.authToken",
+  "reqid": "<request-id>",
+  "token": "<short-token>",
+  "si": "<session-integrity>",
+  "main": true,
+  "active": true
+}
+```
 
-## 客户端会话规则
+长期会话恢复使用 `user.tokenLogin`，其中 `token` 承载 `longToken`：
 
-## Client 获取与维护 fnOS 会话
+```json
+{
+  "req": "user.tokenLogin",
+  "reqid": "<request-id>",
+  "token": "<long-token>",
+  "si": "<session-integrity>",
+  "deviceType": "CLI",
+  "deviceName": "<device-name>",
+  "did": "<device-id>"
+}
+```
 
-正式方案：FnCPN.app 提供原生登录表单，client daemon 经 FN Connect 调用 fnOS
-原生 WebSocket 会话协议。客户端不读取浏览器数据，不要求复制 Cookie，且不持久化密码。
+恢复响应可能只返回新的短 token 和 `backId`。省略 `longToken` 或 `secret` 不表示
+原有对应字段已失效。
 
-### 原生登录页规则
+### Web 加密登录
 
-- 首次启动直接显示 FN Connect ID、用户名和密码三个字段。
-- 密码使用安全输入框，仅随单次 `authorize-native` IPC 请求进入 client daemon。
-- `user.login` 必须通过 `wss://<fn-id>.fnos.net/websocket?type=main`，并显式携带
-  `Cookie: mode=relay`；不得回退到明文 WS。
-- 登录成功后只持久化 `token + longToken + secret + backId + did + username`。
-- daemon 必须再通过 FnCPN bootstrap 校验会话并取得 `administrator` 标记；
-  非管理员同样可以注册设备与建链，但 Web 管理后台仅对管理员开放。
-  不能以 `user.login` 成功代替应用授权。
-- 鉴权失败时详情页提供“重新登录”；登录页预填 FN Connect ID 和用户名，密码始终为空。
-- 原生登录不支持 2FA challenge；检测到 2FA challenge 时明确报错，不保存不完整会话。
+Web 登录使用 `util.crypto.getRSAPub` 获取 RSA 公钥及 `si`；也可由 `util.getSI` 获取
+连接的 `si`。加密过程如下：
 
-### 管理后台会话
+1. 生成 32 字节 base62 字符组成的 AES key 和 16 字节 IV。
+2. 以 AES-256-CBC 和 PKCS#7 填充加密完整登录 JSON，正文包含 `req`、`reqid`、
+   用户信息、设备信息及 `si`。
+3. 以 RSA PKCS#1 v1.5 加密 AES key。
+4. 发送加密封装帧：
 
-- 管理页 Web 登录使用独立 DID，不覆盖 CLI token、longToken 或 secret。
-- 本地 AdminProxy 只监听 loopback，只代理 `/app/fncpn` 子树，并以一次性高熵
-  bootstrap nonce 建立本地 HttpOnly 会话。
-- 代理始终删除浏览器传入 Cookie，只注入独立 Web token 生成的
-  `mode=relay; fnos-token=...`。
-- 每次打开管理页前先以 Web token 探测 admin snapshot。明确的 `invalid token/401`
-  只清除 Web session 并提示重新登录；网络失败只提示管理后台暂不可用。
-- 管理代理探测不调用 `m.fail`，不修改客户端连接状态，不调用 CLI session recovery，
-  不清理或回退使用 CLI token。
-- Logout、Forget 和 daemon 退出必须关闭管理代理并清除 Web 会话。
+```json
+{
+  "req": "encrypted",
+  "iv": "<base64-iv>",
+  "rsa": "<base64-encrypted-aes-key>",
+  "aes": "<base64-encrypted-json>"
+}
+```
 
-### 凭证使用与刷新
+内层登录方法仍为 `user.login`，Web 会话使用 `deviceType="Browser"`。
+加密握手响应的 `reqid` 可能不同于内层请求的 `reqid`。
+Web 与 CLI 登录可分别签发会话；两者的 token 不应被视为同一个会话标识。
 
-- 除刚完成 `user.login` 的首次连接外，连接前使用
-  `util.getSI + user.authToken` 确认短 token。
-- 短 token 被拒绝时，在新 WebSocket 连接上执行
-  `util.getSI + user.tokenLogin(longToken)`；只覆盖响应实际返回的非空字段。
-- 恢复短 token 后必须重新加载 Cookie 并重建 RemoteClient；不得使用仍持有旧
-  `fnos-token` 的内存客户端重试。
-- 配置长轮询或 relay 重连遇到明确鉴权失败时，先执行一次原生会话恢复，再决定是否进入
-  `AUTH_REQUIRED`。
-- `fncpn client daemon` 使用标准 Cookie jar 为控制请求和 WSS 握手选择匹配 Cookie。
-- 响应中的 `Set-Cookie` 必须更新 Cookie jar 和 root 凭据文件，不把 Cookie 当作固定字符串。
-- 发现接口无需用户凭证时，不附带 Cookie。
-- 长 token 也被拒绝时状态切换为 `AUTH_REQUIRED`，保留设备密钥、配置、FN Connect ID
-  和用户名，以便用户重新登录。
+### 网关 Cookie 与认证响应
 
-### 信任边界
+```http
+Cookie: mode=relay; fnos-token=<short-token>
+```
 
-上述实测中的 FN Connect 统一网关要求有效 fnOS 登录态，因此客户端保存的是具有 fnOS 会话能力的敏感凭证。WireGuard 密钥不能替代该网关凭证。
+`fnos-token` 承载 fnOS 短 token，供应用网关的 HTTP 与 WebSocket 请求认证。
+浏览器会话也可能涉及 `entry-token`、`osrt`、`ost` 等 Cookie，具体集合随登录方式和
+fnOS 版本变化。HttpOnly Cookie 不通过 `document.cookie` 暴露，Cookie 的更新和删除
+由响应中的 `Set-Cookie` 表达。
 
-正式实现必须：
+网关拒绝无效登录会话时，可能返回正文 `invalid token`；该正文可能伴随 HTTP 200、
+401 或 403。HTTP 200 本身不表示登录会话有效。该响应与下面的访问码挑战不同。
 
-- 把凭据保存为 root 私有文件，特权 IPC 按系统确认的调用用户 UID 隔离。
-- 明确提供“退出登录”和“忘记此服务端”操作。
-- 不在日志、诊断数据和普通配置文件中写入 token、secret、Cookie 或密码。
+## 访问码（Access Code）
 
+访问码是设备入口的前置校验，与账号密码和 OTP 相互独立，不属于 fnOS WebSocket RPC。
+FN Connect 网关可在 HTTP 代理或 WebSocket Upgrade 之前执行该校验。
 
-## 调研来源（保留原调研引用编号）
+访问码覆盖 fnOS 网页、相关官方应用及 FN Connect 远程访问入口；局域网直连、
+WebDAV、SMB、FTP 和独立分享链接不属于同一入口校验通道。
 
+### 挑战响应
 
-[cite:1] 飞牛，《如何远程访问到飞牛 NAS？》  
-https://help.fnnas.com/articles/v1/access/how-access
+未通过访问码校验的请求可收到访问码 HTML 页面，响应带有：
 
-[cite:2] 2026-09-27 的 FN Connect 网页前端资源与实测
-https://static2.fnnas.com/connect/assets/1MPg8Gvv7C7Lrf46.js  
-https://fnos.net/api/v1/fn/con
+```http
+x-trim-safe-code-challenge: 1
+```
 
-[cite:3] 飞牛应用开放平台，《统一网关》  
-https://developer.fnnas.com/docs/core-concepts/gateway-registration/
+该页面可能以 HTTP 200 返回，不是应用 API 的 JSON 响应。路由 Cookie `mode=relay`
+与访问码会话互不替代：公共入口页不等同于访问码挑战页。
 
-[cite:4] 飞牛应用开放平台，《应用框架》  
-https://developer.fnnas.com/docs/core-concepts/framework/
+访问码是否开启可通过尚未携带访问码会话的网关请求及挑战标记识别；普通请求本身
+不提交访问码，与验证接口的失败尝试计数不同。
 
-[cite:5] 飞牛应用开放平台，《应用权限》  
-https://developer.fnnas.com/docs/core-concepts/privilege/
+### 验证请求
 
-[cite:6] 飞牛应用开放平台，《Manifest》与《fnpack》  
-https://developer.fnnas.com/docs/core-concepts/manifest/  
-https://developer.fnnas.com/docs/cli/fnpack/
+```http
+GET /access_code_verify HTTP/1.1
+Host: <fn-id>.fnos.net
+x-access-code: <base64-encoded-utf8-access-code>
+x-access-source: web
+Cookie: mode=relay
+```
 
-[cite:7] 飞牛应用开放平台，《开放 API 调用方式》  
-https://developer.fnnas.com/api/calling/
+`x-access-code` 是访问码 UTF-8 原始字节的标准 Base64 编码。
 
-[cite:8] WireGuard，Protocol 与 wireguard-go  
-https://www.wireguard.com/protocol/  
-https://github.com/WireGuard/wireguard-go
+| 状态码 | 含义 |
+| --- | --- |
+| 204 | 验证成功，无响应正文，通过 `Set-Cookie` 返回访问码会话 |
+| 401 / 403 | 访问码校验失败 |
+| 429 | 尝试受到限制 |
 
-[cite:9] erebe/wstunnel，WireGuard and wstunnel  
-https://github.com/erebe/wstunnel
+### 访问码会话
 
-[cite:10] 飞牛 App 隐私政策  
-https://www.fnnas.com/privacy
+```http
+Set-Cookie: os-access-code=<session-token>; Path=/; HttpOnly; SameSite=Lax
+```
 
-[cite:11] Apple, Configuring network extensions  
-https://developer.apple.com/documentation/xcode/configuring-network-extensions
+| 属性 | 含义 |
+| --- | --- |
+| `os-access-code` | 访问码校验得到的会话 token，与账号登录 token 独立 |
+| Domain | 未声明时为 `<fn-id>.fnos.net` 的 host-only Cookie |
+| Path | `/`，覆盖该主机的 HTTP 与 WebSocket 入口 |
+| HttpOnly | 不向页面 JavaScript 暴露 |
+| SameSite | 上例为 `Lax` |
+| 有效期 | 未声明 `Expires` / `Max-Age` 时为会话 Cookie；不据此推导服务端的有效期 |
 
-[cite:12] WireGuard, wireguard-apple / WireGuardKit  
-https://github.com/WireGuard/wireguard-apple
+后续网关请求可以同时携带三类 Cookie：
 
-[cite:13] Apple, TN3134: Network Extension provider deployment  
-https://developer.apple.com/documentation/technotes/tn3134-network-extension-provider-deployment
+```http
+Cookie: mode=relay; os-access-code=<session-token>; fnos-token=<short-token>
+```
+
+三者分别表示中继路由、访问码会话和账号登录会话。
+
+另有访问码路径入口：
+
+```text
+https://<fn-id>.fnos.net/c/{access-code}
+```
+
+验证成功后进入后续登录流程，失败可返回 HTTP 404。
+
+## 两步验证（OTP）
+
+fnOS 的两步验证使用 TOTP（RFC 6238），OTP 为六位数字，时间周期为 30 秒。
+与访问码不同，两步验证是账号登录流程的一部分，由 `user.login` 的响应表达验证要求。
+
+### 登录挑战
+
+账号已绑定两步验证且设备尚未受信任时，登录响应可包含：
+
+```json
+{
+  "result": "succ",
+  "isBindTwofaSecret": true,
+  "isTrustedDevice": false,
+  "accessToken": "<challenge-token>",
+  "secureEmail": "<masked-email>"
+}
+```
+
+此处的 `result="succ"` 表示该阶段请求成功，不表示整个登录完成；响应尚未包含完整的
+`token`、`longToken`、`secret`。`accessToken` 是本次两步验证挑战的凭据，与最终登录
+`token` 及访问码 Cookie 均不同。
+
+| 响应字段组合 | 含义 |
+| --- | --- |
+| `isTwofaEnforced=true` 且 `isBindTwofaSecret=false` | 账号被要求启用两步验证，但尚未绑定 |
+| `isBindTwofaSecret=true` 且 `isTrustedDevice=false` | 账号已绑定两步验证，当前设备需要 OTP |
+
+### 提交 OTP
+
+```json
+{
+  "req": "user.2fa.loginVerify",
+  "reqid": "<request-id>",
+  "accessToken": "<challenge-token>",
+  "code": "123456",
+  "isTrustedDevice": true,
+  "stay": 1,
+  "deviceName": "<device-name>",
+  "deviceType": "CLI",
+  "did": "<device-id>",
+  "si": "<session-integrity>"
+}
+```
+
+| 字段 | 含义 |
+| --- | --- |
+| `accessToken` | 登录响应返回的挑战凭据 |
+| `code` | 六位 OTP 字符串，保留开头的零 |
+| `isTrustedDevice` | 是否请求信任当前设备 |
+| `stay` | 保持登录选项 |
+| `deviceName` / `deviceType` / `did` | 登录设备信息 |
+| `si` | 当前 WebSocket 连接的会话完整性值 |
+
+Web 加密登录同样使用该 RPC 方法，内层请求通过 `encrypted` 帧封装，设备类型为
+`Browser`。`submitTwofaCode` 是部分客户端库的辅助函数名称，不是 fnOS RPC 方法名。
+
+验证成功后返回完整登录会话。失败响应使用 `result="fail"` 和 `errno`、`errmsg` 等字段
+表达原因；`135168` 为账号认证拒绝，不能将所有失败响应都解释为 OTP 错误。
+
+## 参考资料
+
+- [飞牛：远程访问](https://help.fnnas.com/articles/v1/access/how-access)
+- [FN Connect 地址发现前端资源](https://static2.fnnas.com/connect/assets/1MPg8Gvv7C7Lrf46.js)
+- [飞牛应用开放平台：统一网关](https://developer.fnnas.com/docs/core-concepts/gateway-registration/)
+- [飞牛应用开放平台：开放 API 调用方式](https://developer.fnnas.com/api/calling/)
+- [飞牛：访问码](https://help.fnnas.com/articles/v1/safety/access-code)
+- [飞牛：双重验证](https://help.fnnas.com/articles/fnosV1/settings/setup-2fa.md)
+- [fnos-ts-client](https://github.com/Timandes/fnos-ts-client)
+- [fnOS Web API 文档（社区维护）](https://fnosp.github.io/fnnas-api/)

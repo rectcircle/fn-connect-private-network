@@ -32,6 +32,7 @@ const (
 	MethodShutdown            = "shutdown-client-daemon"
 	MethodDiagnose            = "diagnose"
 	MethodAdminProxy          = "admin-proxy"
+	MethodDetectAccessCode    = "detect-access-code"
 	defaultAuthorizationTTL   = 5 * time.Minute
 )
 
@@ -40,7 +41,7 @@ type Runtime interface {
 	Diagnose(context.Context) model.ClientDiagnostics
 	AdminProxyURL(context.Context) (string, error)
 	Authorize(context.Context, string, []Cookie) error
-	AuthorizeNative(context.Context, string, string, string) error
+	AuthorizeNative(context.Context, NativeCredentials) error
 	Connect(context.Context) error
 	Disconnect(context.Context) error
 	Retry(context.Context) error
@@ -55,10 +56,23 @@ type Authorization struct {
 }
 
 type NativeAuthorization struct {
-	RequestID string `json:"requestId"`
-	FNID      string `json:"fnId"`
-	Username  string `json:"username"`
-	Password  string `json:"password"`
+	RequestID   string `json:"requestId"`
+	FNID        string `json:"fnId"`
+	Username    string `json:"username"`
+	Password    string `json:"password"`
+	AccessCode  string `json:"accessCode,omitempty"`
+	TwofaCode   string `json:"twofaCode,omitempty"`
+	TrustDevice bool   `json:"trustDevice,omitempty"`
+}
+
+// AccessCodeRequest asks whether the gateway blocks unauthenticated requests
+// behind an access code, so the UI can show the field before the user signs in.
+type AccessCodeRequest struct {
+	FNID string `json:"fnId"`
+}
+
+type AccessCodeStatus struct {
+	Required bool `json:"required"`
 }
 
 type AuthorizationRequest struct {
@@ -163,6 +177,26 @@ func (s *Service) Handle(
 			return ipc.Failure(request.ID, model.PublicError(proxyErr))
 		}
 		return ipc.Success(request.ID, map[string]string{"url": base})
+	case MethodDetectAccessCode:
+		input, decodeErr := ipc.DecodeParams[AccessCodeRequest](request)
+		if decodeErr != nil {
+			return ipc.Failure(request.ID, decodeErr)
+		}
+		detector, ok := s.runtime.(interface {
+			DetectAccessCode(context.Context, string) (bool, error)
+		})
+		if !ok {
+			return ipc.Failure(request.ID, model.NewError(
+				model.ErrorFailedPrecondition,
+				"access code detection is unavailable",
+				false,
+			))
+		}
+		required, detectErr := detector.DetectAccessCode(ctx, input.FNID)
+		if detectErr != nil {
+			return ipc.Failure(request.ID, detectErr)
+		}
+		return ipc.Success(request.ID, AccessCodeStatus{Required: required})
 	case MethodConnect:
 		err = s.runtime.Connect(ctx)
 	case MethodDisconnect:
@@ -215,12 +249,21 @@ func (s *Service) Handle(
 			if startErr != nil {
 				err = startErr
 			} else {
-				err = s.runtime.AuthorizeNative(
-					authorizationContext,
-					authorization.FNID,
-					authorization.Username,
-					authorization.Password,
-				)
+				err = s.runtime.AuthorizeNative(authorizationContext, NativeCredentials{
+					FNID:        authorization.FNID,
+					Username:    authorization.Username,
+					Password:    authorization.Password,
+					AccessCode:  authorization.AccessCode,
+					TwofaCode:   authorization.TwofaCode,
+					TrustDevice: authorization.TrustDevice,
+				})
+				if RequiresAdditionalCredential(err) {
+					// The gateway or account asked for one more factor. Keep the
+					// authorization request pending so the UI can retry with the
+					// same request ID instead of starting a new sign-in.
+					s.pauseAuthorization(authorization.RequestID)
+					return ipc.Failure(request.ID, err)
+				}
 				err = s.finishAuthorization(authorization.RequestID, err)
 			}
 		}
@@ -545,6 +588,41 @@ func (s *Service) finishAuthorization(requestID string, err error) error {
 	closeAuthorizationChange(pending)
 	s.pending[requestID] = pending
 	return err
+}
+
+// pauseAuthorization releases the in-flight attempt but keeps the request
+// pending, so the UI can submit the access code or two-factor code that the
+// gateway or account just asked for under the same request ID.
+func (s *Service) pauseAuthorization(requestID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	pending, ok := s.pending[requestID]
+	if !ok {
+		return
+	}
+	if pending.cancel != nil {
+		pending.cancel()
+		pending.cancel = nil
+	}
+	pending.started = false
+	s.pending[requestID] = pending
+}
+
+// RequiresAdditionalCredential reports a sign-in rejection that only needs one
+// more user-supplied factor, rather than a terminal authorization failure. The
+// daemon keeps such an authorization request pending so it can be retried.
+func RequiresAdditionalCredential(err error) bool {
+	failure := model.AsError(err)
+	if failure == nil || failure.Code != model.ErrorFailedPrecondition {
+		return false
+	}
+	switch failure.RemoteCode {
+	case "ACCESS_CODE_INVALID", "ACCESS_CODE_REQUIRED", "ACCESS_CODE_RATE_LIMITED",
+		"TWO_FACTOR_REQUIRED", "TWO_FACTOR_SETUP_REQUIRED", "TWO_FACTOR_CODE_INVALID":
+		return true
+	default:
+		return false
+	}
 }
 
 func (s *Service) expireAuthorization(requestID string) {

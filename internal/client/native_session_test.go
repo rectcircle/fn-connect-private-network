@@ -77,14 +77,13 @@ func TestNativeSessionLoginAndLongTokenRecovery(t *testing.T) {
 	}))
 	defer server.Close()
 	target := "ws" + strings.TrimPrefix(server.URL, "http")
-	client := NativeSessionClient{Dial: func(ctx context.Context, _ string) (*websocket.Conn, error) {
-		connection, _, err := websocket.Dial(ctx, target, nil)
-		return connection, err
+	client := NativeSessionClient{Dial: func(ctx context.Context, _, _ string) (*websocket.Conn, *http.Response, error) {
+		return websocket.Dial(ctx, target, nil)
 	}}
-	session, err := client.Login(
-		context.Background(), "home-nas", "admin", "password-canary",
-		"stable-device", "FnCPN Test",
-	)
+	session, err := client.Login(context.Background(), NativeLogin{
+		FNID: "home-nas", Username: "admin", Password: "password-canary",
+		DeviceID: "stable-device", DeviceName: "FnCPN Test",
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,7 +98,203 @@ func TestNativeSessionLoginAndLongTokenRecovery(t *testing.T) {
 	}
 }
 
-func TestNativeSessionLoginRejectsTwoFactorWithoutPersistableSession(t *testing.T) {
+func TestNativeSessionLoginSurfacesTwoFactorChallenge(t *testing.T) {
+	cases := []struct {
+		name       string
+		challenge  map[string]any
+		code       string
+		remoteCode string
+	}{
+		{
+			name: "bound secret requires a code",
+			challenge: map[string]any{
+				"result": "fail", "accessToken": "temporary",
+				"isBindTwofaSecret": true, "secureEmail": "a***@example.com",
+			},
+			remoteCode: "TWO_FACTOR_REQUIRED",
+		},
+		{
+			name: "unbound enforced account without a challenge token",
+			challenge: map[string]any{
+				"result": "fail", "isTwofaEnforced": true, "secureEmail": "a***@example.com",
+			},
+			code: "123456", remoteCode: "TWO_FACTOR_SETUP_REQUIRED",
+		},
+		{
+			name: "enforced account has not bound a secret",
+			challenge: map[string]any{
+				"result": "fail", "accessToken": "temporary",
+				"isTwofaEnforced": true, "secureEmail": "a***@example.com",
+			},
+			remoteCode: "TWO_FACTOR_SETUP_REQUIRED",
+		},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				connection, err := websocket.Accept(w, r, nil)
+				if err != nil {
+					return
+				}
+				defer connection.CloseNow()
+				request := nativeTestRequest(t, r.Context(), connection, "")
+				nativeTestResponse(t, r.Context(), connection, request, testCase.challenge)
+			}))
+			defer server.Close()
+			_, err := newNativeTestClient("ws"+strings.TrimPrefix(server.URL, "http")).
+				Login(context.Background(), NativeLogin{
+					FNID: "home-nas", Username: "admin", Password: "password",
+					DeviceID: "device", DeviceName: "FnCPN", TwofaCode: testCase.code,
+				})
+			failure := model.AsError(err)
+			if failure == nil || failure.Code != model.ErrorFailedPrecondition ||
+				failure.RemoteCode != testCase.remoteCode {
+				t.Fatalf("2FA challenge was not surfaced: %v", err)
+			}
+			if failure.Detail != "a***@example.com" {
+				t.Fatalf("2FA challenge detail = %q", failure.Detail)
+			}
+		})
+	}
+}
+
+// Verification packet fields follow the fnos-ts-client submitTwofaCode implementation:
+// https://github.com/Timandes/fnos-ts-client/blob/main/src/client.ts#L663-L674
+func TestNativeSessionLoginSubmitsTwoFactorCode(t *testing.T) {
+	secret := base64.StdEncoding.EncodeToString([]byte("twofa-secret"))
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		connection, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer connection.CloseNow()
+		request := nativeTestRequest(t, r.Context(), connection, "")
+		if request["req"] != "user.login" {
+			t.Fatalf("first request = %v", request["req"])
+		}
+		did := request["did"]
+		if did == "" || did == nil {
+			t.Fatal("missing generated login device ID")
+		}
+		nativeTestResponse(t, r.Context(), connection, request, map[string]any{
+			"result": "succ", "accessToken": "temporary", "isBindTwofaSecret": true,
+		})
+		request = nativeTestRequest(t, r.Context(), connection, "")
+		if request["req"] != "util.getSI" {
+			t.Fatalf("expected session integrity request, got %v", request["req"])
+		}
+		nativeTestResponse(t, r.Context(), connection, request, map[string]any{"result": "succ", "si": "twofa-si"})
+		request = nativeTestRequest(t, r.Context(), connection, "")
+		if request["req"] != "user.2fa.loginVerify" || request["accessToken"] != "temporary" ||
+			request["code"] != "123456" || request["isTrustedDevice"] != true || request["trustDevice"] != nil ||
+			request["did"] != did || request["deviceName"] != "FnCPN" || request["deviceType"] != "CLI" ||
+			request["stay"] != float64(1) || request["si"] != "twofa-si" {
+			t.Fatalf("invalid two-factor request: %+v", request)
+		}
+		nativeTestResponse(t, r.Context(), connection, request, map[string]any{
+			"result": "succ", "token": "short-one", "longToken": "long-one",
+			"secret": secret, "backId": "back-one",
+		})
+	}))
+	defer server.Close()
+	session, err := newNativeTestClient("ws"+strings.TrimPrefix(server.URL, "http")).
+		Login(context.Background(), NativeLogin{
+			FNID: "home-nas", Username: "admin", Password: "password",
+			DeviceName: "FnCPN",
+			TwofaCode:  "123456", TrustDevice: true,
+		})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if session.Token != "short-one" || session.LongToken != "long-one" || session.Secret != secret {
+		t.Fatalf("two-factor session = %+v", session)
+	}
+}
+
+func TestNativeSessionLoginRejectsInvalidTwoFactorCode(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		errno      int
+		code       model.ErrorCode
+		remoteCode string
+	}{
+		{"invalid code", 135168, model.ErrorFailedPrecondition, "TWO_FACTOR_CODE_INVALID"},
+		{"other rejection", 65535, model.ErrorProtocol, "65535"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				connection, err := websocket.Accept(w, r, nil)
+				if err != nil {
+					return
+				}
+				defer connection.CloseNow()
+				request := nativeTestRequest(t, r.Context(), connection, "")
+				nativeTestResponse(t, r.Context(), connection, request, map[string]any{
+					"result": "succ", "accessToken": "temporary", "isBindTwofaSecret": true, "si": "challenge-si",
+				})
+				request = nativeTestRequest(t, r.Context(), connection, "")
+				if request["req"] != "user.2fa.loginVerify" || request["si"] != "challenge-si" {
+					t.Fatalf("invalid verification method or challenge binding: %v", request["req"])
+				}
+				nativeTestResponse(t, r.Context(), connection, request, map[string]any{
+					"result": "fail", "errno": test.errno, "errmsg": "verification rejected",
+				})
+			}))
+			defer server.Close()
+			_, err := newNativeTestClient("ws"+strings.TrimPrefix(server.URL, "http")).Login(
+				context.Background(), NativeLogin{
+					FNID: "home-nas", Username: "admin", Password: "password", DeviceID: "device",
+					DeviceName: "FnCPN", TwofaCode: "000000",
+				})
+			failure := model.AsError(err)
+			if failure == nil || failure.Code != test.code || failure.RemoteCode != test.remoteCode {
+				t.Fatalf("verification failure classification = %v", err)
+			}
+			if !strings.Contains(failure.Detail, "verification rejected") || !strings.Contains(failure.Detail, "fnOS errno") {
+				t.Fatalf("server rejection reason was lost: %q", failure.Detail)
+			}
+		})
+	}
+}
+
+func TestNativeSessionLoginRejectsNonNumericTwoFactorCode(t *testing.T) {
+	_, err := newNativeTestClient("ws://127.0.0.1:1").Login(
+		context.Background(), NativeLogin{
+			FNID: "home-nas", Username: "admin", Password: "password", TwofaCode: "12a456",
+		},
+	)
+	if model.AsError(err) == nil ||
+		model.AsError(err).Code != model.ErrorInvalidArgument {
+		t.Fatalf("non-numeric two-factor code error = %v", err)
+	}
+}
+
+func TestNativeSessionDialReportsAccessCodeChallenge(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("x-trim-safe-code-challenge", "1")
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte("access code required"))
+	}))
+	defer server.Close()
+	target := "ws" + strings.TrimPrefix(server.URL, "http")
+	_, err := newNativeTestClient(target).Login(context.Background(), NativeLogin{
+		FNID: "home-nas", Username: "admin", Password: "password",
+	})
+	failure := model.AsError(err)
+	if failure == nil || failure.Code != model.ErrorFailedPrecondition ||
+		failure.RemoteCode != "ACCESS_CODE_REQUIRED" {
+		t.Fatalf("access-code challenge was not surfaced: %v", err)
+	}
+}
+
+func TestNativeSessionDialCarriesStoredAccessCodeCookie(t *testing.T) {
+	store := NewConfigStore(filepath.Join(t.TempDir(), "config.json"), newMemorySecretStore())
+	if err := store.SaveAccessCodeCookie("home-nas", Cookie{
+		Name: accessCodeCookieName, Value: "gateway-session",
+		Domain: "home-nas.fnos.net", Path: "/", Secure: true, HostOnly: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		connection, err := websocket.Accept(w, r, nil)
 		if err != nil {
@@ -108,20 +303,33 @@ func TestNativeSessionLoginRejectsTwoFactorWithoutPersistableSession(t *testing.
 		defer connection.CloseNow()
 		request := nativeTestRequest(t, r.Context(), connection, "")
 		nativeTestResponse(t, r.Context(), connection, request, map[string]any{
-			"result": "fail", "accessToken": "temporary", "isTwofaEnforced": true,
+			"result": "succ", "token": "short-one", "longToken": "long-one",
+			"secret": base64.StdEncoding.EncodeToString([]byte("access-cookie-secret")),
 		})
 	}))
 	defer server.Close()
-	target := "ws" + strings.TrimPrefix(server.URL, "http")
-	client := NativeSessionClient{Dial: func(ctx context.Context, _ string) (*websocket.Conn, error) {
-		connection, _, err := websocket.Dial(ctx, target, nil)
-		return connection, err
-	}}
-	_, err := client.Login(context.Background(), "home-nas", "admin", "password", "device", "FnCPN")
-	if err == nil || model.AsError(err).Code != model.ErrorFailedPrecondition ||
-		model.AsError(err).RemoteCode != "TWO_FACTOR_REQUIRED" {
-		t.Fatalf("2FA response was not surfaced: %v", err)
+	var dialedCookie string
+	client := NativeSessionClient{
+		Dial: func(ctx context.Context, _, cookieHeader string) (*websocket.Conn, *http.Response, error) {
+			dialedCookie = cookieHeader
+			return websocket.Dial(ctx, "ws"+strings.TrimPrefix(server.URL, "http"), nil)
+		},
+		CookieHeader: gatewayCookieHeaderForStore(store),
 	}
+	if _, err := client.Login(context.Background(), NativeLogin{
+		FNID: "home-nas", Username: "admin", Password: "password", DeviceID: "device",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(dialedCookie, accessCodeCookieName+"=gateway-session") {
+		t.Fatalf("access-code cookie was not offered to the gateway: %q", dialedCookie)
+	}
+}
+
+func newNativeTestClient(target string) NativeSessionClient {
+	return NativeSessionClient{Dial: func(ctx context.Context, _, _ string) (*websocket.Conn, *http.Response, error) {
+		return websocket.Dial(ctx, target, nil)
+	}}
 }
 
 func TestAdminWebLoginReturnsIsolatedToken(t *testing.T) {
@@ -159,13 +367,10 @@ func TestAdminWebLoginReturnsIsolatedToken(t *testing.T) {
 	}))
 	defer server.Close()
 	target := "ws" + strings.TrimPrefix(server.URL, "http")
-	client := NativeSessionClient{Dial: func(ctx context.Context, _ string) (*websocket.Conn, error) {
-		connection, _, err := websocket.Dial(ctx, target, nil)
-		return connection, err
-	}}
-	session, err := client.WebLogin(
-		context.Background(), "home-nas", "admin", "password", "web-device", "FnCPN Test",
-	)
+	session, err := newNativeTestClient(target).WebLogin(context.Background(), NativeLogin{
+		FNID: "home-nas", Username: "admin", Password: "password",
+		DeviceID: "web-device", DeviceName: "FnCPN Test",
+	})
 	if err != nil || session.Token != "web-token" || session.DeviceID != "web-device" {
 		t.Fatalf("Web session = %+v, error = %v", session, err)
 	}
@@ -222,12 +427,12 @@ func TestManagerNativeAuthorizationPersistsSessionAndRecoversBeforeConnect(t *te
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := manager.AuthorizeNative(
-		context.Background(), "home-nas", "admin", "password-canary",
-	); err != nil {
+	if err := manager.AuthorizeNative(context.Background(), NativeCredentials{
+		FNID: "home-nas", Username: "admin", Password: "password-canary",
+	}); err != nil {
 		t.Fatal(err)
 	}
-	if authenticator.loginPassword != "password-canary" {
+	if authenticator.last.Password != "password-canary" {
 		t.Fatal("native password was not passed to the login call")
 	}
 	for _, value := range secrets.values {
@@ -270,6 +475,17 @@ func TestManagerNativeAuthorizationPersistsSessionAndRecoversBeforeConnect(t *te
 func TestManagerKeepsNativeAndAdminWebSessionsSeparate(t *testing.T) {
 	secrets := newMemorySecretStore()
 	store := NewConfigStore(filepath.Join(t.TempDir(), "config.json"), secrets)
+	if err := store.SaveCookies("home-nas", []Cookie{{
+		Name: "unrelated", Value: "private-cookie", Domain: "home-nas.fnos.net", Path: "/", Secure: true,
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveAccessCodeCookie("home-nas", Cookie{
+		Name: accessCodeCookieName, Value: "access-session", Domain: "home-nas.fnos.net",
+		Path: "/", Secure: true, HostOnly: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
 	nativeSecret := base64.StdEncoding.EncodeToString([]byte("native-secret"))
 	nativeAuth := &fakeNativeAuthenticator{
 		login: NativeSession{
@@ -312,7 +528,15 @@ func TestManagerKeepsNativeAndAdminWebSessionsSeparate(t *testing.T) {
 		Probe:            fakeLocalProbe{},
 		Authenticator:    nativeAuth,
 		WebAuthenticator: webAuth,
-		AdminWebProbe: func(context.Context, string, string) error {
+
+		AdminWebProbe: func(_ context.Context, fnID string, cookies []Cookie) error {
+			origin, _ := url.Parse("https://" + fnID + ".fnos.net/app/fncpn/api/v1/admin/snapshot")
+			header := cookieHeaderForURL(cookies, origin)
+			if !strings.Contains(header, "fnos-token=web-token") ||
+				!strings.Contains(header, "os-access-code=access-session") ||
+				strings.Contains(header, "cli-token") || strings.Contains(header, "unrelated") {
+				t.Fatalf("management probe did not use Web token and gateway access session: %q", header)
+			}
 			return nil
 		},
 		DeviceName: "MacBook",
@@ -320,10 +544,17 @@ func TestManagerKeepsNativeAndAdminWebSessionsSeparate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := manager.AuthorizeNative(
-		context.Background(), "home-nas", "admin", "password-canary",
-	); err != nil {
+	if err := manager.AuthorizeNative(context.Background(), NativeCredentials{
+		FNID: "home-nas", Username: "admin", Password: "password-canary",
+		TwofaCode: "123456", TrustDevice: true,
+	}); err != nil {
 		t.Fatal(err)
+	}
+	if nativeAuth.last.TwofaCode != "123456" || !nativeAuth.last.TrustDevice {
+		t.Fatalf("two-factor credentials were not forwarded: %+v", nativeAuth.last)
+	}
+	if webAuth.last.TwofaCode != "" || webAuth.last.TrustDevice {
+		t.Fatalf("single-use two-factor code was reused for the Web login: %+v", webAuth.last)
 	}
 	nativeSession, found, err := store.LoadNativeSession("home-nas")
 	if err != nil || !found {
@@ -340,9 +571,9 @@ func TestManagerKeepsNativeAndAdminWebSessionsSeparate(t *testing.T) {
 	if adminSession.Token != "web-token" {
 		t.Fatalf("admin Web session was not kept separate: %+v", adminSession)
 	}
-	if webAuth.loginDeviceID == nativeSession.DeviceID {
+	if webAuth.last.DeviceID == nativeSession.DeviceID {
 		t.Fatalf("login device IDs are not isolated: native=%q web=%q",
-			nativeSession.DeviceID, webAuth.loginDeviceID)
+			nativeSession.DeviceID, webAuth.last.DeviceID)
 	}
 	origin, _ := url.Parse("https://home-nas.fnos.net/app/fncpn")
 	for _, cookies := range remoteCookies {
@@ -382,14 +613,34 @@ func TestManagerKeepsNativeAndAdminWebSessionsSeparate(t *testing.T) {
 	proxy := manager.adminProxy
 	manager.mu.RUnlock()
 	request := httptest.NewRequest(http.MethodGet, proxyBaseURL+"/app/fncpn", nil)
+	request.Header.Set("Cookie", "fnos-token=browser-token; os-access-code=browser-code")
 	proxy.director(request)
 	if header := request.Header.Get("Cookie"); !strings.Contains(header, "fnos-token=web-token") ||
-		strings.Contains(header, "cli-token") {
+		!strings.Contains(header, "os-access-code=access-session") ||
+		strings.Contains(header, "cli-token") || strings.Contains(header, "browser-") || strings.Contains(header, "unrelated") {
 		t.Fatalf("admin proxy did not use isolated Web token: %q", header)
 	}
 
+	if err := store.SaveAccessCodeCookie("home-nas", Cookie{
+		Name: accessCodeCookieName, Value: "refreshed-access-session", Domain: "home-nas.fnos.net",
+		Path: "/", Secure: true, HostOnly: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	request = httptest.NewRequest(http.MethodGet, proxyBaseURL+"/app/fncpn/api/v1/admin/snapshot", nil)
+	proxy.director(request)
+	if header := request.Header.Get("Cookie"); !strings.Contains(header, "os-access-code=refreshed-access-session") {
+		t.Fatalf("proxy reused the stale access-code session: %q", header)
+	}
+	manager.adminWebProbe = func(context.Context, string, []Cookie) error { return accessCodeRequiredError() }
+	if _, err := manager.AdminProxyURL(context.Background()); !RequiresAdditionalCredential(err) {
+		t.Fatalf("expired access-code session did not request another credential: %v", err)
+	}
+	if _, found, err := store.LoadAdminWebSession("home-nas"); err != nil || !found {
+		t.Fatalf("gateway challenge cleared independent Web token: found=%v err=%v", found, err)
+	}
 	statusBeforeProbeFailure := manager.Status()
-	manager.adminWebProbe = func(context.Context, string, string) error {
+	manager.adminWebProbe = func(context.Context, string, []Cookie) error {
 		return model.WithOperation(model.NewError(
 			model.ErrorUnavailable, "management probe unavailable", true,
 		), "admin_proxy.probe")
@@ -401,7 +652,7 @@ func TestManagerKeepsNativeAndAdminWebSessionsSeparate(t *testing.T) {
 	if _, found, err := store.LoadAdminWebSession("home-nas"); err != nil || !found {
 		t.Fatalf("network failure cleared admin session: found=%v err=%v", found, err)
 	}
-	manager.adminWebProbe = func(context.Context, string, string) error {
+	manager.adminWebProbe = func(context.Context, string, []Cookie) error {
 		return model.WithOperation(model.NewError(
 			model.ErrorAuthRequired, "management session expired", false,
 		), "admin_proxy.probe")
@@ -463,9 +714,9 @@ func TestManagerWebLoginFailureDoesNotChangeNativeAuthorization(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := manager.AuthorizeNative(
-		context.Background(), "home-nas", "admin", "password-canary",
-	); err != nil {
+	if err := manager.AuthorizeNative(context.Background(), NativeCredentials{
+		FNID: "home-nas", Username: "admin", Password: "password-canary",
+	}); err != nil {
 		t.Fatalf("Web login failure broke CLI authorization: %v", err)
 	}
 	if _, found, err := store.LoadAdminWebSession("home-nas"); err != nil || found {
@@ -482,21 +733,17 @@ func TestManagerWebLoginFailureDoesNotChangeNativeAuthorization(t *testing.T) {
 }
 
 type fakeNativeAuthenticator struct {
-	login         NativeSession
-	recovered     NativeSession
-	loginPassword string
-	recoverCalls  atomic.Int32
+	login        NativeSession
+	recovered    NativeSession
+	last         NativeLogin
+	recoverCalls atomic.Int32
 }
 
 func (f *fakeNativeAuthenticator) Login(
 	_ context.Context,
-	_ string,
-	_ string,
-	password string,
-	_ string,
-	_ string,
+	request NativeLogin,
 ) (NativeSession, error) {
-	f.loginPassword = password
+	f.last = request
 	return f.login, nil
 }
 
@@ -510,22 +757,18 @@ func (f *fakeNativeAuthenticator) Recover(
 }
 
 type fakeAdminWebAuthenticator struct {
-	login         AdminWebSession
-	loginErr      error
-	loginDeviceID string
+	login    AdminWebSession
+	loginErr error
+	last     NativeLogin
 }
 
 func (f *fakeAdminWebAuthenticator) WebLogin(
 	_ context.Context,
-	_ string,
-	_ string,
-	_ string,
-	deviceID string,
-	_ string,
+	request NativeLogin,
 ) (AdminWebSession, error) {
-	f.loginDeviceID = deviceID
+	f.last = request
 	session := f.login
-	session.DeviceID = deviceID
+	session.DeviceID = request.DeviceID
 	return session, f.loginErr
 }
 

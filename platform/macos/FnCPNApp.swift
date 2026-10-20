@@ -32,6 +32,21 @@ private func L(_ key: String, _ arguments: String...) -> String {
 private let ipcProtocolVersion = 5
 private let maximumFrameSize = 256 * 1024
 
+private func additionalCredentialMessage(_ failure: [String: Any]) -> String? {
+    let factorMessages = [
+        "ACCESS_CODE_REQUIRED": "该 NAS 开启了访问码，请输入访问码",
+        "ACCESS_CODE_INVALID": "访问码不正确，请重试",
+        "ACCESS_CODE_RATE_LIMITED": "访问码尝试次数过多，请稍后重试",
+        "TWO_FACTOR_REQUIRED": "该账号需要两步验证，请输入 OTP",
+        "TWO_FACTOR_CODE_INVALID": "OTP 不正确，请重试",
+        "TWO_FACTOR_SETUP_REQUIRED": "该账号要求两步验证，请先在 fnOS 网页端完成绑定"
+    ]
+    guard let remoteCode = failure["remoteCode"] as? String,
+          let message = factorMessages[remoteCode] else { return nil }
+    return L(message)
+
+}
+
 private func failureSummary(_ failure: [String: Any]) -> String {
     if failure["code"] as? String == "VERSION_INCOMPATIBLE" {
         let target = failure["upgradeTarget"] as? String
@@ -39,9 +54,7 @@ private func failureSummary(_ failure: [String: Any]) -> String {
         return instruction + " " + L("客户端 {0}，服务端 {1}", failure["clientVersion"] as? String ?? "?", failure["serverVersion"] as? String ?? "?")
     }
 
-    if failure["remoteCode"] as? String == "TWO_FACTOR_REQUIRED" {
-        return L("该账号需要两步验证，当前版本暂不支持")
-    }
+    if let message = additionalCredentialMessage(failure) { return message }
     let keys = [
         "INVALID_ARGUMENT": "请求参数无效，请检查输入。",
         "AUTH_REQUIRED": "请重新登录后重试。",
@@ -399,7 +412,8 @@ private struct ConnectionPresentation {
         let failure = status["lastError"] as? [String: Any] ?? [:]
         let code = failure["code"] as? String ?? ""
         let operation = failure["operation"] as? String ?? ""
-        needsLogin = state == "AUTH_REQUIRED" || ["AUTH_REQUIRED", "DEVICE_REVOKED"].contains(code) ||
+        needsLogin = state == "AUTH_REQUIRED" || additionalCredentialMessage(failure) != nil ||
+            ["AUTH_REQUIRED", "DEVICE_REVOKED"].contains(code) ||
             (code == "PERMISSION_DENIED" && !operation.hasPrefix("credentials.") &&
                 !operation.hasPrefix("privileged.") &&
                 (failure["httpStatus"] as? Int == 403 || operation.hasPrefix("authorization.")))
@@ -424,6 +438,8 @@ private func directSummary(_ direct: [String: Any]) -> String {
 private func loginFailureMessage(_ failure: [String: Any]?) -> String {
     guard let failure else { return "" }
 
+    if let message = additionalCredentialMessage(failure) { return message }
+
     switch failure["code"] as? String ?? "" {
     case "AUTH_REQUIRED":
         let operation = failure["operation"] as? String ?? ""
@@ -435,9 +451,7 @@ private func loginFailureMessage(_ failure: [String: Any]?) -> String {
     case "UNAVAILABLE", "TIMEOUT":
         return L("暂时无法连接 fnOS，请检查网络后重试")
     case "FAILED_PRECONDITION":
-        return failure["remoteCode"] as? String == "TWO_FACTOR_REQUIRED"
-            ? L("该账号需要两步验证，当前版本暂不支持")
-            : describeFailure(failure)
+        return describeFailure(failure)
     default:
         return describeFailure(failure)
     }
@@ -451,7 +465,7 @@ private final class HandCursorButton: NSButton {
 }
 
 @main
-private final class AppDelegate: NSObject, NSApplicationDelegate {
+private final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
     private let ipc = IPCClient()
     private let launchAgent = LaunchAgentManager()
     private let statusValue = NSTextField(labelWithString: L("尚未连接"))
@@ -469,8 +483,11 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
     private let errorValue = NSTextView()
     private let setupError = NSTextField(wrappingLabelWithString: "")
     private let fnIDField = NSTextField()
+    private let accessCodeField = NSSecureTextField()
     private let usernameField = NSTextField()
     private let passwordField = NSSecureTextField()
+    private let twofaField = NSSecureTextField()
+    private let trustDeviceButton = NSButton(checkboxWithTitle: "", target: nil, action: nil)
     private let setupView = NSStackView()
     private let detailsView = NSStackView()
     private let progress = NSProgressIndicator()
@@ -503,6 +520,14 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
     private var savedUsername = ""
     private var pendingFNID = ""
     private var externalAuthorizationRequest = ""
+    // The daemon keeps an authorization request open when the gateway or the
+    // account asks for one more factor, so a retry reuses this request ID.
+    private var loginMessage: String?
+    private var accessCodeRequired = false
+    private var accessCodeProbeInFlight = false
+    private var accessCodeProbedFNID = ""
+    private var twofaChallenge = false
+    private var loginForm: NSGridView!
     private var diagnostics: [String: Any] = [:]
     private var operationError: [String: Any]?
     private var presentation = ConnectionPresentation([:])
@@ -553,9 +578,11 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         window.contentMinSize = NSSize(width: 680, height: 440)
         window.isReleasedWhenClosed = false
         window.contentView = content
-        fnIDField.nextKeyView = usernameField
+        fnIDField.nextKeyView = accessCodeField
+        accessCodeField.nextKeyView = usernameField
         usernameField.nextKeyView = passwordField
-        passwordField.nextKeyView = setupButton
+        passwordField.nextKeyView = twofaField
+        twofaField.nextKeyView = setupButton
         window.center()
         // Do not show the window yet: we show it once the first diagnostics
         // round trip returns so an already-logged-in user goes straight to the
@@ -624,22 +651,43 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         setupTitle.font = .systemFont(ofSize: 18, weight: .medium)
         setupView.addArrangedSubview(setupTitle)
         configureLoginField(fnIDField, placeholder: L("例如 home-nas"), label: "FN Connect ID")
+        configureLoginField(accessCodeField, placeholder: L("fnOS 访问码"), label: L("访问码"))
         configureLoginField(usernameField, placeholder: L("fnOS 用户名"), label: L("用户名"))
         configureLoginField(passwordField, placeholder: L("fnOS 密码"), label: L("密码"))
+        configureLoginField(twofaField, placeholder: L("6 位 OTP"), label: L("OTP"))
+        twofaField.widthAnchor.constraint(equalToConstant: 120).isActive = true
+        twofaField.setContentHuggingPriority(.defaultHigh, for: .horizontal)
+        twofaField.setContentCompressionResistancePriority(.defaultHigh, for: .horizontal)
+        trustDeviceButton.title = L("信任此设备")
         passwordField.target = self
         passwordField.action = #selector(submitLogin)
-        let loginForm = NSGridView(views: [
+        twofaField.target = self
+        twofaField.action = #selector(submitLogin)
+        // Typing a FN Connect ID ends with either Enter or focus leaving the
+        // field; both schedule the credential-free access-code probe.
+        fnIDField.target = self
+        fnIDField.action = #selector(probeAccessCode)
+        fnIDField.delegate = self
+        loginForm = NSGridView(views: [
             loginRow("FN Connect ID", fnIDField),
+            loginRow(L("访问码"), accessCodeField),
             loginRow(L("用户名"), usernameField),
-            loginRow(L("密码"), passwordField)
+            loginRow(L("密码"), passwordField),
+            loginRow(L("OTP"), horizontal([twofaField, trustDeviceButton]))
         ])
         loginForm.column(at: 0).width = 104
         loginForm.column(at: 1).width = 320
         loginForm.columnSpacing = 14
         loginForm.rowSpacing = 14
         loginForm.xPlacement = .fill
-        fnIDField.nextKeyView = usernameField
+        loginForm.row(at: 1).isHidden = true
+        loginForm.row(at: 4).isHidden = true
+        loginForm.row(at: 4).yPlacement = .center
+        loginForm.cell(atColumnIndex: 1, rowIndex: 4).xPlacement = .leading
+        fnIDField.nextKeyView = accessCodeField
+        accessCodeField.nextKeyView = usernameField
         usernameField.nextKeyView = passwordField
+        passwordField.nextKeyView = twofaField
         fill(loginForm, in: setupView)
         setupButton = button(L("登录并连接"), symbol: "arrow.right", action: #selector(submitLogin))
         setupButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 132).isActive = true
@@ -805,7 +853,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         field.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
     }
 
-    private func loginRow(_ name: String, _ field: NSTextField) -> [NSView] {
+    private func loginRow(_ name: String, _ field: NSView) -> [NSView] {
         let label = NSTextField(labelWithString: name)
         label.alignment = .right
         label.textColor = .secondaryLabelColor
@@ -1012,7 +1060,8 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
             } catch {
                 base = ""
                 let failure = (error as NSError).userInfo["failure"] as? [String: Any]
-                requiresLogin = failure?["code"] as? String == "AUTH_REQUIRED"
+                requiresLogin = failure?["code"] as? String == "AUTH_REQUIRED" ||
+                    additionalCredentialMessage(failure ?? [:]) != nil
                 failureMessage = error.localizedDescription
             }
             DispatchQueue.main.async { [weak self] in
@@ -1108,9 +1157,14 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         editingServer = true
         pendingFNID = ""
         fnIDField.stringValue = ""
+        accessCodeField.stringValue = ""
         usernameField.stringValue = ""
         passwordField.stringValue = ""
-        setupError.stringValue = ""
+        twofaField.stringValue = ""
+        accessCodeRequired = false
+        accessCodeProbedFNID = ""
+        twofaChallenge = false
+        loginMessage = ""
         render()
         window.makeFirstResponder(fnIDField)
     }
@@ -1118,7 +1172,13 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func returnToDetails() {
         cancelExternalAuthorization()
         editingServer = false
+        loginMessage = nil
         passwordField.stringValue = ""
+        accessCodeField.stringValue = ""
+        twofaField.stringValue = ""
+        accessCodeRequired = false
+        accessCodeProbedFNID = ""
+        twofaChallenge = false
         pendingFNID = ""
         render()
     }
@@ -1127,35 +1187,52 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         if waitingForLocalNetwork { continueWithoutLocalAccess(); return }
         guard !busy else { return }
         guard let fnID = normalizeFNID(fnIDField.stringValue) else {
-            setupError.stringValue = L("FN Connect ID 格式不正确")
+            loginMessage = L("FN Connect ID 格式不正确")
+            render()
             window?.makeFirstResponder(fnIDField)
             return
         }
         let username = usernameField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !username.isEmpty else {
-            setupError.stringValue = L("请输入 fnOS 用户名")
+            loginMessage = L("请输入 fnOS 用户名")
+            render()
             window?.makeFirstResponder(usernameField)
             return
         }
         let password = passwordField.stringValue
         guard !password.isEmpty else {
-            setupError.stringValue = L("请输入 fnOS 密码")
+            loginMessage = L("请输入 fnOS 密码")
+            render()
             window?.makeFirstResponder(passwordField)
             return
         }
+        let accessCode = accessCodeField.stringValue
+        if accessCodeRequired && accessCode.isEmpty {
+            loginMessage = L("请输入 fnOS 访问码")
+            render()
+            window?.makeFirstResponder(accessCodeField)
+            return
+        }
+        let twofaCode = twofaField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        if twofaChallenge && twofaCode.isEmpty {
+            loginMessage = L("请输入 OTP")
+            render()
+            window?.makeFirstResponder(twofaField)
+            return
+        }
+        let trustDevice = trustDeviceButton.state == .on
         fnIDField.stringValue = fnID
         pendingFNID = fnID
-        passwordField.stringValue = ""
         loginInFlight = true
         busy = true
         operationError = nil
-        setupError.stringValue = ""
+        loginMessage = ""
         let existingRequest = externalAuthorizationRequest
         externalAuthorizationRequest = ""
         render()
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            var requestID = existingRequest
             do {
-                var requestID = existingRequest
                 if requestID.isEmpty {
                     let result = try self?.ipc.call(
                         method: "authorization-begin",
@@ -1170,16 +1247,130 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
                     }
                     requestID = value
                 }
-                _ = try self?.ipc.call(method: "authorize-native", params: [
+                var params: [String: Any] = [
                     "requestId": requestID,
                     "fnId": fnID,
                     "username": username,
                     "password": password,
-                ])
-                DispatchQueue.main.async { self?.operationFinished(.success(())) }
+                ]
+                if !accessCode.isEmpty { params["accessCode"] = accessCode }
+                if !twofaCode.isEmpty { params["twofaCode"] = twofaCode }
+                if trustDevice { params["trustDevice"] = true }
+                _ = try self?.ipc.call(method: "authorize-native", params: params)
+                DispatchQueue.main.async {
+                    self?.twofaChallenge = false
+                    self?.operationFinished(.success(()))
+                }
             } catch {
                 DispatchQueue.main.async {
+                    if self?.showLoginChallenge(error, requestID: requestID) == true { return }
                     self?.operationFinished(.failure(error))
+                }
+            }
+        }
+    }
+
+    /// Keeps the sign-in form open when fnOS asked for one more factor. The
+    /// daemon leaves that authorization request pending, so the retry reuses the
+    /// same request ID instead of starting a new sign-in.
+    private func showLoginChallenge(_ error: Error, requestID: String) -> Bool {
+        let failure = (error as NSError).userInfo["failure"] as? [String: Any] ?? [:]
+        guard let remoteCode = failure["remoteCode"] as? String else { return false }
+        switch remoteCode {
+        case "ACCESS_CODE_REQUIRED", "ACCESS_CODE_INVALID", "ACCESS_CODE_RATE_LIMITED":
+            accessCodeRequired = true
+            accessCodeProbedFNID = fnIDField.stringValue
+        case "TWO_FACTOR_REQUIRED", "TWO_FACTOR_CODE_INVALID":
+            accessCodeRequired = false
+            accessCodeField.stringValue = ""
+            twofaChallenge = true
+            if remoteCode == "TWO_FACTOR_CODE_INVALID" { twofaField.stringValue = "" }
+        case "TWO_FACTOR_SETUP_REQUIRED":
+            accessCodeRequired = false
+            accessCodeField.stringValue = ""
+            twofaChallenge = false
+        default:
+            return false
+        }
+        externalAuthorizationRequest = requestID
+        loginInFlight = false
+        busy = false
+        editingServer = true
+        loginMessage = loginFailureMessage(failure)
+        render()
+        if twofaChallenge { window?.makeFirstResponder(twofaField) }
+        else if accessCodeRequired { window?.makeFirstResponder(accessCodeField) }
+        return true
+    }
+
+    /// Asks the daemon whether this FN Connect ID sits behind an fnOS access
+    /// code, so the form can show the field before the user tries to sign in.
+    @objc private func probeAccessCode() { scheduleAccessCodeProbe() }
+
+    @objc func controlTextDidEndEditing(_ notification: Notification) {
+        guard (notification.object as? NSTextField) === fnIDField else { return }
+        scheduleAccessCodeProbe()
+    }
+
+    private func scheduleAccessCodeProbe() {
+        guard let fnID = normalizeFNID(fnIDField.stringValue) else {
+            if accessCodeProbedFNID.isEmpty { return }
+            cancelExternalAuthorization()
+            accessCodeProbedFNID = ""
+            accessCodeField.stringValue = ""
+            twofaField.stringValue = ""
+            accessCodeRequired = false
+            twofaChallenge = false
+            loginMessage = ""
+            render()
+            return
+        }
+        if fnID == accessCodeProbedFNID { return }
+        if !accessCodeProbedFNID.isEmpty {
+            cancelExternalAuthorization()
+            accessCodeProbedFNID = ""
+            accessCodeField.stringValue = ""
+            twofaField.stringValue = ""
+            accessCodeRequired = false
+            twofaChallenge = false
+            loginMessage = ""
+            render()
+        }
+        guard !accessCodeProbeInFlight else { return }
+        accessCodeProbeInFlight = true
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            var required = false
+            var failed = false
+            do {
+                let result = try self?.ipc.call(
+                    method: "detect-access-code",
+                    params: ["fnId": fnID]
+                ) ?? [:]
+                required = result["required"] as? Bool ?? false
+            } catch {
+                failed = true
+            }
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.accessCodeProbeInFlight = false
+                guard self.editingServer || self.savedFNID.isEmpty else { return }
+                // A probe for a FN ID the user has already edited away must not
+                // drive the form.
+                guard normalizeFNID(self.fnIDField.stringValue) == fnID else {
+                    if self.editingServer { self.scheduleAccessCodeProbe() }
+                    return
+                }
+                // A sign-in challenge may already have confirmed the requirement
+                // while this credential-free probe was still in flight.
+                guard self.accessCodeProbedFNID != fnID else { return }
+                if !failed {
+                    self.accessCodeProbedFNID = fnID
+                    self.accessCodeRequired = required
+                    self.render()
+                    if required, let editor = self.fnIDField.currentEditor(),
+                       self.window?.firstResponder === editor {
+                        self.window?.makeFirstResponder(self.accessCodeField)
+                    }
                 }
             }
         }
@@ -1203,10 +1394,23 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         fnIDField.stringValue = fnID
         usernameField.stringValue = username
         passwordField.stringValue = ""
+        accessCodeField.stringValue = ""
+        twofaField.stringValue = ""
+        accessCodeRequired = false
+        accessCodeProbedFNID = ""
+        twofaChallenge = false
+        let status = diagnostics["status"] as? [String: Any] ?? [:]
+        let failure = (operationError ?? status["lastError"] as? [String: Any]) ?? [:]
+        if fnID == savedFNID,
+           (failure["remoteCode"] as? String ?? "").hasPrefix("ACCESS_CODE_") {
+            accessCodeRequired = true
+            accessCodeProbedFNID = fnID
+        }
         operationError = nil
-        setupError.stringValue = ""
+        loginMessage = ""
         render()
-        window.makeFirstResponder(fnID.isEmpty ? fnIDField : username.isEmpty ? usernameField : passwordField)
+        scheduleAccessCodeProbe()
+        window.makeFirstResponder(fnID.isEmpty ? fnIDField : accessCodeRequired ? accessCodeField : username.isEmpty ? usernameField : passwordField)
     }
 
     private func cancelExternalAuthorization() {
@@ -1273,6 +1477,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
             operationError = failure ?? ["code": "UNAVAILABLE", "message": error.localizedDescription]
             if completedLogin {
                 editingServer = true
+                loginMessage = loginFailureMessage(operationError)
             }
             if failure?["code"] as? String == "CANCELED" {
                 operationError = nil
@@ -1283,6 +1488,10 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
             pendingFNID = ""
             if completedLogin {
                 editingServer = false
+                passwordField.stringValue = ""
+                accessCodeField.stringValue = ""
+                twofaField.stringValue = ""
+                twofaChallenge = false
             }
         }
         render()
@@ -1335,8 +1544,15 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         setupButton.isEnabled = !busy || waitingForLocalNetwork
         setupButton.title = waitingForLocalNetwork ? L("继续远程连接") : L("登录并连接")
         fnIDField.isEnabled = !busy
+        accessCodeField.isEnabled = !busy
         usernameField.isEnabled = !busy
         passwordField.isEnabled = !busy
+        twofaField.isEnabled = !busy
+        trustDeviceButton.isEnabled = !busy
+        loginForm.row(at: 1).isHidden = !accessCodeRequired
+        loginForm.row(at: 4).isHidden = !twofaChallenge
+        fnIDField.nextKeyView = accessCodeRequired ? accessCodeField : usernameField
+        passwordField.nextKeyView = twofaChallenge ? twofaField : setupButton
         primaryButton.isEnabled = !busy || waitingForLocalNetwork
         primaryButton.title = waitingForLocalNetwork ? L("继续远程连接") : presentation.actionTitle
         primaryButton.toolTip = primaryButton.title
@@ -1403,7 +1619,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         if displayed["lanOverlap"] as? Bool == true { messages.append(L("本地与 NAS 网段重叠，仅保留隧道内 NAS 路由")) }
         errorValue.string = messages.filter { !$0.isEmpty }.joined(separator: "\n")
         if errorValue.string.isEmpty { errorValue.string = L("无异常") }
-        setupError.stringValue = setup ? (waitingForLocalNetwork ? L("正在等待局域网访问权限") : loginFailureMessage(status["lastError"] as? [String: Any])) : ""
+        setupError.stringValue = setup ? (waitingForLocalNetwork ? L("正在等待局域网访问权限") : loginMessage ?? loginFailureMessage(status["lastError"] as? [String: Any])) : ""
         setupError.maximumNumberOfLines = 3
         setupError.toolTip = setupError.stringValue
         if busy || waitingForLocalNetwork { progress.startAnimation(nil) } else { progress.stopAnimation(nil) }
@@ -1422,7 +1638,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
     /// width remains user-resizable.
     private func adjustWindowHeightForPage(_ loginPage: Bool) {
         guard let window else { return }
-        let targetHeight: CGFloat = loginPage ? 520 : 640
+        let targetHeight: CGFloat = loginPage ? 520 + (accessCodeRequired ? 46 : 0) + (twofaChallenge ? 46 : 0) : 640
         // Resize to the target content height first, then lock min == max so
         // the user cannot drag the height.
         window.setContentSize(NSSize(width: window.contentLayoutRect.width, height: targetHeight))

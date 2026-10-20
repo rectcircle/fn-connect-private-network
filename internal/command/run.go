@@ -365,18 +365,52 @@ func runClientCommand(
 			)
 		}()
 		ipcClient.Timeout = 5*time.Minute + 10*time.Second
-		if err := ipcClient.Call(
-			ctx,
-			client.MethodAuthorizeNative,
-			client.NativeAuthorization{
-				RequestID: pending.RequestID,
-				FNID:      fnID,
-				Username:  username,
-				Password:  string(password),
-			},
-			nil,
-		); err != nil {
+		accessCode, err := promptAccessCode(ctx, environment, ipcClient, fnID)
+		if err != nil {
 			return err
+		}
+		var twofaCode string
+		var trustDevice bool
+		for attempt := 0; ; attempt++ {
+			callErr := ipcClient.Call(
+				ctx,
+				client.MethodAuthorizeNative,
+				client.NativeAuthorization{
+					RequestID:   pending.RequestID,
+					FNID:        fnID,
+					Username:    username,
+					Password:    string(password),
+					AccessCode:  accessCode,
+					TwofaCode:   twofaCode,
+					TrustDevice: trustDevice,
+				},
+				nil,
+			)
+			if callErr == nil {
+				break
+			}
+			// The daemon keeps the authorization request pending for these
+			// rejections, so the same request ID can be retried with the factor
+			// the gateway or account just asked for.
+			if attempt >= 2 || !client.RequiresAdditionalCredential(callErr) {
+				return callErr
+			}
+			switch model.AsError(callErr).RemoteCode {
+			case "ACCESS_CODE_REQUIRED", "ACCESS_CODE_INVALID":
+				accessCode, err = readOptionalSecret(environment, "fnOS access code: ")
+			case "TWO_FACTOR_REQUIRED", "TWO_FACTOR_CODE_INVALID":
+				// The accepted gateway session is already saved by the daemon.
+				accessCode = ""
+				twofaCode, err = readOptionalSecret(environment, "two-factor code: ")
+				if err == nil {
+					trustDevice, err = promptTrustDevice(environment)
+				}
+			default:
+				return callErr
+			}
+			if err != nil {
+				return err
+			}
 		}
 		waitContext, cancel := context.WithTimeout(ctx, 5*time.Minute)
 		defer cancel()
@@ -460,6 +494,64 @@ func readAuthorizationCredentials(environment Environment) (string, []byte, erro
 		return "", nil, fmt.Errorf("read fnOS password: %w", err)
 	}
 	return username, password, nil
+}
+
+// promptAccessCode asks for the fnOS access code only when the FN Connect
+// gateway actually challenges unauthenticated requests. The detection probe is
+// credential-free and does not consume the gateway's failed-attempt budget.
+func promptAccessCode(
+	ctx context.Context,
+	environment Environment,
+	ipcClient ipc.Client,
+	fnID string,
+) (string, error) {
+	var status client.AccessCodeStatus
+	if err := ipcClient.Call(
+		ctx,
+		client.MethodDetectAccessCode,
+		client.AccessCodeRequest{FNID: fnID},
+		&status,
+	); err != nil || !status.Required {
+		return "", nil
+	}
+	if _, err := fmt.Fprint(environment.Stderr, "This NAS requires an access code.\n"); err != nil {
+		return "", err
+	}
+	return readOptionalSecret(environment, "fnOS access code: ")
+}
+
+func readOptionalSecret(environment Environment, prompt string) (string, error) {
+	readPassword := environment.ReadPassword
+	if readPassword == nil {
+		readPassword = readTerminalPassword
+	}
+	if _, err := fmt.Fprint(environment.Stderr, prompt); err != nil {
+		return "", err
+	}
+	value, err := readPassword()
+	defer clear(value)
+	_, _ = fmt.Fprintln(environment.Stderr)
+	if err != nil {
+		return "", fmt.Errorf("read %s: %w", strings.TrimSuffix(prompt, ": "), err)
+	}
+	return string(value), nil
+}
+
+func promptTrustDevice(environment Environment) (bool, error) {
+	reader := bufio.NewReader(environment.Stdin)
+	if _, err := fmt.Fprint(environment.Stderr, "Trust this device and skip two-factor next time? [y/N]: "); err != nil {
+		return false, err
+	}
+	answer, err := reader.ReadString('\n')
+	if err != nil && len(answer) == 0 {
+		return false, fmt.Errorf("read trust device answer: %w", err)
+	}
+	switch strings.ToLower(strings.TrimSpace(answer)) {
+	case "y", "yes":
+		return true, nil
+	default:
+		return false, nil
+	}
 }
 
 func runClientProcess(

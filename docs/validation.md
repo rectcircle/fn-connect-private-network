@@ -4,6 +4,28 @@
 产品要求见 [产品需求](product.md)，升级保证见 [版本契约](versioning-and-compatibility.md)。
 自动化通过、用户确认和带日志的实测分别记录；旧版证据不代表新版的所有专项通过。
 
+## 1.1.1 认证兼容修复与草稿准备（2026-10-20）
+
+用户确认本轮 macOS 实机验证已完成。按用户整体确认记录，不补写未提供的系统版本、
+设备型号、逐项日志或其他架构实测结论；随后“验证码”统一改称 OTP 的文案调整已通过
+中英文 AppKit 布局及本地化验证。
+
+- 修复访问码探测与验证的 `mode=relay` 路由、访问码挑战到重新登录状态及表单字段的传递，
+  登录 WSS、远程 API 和管理后台代理复用已保存的 `os-access-code` 会话。
+- OTP 使用 `user.2fa.loginVerify`、`isTrustedDevice`、当前连接的 `si` 和本次登录设备信息；
+  回归覆盖正确请求、成功会话、错误 OTP 与其他服务端拒绝的区分，以及访问码与 OTP 分阶段重试。
+- 当前工作区完整执行 `scripts/check-release.sh` 通过：发布辅助脚本测试、全量 Go 测试及
+  race、vet、32 项 Web 测试、Linux amd64/arm64 构建和 Swift 类型检查通过。
+  `FNCPN_LAYOUT_CHECK=1` 的中英文实际 AppKit 布局验证、Windows amd64/arm64 Go 构建，
+  原生本地化资源同步检查另行通过。
+- 产品版本为 1.1.1，模板与发布说明已同步。此修复不新增 FnCPN server 要求，不改变远程
+  版本准入规则、本地 IPC 5 或持久化 schema；现有 1.1.x server 无需配套升级。
+- Windows 原生界面尚未提供访问码和 OTP 输入，CLI 交互及共享认证逻辑有自动化覆盖；
+  不将 macOS 用户确认扩展为 Windows 原生界面、新版安装包或 Intel Mac 的实机验证。
+- 本记录为提交与构建草稿的准备证据。尚未创建本版提交、tag 或发布草稿；最终草稿需由
+  对应干净 tag 在 CI 构建，核对产物版本、commit、SHA256，并完成候选验收后再公开。
+  未据此宣称完成历史正式 client/server 二进制互通矩阵或本版全平台实机升级验收。
+
 ## Windows 虚拟机 LOCAL DNS 修复（2026-10-19）
 
 本机处于虚拟机 NAT 网段，NAS 私网探测成功并进入 LOCAL，但 DNS 地址检查额外要求目的地址

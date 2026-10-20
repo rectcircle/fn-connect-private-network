@@ -42,7 +42,7 @@ func TestAdminProbeHTTP2WithCustomTrust(t *testing.T) {
 	transport := newFNOSTransportWithRoot(base, root, nil)
 	defer transport.CloseIdleConnections()
 	err := probeAdminWebSessionWithClient(context.Background(), &http.Client{Transport: transport, Timeout: 5 * time.Second},
-		"https://nas.fnos.net/app/fncpn/api/v1/admin/snapshot", "test-session")
+		"https://nas.fnos.net/app/fncpn/api/v1/admin/snapshot", nativeGatewayCookies("nas", "test-session"))
 	if err != nil {
 		t.Fatalf("HTTP/2 management probe: %v", err)
 	}

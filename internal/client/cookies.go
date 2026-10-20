@@ -27,15 +27,15 @@ func newCookieSet(records []Cookie) (*cookieSet, error) {
 			return nil, errors.New("cookie name and domain are required")
 		}
 		host := strings.TrimPrefix(strings.ToLower(record.Domain), ".")
+		cookie := record.httpCookie()
+		if record.HostOnly {
+			cookie.Domain = ""
+		}
 		scheme := "http"
 		if record.Secure {
 			scheme = "https"
 		}
 		origin := &url.URL{Scheme: scheme, Host: host, Path: "/"}
-		cookie := record.httpCookie()
-		if record.HostOnly {
-			cookie.Domain = ""
-		}
 		result.ApplyResponse(&http.Response{
 			Request: &http.Request{URL: origin},
 			Header:  http.Header{"Set-Cookie": []string{cookie.String()}},
@@ -156,6 +156,10 @@ func (c Cookie) httpCookie() *http.Cookie {
 		SameSite: parseSameSite(c.SameSite),
 		Expires:  c.Expires,
 	}
+}
+
+func (c Cookie) requestValue() string {
+	return c.Name + "=" + c.Value
 }
 
 func cookieKey(cookie Cookie) string {

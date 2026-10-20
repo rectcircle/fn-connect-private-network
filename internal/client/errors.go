@@ -55,7 +55,9 @@ func HTTPResponseError(response *http.Response, operation string, cause error) *
 		var envelope struct {
 			Error *model.Error `json:"error"`
 		}
-		if authErr := gatewayAuthenticationError(response, data); readErr == nil && len(data) <= 8192 && authErr != nil {
+		if challenge := accessCodeChallengeDetected(response.Header, data); readErr == nil && challenge {
+			result = model.AsError(accessCodeRequiredError())
+		} else if authErr := gatewayAuthenticationError(response, data); readErr == nil && len(data) <= 8192 && authErr != nil {
 			result = authErr
 			result.Cause = cause
 		} else if len(data) <= 8192 && json.Unmarshal(data, &envelope) == nil &&
@@ -125,7 +127,9 @@ func decodeResponse(response *http.Response, destination any) error {
 		err = errors.New("JSON response exceeds size limit")
 	}
 	if err == nil {
-		if authErr := gatewayAuthenticationError(response, data); authErr != nil {
+		if accessCodeChallengeDetected(response.Header, data) {
+			err = accessCodeRequiredError()
+		} else if authErr := gatewayAuthenticationError(response, data); authErr != nil {
 			err = authErr
 		} else {
 			err = model.DecodeResponse(data, destination)
