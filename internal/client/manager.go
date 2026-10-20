@@ -447,7 +447,7 @@ func (m *Manager) AuthorizeNative(
 		return err
 	}
 	authorized = true
-	m.refreshAdminWebSession(ctx, fnID, username, credentials.Password, session.DeviceID)
+	m.refreshAdminWebSession(ctx, fnID, username, credentials.Password, session.DeviceID, credentials.TwofaCode, credentials.TrustDevice)
 	return nil
 }
 
@@ -1840,6 +1840,8 @@ func (m *Manager) refreshAdminWebSession(
 	username string,
 	password string,
 	nativeDeviceID string,
+	twofaCode string,
+	trustDevice bool,
 ) {
 	if previous, found, err := m.store.LoadAdminWebSession(fnID); err != nil {
 		m.logger.Warn("admin auth: load previous Web session failed",
@@ -1854,11 +1856,13 @@ func (m *Manager) refreshAdminWebSession(
 		return
 	}
 	webSession, err := m.webAuthenticator.WebLogin(ctx, NativeLogin{
-		FNID:       fnID,
-		Username:   username,
-		Password:   password,
-		DeviceID:   adminWebDeviceID(nativeDeviceID),
-		DeviceName: m.deviceName,
+		FNID:        fnID,
+		Username:    username,
+		Password:    password,
+		DeviceID:    adminWebDeviceID(nativeDeviceID),
+		TwofaCode:   twofaCode,
+		TrustDevice: trustDevice,
+		DeviceName:  m.deviceName,
 	})
 	if err != nil {
 		m.logger.Warn("admin auth: encrypted Web token login unavailable",

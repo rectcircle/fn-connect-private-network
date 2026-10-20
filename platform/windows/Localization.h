@@ -283,6 +283,7 @@ inline std::wstring L(std::wstring_view source) {
         {L"信任此设备", L"Trust this device"},
         {L"请输入 fnOS 访问码", L"Enter your fnOS access code"},
         {L"请输入 6 位 OTP", L"Enter a 6-digit OTP"},
+        {L"上一步", L"Back"},
     };
     const auto found = catalog.find(source);
     return std::wstring(found == catalog.end() ? source : found->second);
@@ -565,6 +566,7 @@ inline const wchar_t* L(const char* source) {
         {"信任此设备", {L"Trust this device", L"信任此设备"}},
         {"请输入 fnOS 访问码", {L"Enter your fnOS access code", L"请输入 fnOS 访问码"}},
         {"请输入 6 位 OTP", {L"Enter a 6-digit OTP", L"请输入 6 位 OTP"}},
+        {"上一步", {L"Back", L"上一步"}},
     };
     const auto found = catalog.find(source);
     if (found == catalog.end()) return L"";

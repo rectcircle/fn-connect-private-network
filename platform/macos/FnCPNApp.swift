@@ -497,9 +497,11 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDel
     private var retryButton = NSButton()
     private var changeButton = NSButton()
     private var returnButton = NSButton()
+    private var loginBackButton = NSButton()
     private var adminButton = NSButton()
     private var browserButton = NSButton()
     private var quitButton = NSButton()
+    private var loginFooterButtons: [NSButton] = []
     private var menuAction: NSMenuItem?
     private var autoStartItem: NSMenuItem?
     private var statusItem: NSStatusItem?
@@ -578,11 +580,6 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDel
         window.contentMinSize = NSSize(width: 680, height: 440)
         window.isReleasedWhenClosed = false
         window.contentView = content
-        fnIDField.nextKeyView = accessCodeField
-        accessCodeField.nextKeyView = usernameField
-        usernameField.nextKeyView = passwordField
-        passwordField.nextKeyView = twofaField
-        twofaField.nextKeyView = setupButton
         window.center()
         // Do not show the window yet: we show it once the first diagnostics
         // round trip returns so an already-logged-in user goes straight to the
@@ -684,14 +681,12 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDel
         loginForm.row(at: 4).isHidden = true
         loginForm.row(at: 4).yPlacement = .center
         loginForm.cell(atColumnIndex: 1, rowIndex: 4).xPlacement = .leading
-        fnIDField.nextKeyView = accessCodeField
-        accessCodeField.nextKeyView = usernameField
-        usernameField.nextKeyView = passwordField
-        passwordField.nextKeyView = twofaField
         fill(loginForm, in: setupView)
         setupButton = button(L("登录并连接"), symbol: "arrow.right", action: #selector(submitLogin))
         setupButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 132).isActive = true
         setupView.addArrangedSubview(setupButton)
+        loginBackButton = button(L("上一步"), symbol: "arrow.left", action: #selector(backToCredentials))
+        setupView.addArrangedSubview(loginBackButton)
         setupError.textColor = .systemRed
         fill(setupError, in: setupView)
         returnButton = button(L("返回连接详情"), symbol: "arrow.left", action: #selector(returnToDetails))
@@ -800,12 +795,12 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDel
         progress.style = .spinning
         progress.controlSize = .small
         progress.isDisplayedWhenStopped = false
-        let tools = horizontal([
-            changeButton, adminButton, progress,
+        loginFooterButtons = [
             button("", symbol: "doc.on.doc", action: #selector(copyDiagnostics), help: L("复制诊断信息")),
             button("", symbol: "folder", action: #selector(openLogs), help: L("打开日志")),
             button("", symbol: "arrow.clockwise", action: #selector(refresh), help: L("刷新状态"))
-        ])
+        ]
+        let tools = horizontal([changeButton, adminButton, progress] + loginFooterButtons)
         tools.translatesAutoresizingMaskIntoConstraints = false
         quitButton = button(L("退出"), symbol: "power", action: #selector(quit), help: L("停止连接并退出"))
         quitButton.translatesAutoresizingMaskIntoConstraints = false
@@ -1183,6 +1178,16 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDel
         render()
     }
 
+    @objc private func backToCredentials() {
+        guard !busy else { return }
+        twofaChallenge = false
+        twofaField.stringValue = ""
+        trustDeviceButton.state = .off
+        loginMessage = ""
+        render()
+        window?.makeFirstResponder(passwordField)
+    }
+
     @objc private func submitLogin() {
         if waitingForLocalNetwork { continueWithoutLocalAccess(); return }
         guard !busy else { return }
@@ -1313,6 +1318,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDel
     }
 
     private func scheduleAccessCodeProbe() {
+        guard !twofaChallenge && !loginInFlight else { return }
         guard let fnID = normalizeFNID(fnIDField.stringValue) else {
             if accessCodeProbedFNID.isEmpty { return }
             cancelExternalAuthorization()
@@ -1353,6 +1359,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDel
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.accessCodeProbeInFlight = false
+                guard !self.twofaChallenge && !self.loginInFlight else { return }
                 guard self.editingServer || self.savedFNID.isEmpty else { return }
                 // A probe for a FN ID the user has already edited away must not
                 // drive the form.
@@ -1364,11 +1371,19 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDel
                 // while this credential-free probe was still in flight.
                 guard self.accessCodeProbedFNID != fnID else { return }
                 if !failed {
+                    // The entry point may already have focused the empty password
+                    // while the probe was running. Move to the newly revealed first
+                    // credential only if the user has not begun entering a password.
+                    let idEditor = self.fnIDField.currentEditor()
+                    let passwordEditor = self.passwordField.currentEditor()
+                    let focusedID = idEditor != nil && self.window?.firstResponder === idEditor
+                    let focusedEmptyPassword = passwordEditor != nil &&
+                        self.window?.firstResponder === passwordEditor &&
+                        passwordEditor?.string.isEmpty == true && self.passwordField.stringValue.isEmpty
                     self.accessCodeProbedFNID = fnID
                     self.accessCodeRequired = required
                     self.render()
-                    if required, let editor = self.fnIDField.currentEditor(),
-                       self.window?.firstResponder === editor {
+                    if required && self.accessCodeField.stringValue.isEmpty && (focusedID || focusedEmptyPassword) {
                         self.window?.makeFirstResponder(self.accessCodeField)
                     }
                 }
@@ -1538,7 +1553,9 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDel
         let setup = editingServer || fnID.isEmpty
         setupView.isHidden = !setup
         detailsView.isHidden = setup
-        returnButton.isHidden = savedFNID.isEmpty
+        returnButton.isHidden = savedFNID.isEmpty || twofaChallenge
+        loginBackButton.isHidden = !twofaChallenge
+        loginBackButton.isEnabled = !busy
         changeButton.isHidden = setup
         changeButton.isEnabled = !busy
         setupButton.isEnabled = !busy || waitingForLocalNetwork
@@ -1549,10 +1566,9 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDel
         passwordField.isEnabled = !busy
         twofaField.isEnabled = !busy
         trustDeviceButton.isEnabled = !busy
-        loginForm.row(at: 1).isHidden = !accessCodeRequired
+        for row in [0, 2, 3] { loginForm.row(at: row).isHidden = twofaChallenge }
+        loginForm.row(at: 1).isHidden = !accessCodeRequired || twofaChallenge
         loginForm.row(at: 4).isHidden = !twofaChallenge
-        fnIDField.nextKeyView = accessCodeRequired ? accessCodeField : usernameField
-        passwordField.nextKeyView = twofaChallenge ? twofaField : setupButton
         primaryButton.isEnabled = !busy || waitingForLocalNetwork
         primaryButton.title = waitingForLocalNetwork ? L("继续远程连接") : presentation.actionTitle
         primaryButton.toolTip = primaryButton.title
@@ -1630,6 +1646,32 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDel
         statusItem?.button?.toolTip = statusDescription
         statusItem?.button?.setAccessibilityLabel(statusDescription)
         adjustWindowHeightForPage(setup)
+        updateLoginKeyViewLoop(setup: setup)
+    }
+
+    private func updateLoginKeyViewLoop(setup: Bool) {
+        guard let window else { return }
+        // AppKit's automatic geometry ordering can change when grid rows are
+        // hidden or inserted. Own the complete login loop, including its tail.
+        window.autorecalculatesKeyViewLoop = !setup
+        let fields: [NSControl] = [fnIDField, accessCodeField, usernameField, passwordField,
+                                   twofaField, trustDeviceButton, setupButton, loginBackButton, returnButton]
+        for control in fields + loginFooterButtons + [quitButton] { control.nextKeyView = nil }
+        guard setup else { window.recalculateKeyViewLoop(); return }
+        var order: [NSControl]
+        if twofaChallenge {
+            order = [twofaField, trustDeviceButton, setupButton, loginBackButton]
+        } else {
+            order = [fnIDField]
+            if accessCodeRequired { order.append(accessCodeField) }
+            order += [usernameField, passwordField, setupButton]
+            if !returnButton.isHidden { order.append(returnButton) }
+        }
+        order += loginFooterButtons + [quitButton]
+        order = order.filter { $0.isEnabled && !$0.isHiddenOrHasHiddenAncestor }
+        for (index, control) in order.enumerated() {
+            control.nextKeyView = order[(index + 1) % order.count]
+        }
     }
 
     /// Sizes the window to the current page (login vs details) and locks its
@@ -1638,7 +1680,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDel
     /// width remains user-resizable.
     private func adjustWindowHeightForPage(_ loginPage: Bool) {
         guard let window else { return }
-        let targetHeight: CGFloat = loginPage ? 520 + (accessCodeRequired ? 46 : 0) + (twofaChallenge ? 46 : 0) : 640
+        let targetHeight: CGFloat = loginPage ? (twofaChallenge ? 390 : 520 + (accessCodeRequired ? 46 : 0)) : 640
         // Resize to the target content height first, then lock min == max so
         // the user cannot drag the height.
         window.setContentSize(NSSize(width: window.contentLayoutRect.width, height: targetHeight))

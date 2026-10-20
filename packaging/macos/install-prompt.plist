@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>cn.rectcircle.fncpn.install-prompt</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/bin/osascript</string>
+    <string>/Applications/FnCPN.app/Contents/Resources/install-prompt.applescript</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <false/>
+  <key>ProcessType</key>
+  <string>Interactive</string>
+</dict>
+</plist>

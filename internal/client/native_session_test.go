@@ -376,6 +376,58 @@ func TestAdminWebLoginReturnsIsolatedToken(t *testing.T) {
 	}
 }
 
+func TestAdminWebLoginCompletesBrowserTwoFactorChallenge(t *testing.T) {
+	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	publicKey, _ := x509.MarshalPKIXPublicKey(&privateKey.PublicKey)
+	publicPEM := string(pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: publicKey}))
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		connection, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer connection.CloseNow()
+		request := nativeTestRequest(t, r.Context(), connection, "")
+		nativeTestResponse(t, r.Context(), connection, request, map[string]any{
+			"result": "succ", "pub": publicPEM, "si": "web-si",
+		})
+		_, payload, err := connection.Read(r.Context())
+		if err != nil {
+			t.Fatal(err)
+		}
+		var frame map[string]any
+		if json.Unmarshal(payload, &frame) != nil || frame["req"] != "encrypted" ||
+			frame["iv"] == "" || frame["rsa"] == "" || frame["aes"] == "" {
+			t.Fatalf("encrypted login frame = %+v", frame)
+		}
+		response, _ := json.Marshal(map[string]any{
+			"result": "succ", "accessToken": "web-challenge", "si": "web-twofa-si",
+		})
+		if err := connection.Write(r.Context(), websocket.MessageText, response); err != nil {
+			t.Fatal(err)
+		}
+		verify := nativeTestRequest(t, r.Context(), connection, "")
+		if verify["req"] != "user.2fa.loginVerify" || verify["code"] != "012345" ||
+			verify["accessToken"] != "web-challenge" || verify["did"] != "web-device" ||
+			verify["deviceType"] != "Browser" || verify["si"] != "web-twofa-si" || verify["isTrustedDevice"] != true {
+			t.Error("management two-factor verification did not preserve Browser identity and supplied factors")
+		}
+		nativeTestResponse(t, r.Context(), connection, verify, map[string]any{"result": "succ", "token": "web-token"})
+
+	}))
+	defer server.Close()
+	target := "ws" + strings.TrimPrefix(server.URL, "http")
+	session, err := newNativeTestClient(target).WebLogin(context.Background(), NativeLogin{
+		FNID: "home-nas", Username: "admin", Password: "password",
+		DeviceID: "web-device", DeviceName: "FnCPN Test", TwofaCode: "012345", TrustDevice: true,
+	})
+	if err != nil || session.Token != "web-token" || session.DeviceID != "web-device" {
+		t.Fatalf("Web session = %+v, error = %v", session, err)
+	}
+}
+
 func TestManagerNativeAuthorizationPersistsSessionAndRecoversBeforeConnect(t *testing.T) {
 	secrets := newMemorySecretStore()
 	store := NewConfigStore(filepath.Join(t.TempDir(), "config.json"), secrets)
@@ -553,8 +605,8 @@ func TestManagerKeepsNativeAndAdminWebSessionsSeparate(t *testing.T) {
 	if nativeAuth.last.TwofaCode != "123456" || !nativeAuth.last.TrustDevice {
 		t.Fatalf("two-factor credentials were not forwarded: %+v", nativeAuth.last)
 	}
-	if webAuth.last.TwofaCode != "" || webAuth.last.TrustDevice {
-		t.Fatalf("single-use two-factor code was reused for the Web login: %+v", webAuth.last)
+	if webAuth.last.TwofaCode != "123456" || !webAuth.last.TrustDevice {
+		t.Fatal("management Web login did not receive the supplied two-factor credentials")
 	}
 	nativeSession, found, err := store.LoadNativeSession("home-nas")
 	if err != nil || !found {

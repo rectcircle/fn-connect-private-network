@@ -273,5 +273,6 @@
   "OTP": "OTP",
   "信任此设备": "Trust this device",
   "请输入 fnOS 访问码": "Enter your fnOS access code",
-  "请输入 6 位 OTP": "Enter a 6-digit OTP"
+  "请输入 6 位 OTP": "Enter a 6-digit OTP",
+  "上一步": "Back"
 }

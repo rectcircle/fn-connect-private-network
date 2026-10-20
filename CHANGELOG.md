@@ -17,6 +17,10 @@
 
 - 修正两步验证的 fnOS RPC 为 `user.2fa.loginVerify`，携带 `isTrustedDevice`、连接完整性值及设备字段；保留服务端失败原因，避免将所有拒绝都误报为 OTP 错误。OTP 标签与其他登录标签统一对齐。
 
+- macOS、Windows 将 OTP 改为独立步骤，只显示 OTP 与设备信任，支持返回账号密码步骤；修正访问码探测后的焦点、登录入口焦点与 macOS Tab / Shift+Tab 顺序。
+- 管理后台独立 Web 登录支持 OTP 验证，保留 Browser 设备身份；调整 Windows 密码框的原生绘制与重新登录清理。
+- macOS 图形界面安装后提供“稍后 / 启动 FnCPN”提示，由当前用户启动 App，提示不会阻塞安装或在无人值守安装时弹出。
+
 ### 升级与验证范围
 
 - 本次为适配 fnOS 访问码与两步验证的客户端认证兼容修复，版本为 1.1.1；不新增 FnCPN server 接口、字段或行为要求，不改变既有远程协议。client 1.1.1 可连接现有 server 1.1.x，无需升级 server；仍按相同 MAJOR 且 client MINOR 不高于 server MINOR 的统一规则准入，PATCH 不参与判定。

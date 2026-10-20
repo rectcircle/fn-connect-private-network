@@ -117,24 +117,24 @@ extension AppDelegate {
                 twofaChallenge = true
                 render()
                 content.layoutSubtreeIfNeeded()
-                if access { checkVisible(accessCodeField) }
+                check(loginForm.row(at: 1).isHidden, "OTP hides access code")
+                for row in [0, 2, 3] { check(loginForm.row(at: row).isHidden, "OTP hides credentials") }
+                checkVisible(loginBackButton)
                 checkVisible(twofaField)
                 if let label = loginForm.cell(atColumnIndex: 0, rowIndex: 4).contentView as? NSTextField,
                    let passwordLabel = loginForm.cell(atColumnIndex: 0, rowIndex: 3).contentView as? NSTextField {
                     check(label.alignment == .right && label.textColor == .secondaryLabelColor,
                           "two-factor label matches other login labels")
                     let labelRect = label.convert(label.bounds, to: loginForm)
-                    let passwordRect = passwordLabel.convert(passwordLabel.bounds, to: loginForm)
+                    _ = passwordLabel
                     let fieldRect = twofaField.convert(twofaField.bounds, to: loginForm)
-                    check(abs(labelRect.maxX - passwordRect.maxX) < 1, "two-factor label right edge aligned")
                     check(abs(labelRect.midY - fieldRect.midY) < 1, "two-factor label vertically aligned")
                 } else { check(false, "missing two-factor or password label") }
                 checkVisible(trustDeviceButton)
                 checkVisible(setupButton)
                 checkVisible(quitButton)
-                check(fnIDField.nextKeyView === (access ? accessCodeField : usernameField),
-                      "access-code tab order")
-                check(passwordField.nextKeyView === twofaField, "two-factor tab order")
+                check(fnIDField.nextKeyView == nil, "hidden account fields excluded from OTP tab order")
+                check(twofaField.nextKeyView === trustDeviceButton && trustDeviceButton.nextKeyView === setupButton, "two-factor tab order")
             }
             accessCodeRequired = false
             twofaChallenge = false
@@ -231,6 +231,13 @@ extension AppDelegate {
             check(accessCodeField.stringValue.isEmpty && !accessCodeRequired,
                   "two-factor retry reuses the accepted access-code session")
             check(passwordField.stringValue == "password-canary", "two-factor challenge preserves password")
+            backToCredentials()
+            content.layoutSubtreeIfNeeded()
+            checkVisible(usernameField)
+            checkVisible(passwordField)
+            check(!twofaChallenge && twofaField.stringValue.isEmpty && externalAuthorizationRequest == "request",
+                  "back restores credentials without abandoning pending authorization")
+            check(passwordField.stringValue == "password-canary", "back preserves password")
             externalAuthorizationRequest = ""
             editingServer = false
             applyDiagnostics([

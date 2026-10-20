@@ -91,7 +91,7 @@ constexpr int kLoginReturn = 1032;
 constexpr int kLoginCancel = 1033;
 constexpr int kCopyDNSSuffix = 1034;
 constexpr int kAccessCode = 1035, kAccessCodeLabel = 1036;
-constexpr int kOTP = 1037, kOTPLabel = 1038, kTrustDevice = 1039;
+constexpr int kOTP = 1037, kOTPLabel = 1038, kTrustDevice = 1039, kLoginBack = 1040;
 
 HWND g_window{};
 HWND g_state{};
@@ -127,7 +127,7 @@ HWND g_dnsLabel{}, g_dnsValue{}, g_copyDNSSuffix{};
 std::wstring g_dnsSuffix;
 HWND g_statusError{};
 HWND g_loginReturn{};
-HWND g_loginCancel{};
+HWND g_loginCancel{}, g_loginBack{};
 HANDLE g_singleInstance{};
 std::wstring g_daemonPath;
 std::wstring g_fnId;
@@ -771,6 +771,25 @@ void ApplyCredentialChallenge(const std::wstring& remote) {
     }
 }
 
+HWND PreferredLoginInput() {
+    if (g_otpRequired) return g_otpInput;
+    if (NormalizeFnId(GetText(g_fnIdInput)).empty()) return g_fnIdInput;
+    if (g_accessCodeRequired && GetText(g_accessCodeInput).empty()) return g_accessCodeInput;
+    if (GetText(g_usernameInput).empty()) return g_usernameInput;
+    return g_passwordInput;
+}
+
+void FocusLoginInput() {
+    if (g_viewLogin && !g_loginInFlight) SetFocus(PreferredLoginInput());
+}
+
+void FocusNewAccessCode(bool previouslyRequired, HWND previousFocus) {
+    if (previouslyRequired || !g_accessCodeRequired || g_otpRequired || g_loginInFlight) return;
+    if (!GetText(g_accessCodeInput).empty()) return;
+    if (previousFocus == g_fnIdInput || (previousFocus == g_passwordInput && GetText(g_passwordInput).empty()))
+        SetFocus(g_accessCodeInput);
+}
+
 void ProbeAccessCode() {
     if (!g_viewLogin || g_loginInFlight) return;
     const auto fnId = NormalizeFnId(GetText(g_fnIdInput));
@@ -832,16 +851,10 @@ HWND AddControl(const wchar_t* klass, const wchar_t* text, DWORD style, int id) 
             0,0,0,0,g_window,nullptr,GetModuleHandleW(nullptr),nullptr);
         SetPropW(control,L"InputFrame",frame); SetParent(control,frame);
         SetWindowLongW(control,GWL_STYLE,GetWindowLongW(control,GWL_STYLE)&~WS_BORDER);
-        SetWindowSubclass(control,[](HWND child,UINT message,WPARAM wParam,LPARAM lParam,UINT_PTR,DWORD_PTR)->LRESULT {
-            // The outer frame owns the only border. Keep the inner edit's entire
-            // rectangle as client space, including after DPI/theme changes.
-            if(message==WM_NCPAINT || message==WM_NCCALCSIZE) return 0;
-            return DefSubclassProc(child,message,wParam,lParam);
-        },2,0);
         SetWindowTheme(control,L"",L"");
         SetWindowPos(control,nullptr,0,0,0,0,SWP_NOMOVE|SWP_NOSIZE|SWP_NOZORDER|SWP_FRAMECHANGED);
         SetWindowSubclass(frame,[](HWND child,UINT message,WPARAM wParam,LPARAM lParam,UINT_PTR,DWORD_PTR)->LRESULT {
-            if(message==WM_COMMAND) return SendMessageW(GetParent(child), message, wParam, lParam);
+            if(message==WM_COMMAND || message==WM_CTLCOLOREDIT) return SendMessageW(GetParent(child), message, wParam, lParam);
             if(message==WM_LBUTTONDOWN) { SetFocus(GetWindow(child,GW_CHILD)); return 0; }
             return DefSubclassProc(child,message,wParam,lParam);
         },3,0);
@@ -970,7 +983,7 @@ void Layout(HWND window) {
     const int contentWidth = std::max(0, width - margin * 2);
     const bool errorVisible = false;
     const bool repairVisible = g_configured && !g_privilegedAvailable;
-    const int naturalHeight = g_viewLogin ? 510 + (g_accessCodeRequired ? 82 : 0) + (g_otpRequired ? 82 : 0) : 756 + (errorVisible ? 44 : 0) + (repairVisible ? 42 : 0);
+    const int naturalHeight = g_viewLogin ? (g_otpRequired ? 390 : 510 + (g_accessCodeRequired ? 82 : 0)) : 756 + (errorVisible ? 44 : 0) + (repairVisible ? 42 : 0);
     g_layoutScaleY = std::clamp(static_cast<double>(height) / naturalHeight, 0.82, 1.0);
     const int contentHeight = static_cast<int>(naturalHeight * g_layoutScaleY);
     SCROLLINFO scroll{sizeof(scroll), SIF_RANGE | SIF_PAGE | SIF_POS};
@@ -999,21 +1012,25 @@ void Layout(HWND window) {
         Move(window, g_passwordLabel, margin, 322 + extra, contentWidth, 24);
         Move(window, g_passwordInput, margin, 351 + extra, contentWidth, 24);
         if (g_otpRequired) {
-            Move(window, g_otpLabel, margin, 404 + extra, contentWidth, 24);
-            Move(window, g_otpInput, margin, 433 + extra, 150, 24);
-            Move(window, g_trustDevice, margin + 166, 429 + extra, contentWidth - 166, 34);
-            extra += 82;
+            Move(window, g_otpLabel, margin, 158, contentWidth, 24);
+            Move(window, g_otpInput, margin, 187, 150, 24);
+            Move(window, g_trustDevice, margin + 166, 183, contentWidth - 166, 34);
+            extra = -164;
         }
         Move(window, g_loginError, margin, 398 + extra, contentWidth, 48);
         Move(window, g_loginButton, margin, 458 + extra, 158, 34);
-        Move(window, g_loginCancel, margin + 168, 458 + extra, 110, 34);
+        Move(window, g_loginCancel, margin + (g_otpRequired ? 288 : 168), 458 + extra, 110, 34);
         Move(window, g_loginReturn, margin + 168, 458 + extra, 158, 34);
-        ShowControls(g_accessCodeRequired, {g_accessCodeLabel, g_accessCodeInput});
+        Move(window, g_loginBack, margin + 168, 458 + extra, 110, 34);
+        ShowControls(g_otpRequired, {g_loginBack});
+        EnableWindow(g_loginBack, !g_loginInFlight);
+        ShowControls(g_accessCodeRequired && !g_otpRequired, {g_accessCodeLabel, g_accessCodeInput});
         ShowControls(g_otpRequired, {g_otpLabel, g_otpInput, g_trustDevice});
         for (auto control : {g_accessCodeInput, g_otpInput, g_trustDevice}) EnableWindow(control, !g_loginInFlight);
-        ShowControls(true, {g_fnIdLabel, g_fnIdInput, g_usernameLabel, g_usernameInput, g_passwordLabel, g_passwordInput, g_loginError, g_loginButton});
+        ShowControls(!g_otpRequired, {g_fnIdLabel, g_fnIdInput, g_usernameLabel, g_usernameInput, g_passwordLabel, g_passwordInput});
+        ShowControls(true, {g_loginError, g_loginButton});
         ShowControls(g_externalAuthorization || g_loginInFlight, {g_loginCancel});
-        ShowControls(g_configured && !g_loginInFlight && !g_externalAuthorization, {g_loginReturn});
+        ShowControls(g_configured && !g_loginInFlight && !g_externalAuthorization && !g_otpRequired, {g_loginReturn});
         EnableWindow(g_fnIdInput, !g_loginInFlight && !g_externalAuthorization);
         EnableWindow(g_usernameInput, !g_loginInFlight); EnableWindow(g_passwordInput, !g_loginInFlight);
         EnableWindow(g_loginButton, !g_loginInFlight);
@@ -1067,7 +1084,7 @@ void Layout(HWND window) {
         ShowControls(false, {g_statusError});
         ShowControls(g_configured && g_administrator, {g_admin}); EnableWindow(g_admin, !g_adminOpening);
         ShowControls(repairVisible, {g_repair});
-        ShowControls(false, {g_accessCodeLabel, g_accessCodeInput, g_otpLabel, g_otpInput, g_trustDevice, g_fnIdLabel, g_fnIdInput, g_usernameLabel, g_usernameInput, g_passwordLabel, g_passwordInput, g_loginError, g_loginButton, g_loginReturn, g_loginCancel});
+        ShowControls(false, {g_loginBack, g_accessCodeLabel, g_accessCodeInput, g_otpLabel, g_otpInput, g_trustDevice, g_fnIdLabel, g_fnIdInput, g_usernameLabel, g_usernameInput, g_passwordLabel, g_passwordInput, g_loginError, g_loginButton, g_loginReturn, g_loginCancel});
         for (HWND control : g_fieldLabels) ShowWindow(control, SW_SHOW);
         for (HWND control : g_values) ShowWindow(control, SW_SHOW);
     }
@@ -1234,7 +1251,7 @@ void HandleActivationArguments(const std::vector<std::wstring>& arguments) {
         SetWindowTextW(g_fnIdInput, fnId.c_str());
         SetWindowTextW(g_loginError, L"");
         EnableWindow(g_loginButton, !g_loginInFlight);
-        Layout(g_window); ProbeAccessCode(); ShowMainWindow(g_window); SetFocus(g_usernameInput);
+        Layout(g_window); ProbeAccessCode(); ShowMainWindow(g_window); FocusLoginInput();
         return;
     }
     PostMessageW(g_window, kActivateWindow, 0, 0);
@@ -1616,6 +1633,7 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
         g_loginButton = AddControl(L"BUTTON", L("登录并连接"), BS_DEFPUSHBUTTON, kLogin);
         g_loginReturn = AddControl(L"BUTTON", L("返回详情"), BS_PUSHBUTTON, kLoginReturn);
         g_loginCancel = AddControl(L"BUTTON", L("取消"), BS_PUSHBUTTON, kLoginCancel);
+        g_loginBack = AddControl(L"BUTTON", L("上一步"), BS_PUSHBUTTON, kLoginBack);
         static const wchar_t* rowNames[] = {L("连接路径"), L("隧道地址"), L("网络接口"), L("最近握手"), L("特权服务"), L("IPv6 检测"), L"NAS IP"};
         for (int i = 0; i < 7; ++i) {
             g_fieldLabels[i] = AddControl(L"STATIC", L(rowNames[i]).c_str(), SS_LEFT | SS_CENTERIMAGE, 1100 + i);
@@ -1655,6 +1673,11 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
     case WM_ERASEBKGND: {
         RECT area{}; GetClientRect(window, &area);
         FillRect(reinterpret_cast<HDC>(wParam), &area, g_backgroundBrush ? g_backgroundBrush : GetSysColorBrush(COLOR_BTNFACE)); return 1;
+    }
+    case WM_CTLCOLOREDIT: {
+        auto dc = reinterpret_cast<HDC>(wParam);
+        SetTextColor(dc, GetSysColor(COLOR_WINDOWTEXT)); SetBkColor(dc, GetSysColor(COLOR_WINDOW));
+        return reinterpret_cast<LRESULT>(GetSysColorBrush(COLOR_WINDOW));
     }
     case WM_CTLCOLORSTATIC:
     case WM_CTLCOLORBTN: {
@@ -1750,6 +1773,9 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
     case kStatusReady: {
         auto refreshed = TakePayload<RefreshResult>(message,wParam);
         if(!refreshed) return 0;
+        const bool wasLogin = g_viewLogin;
+        const bool previouslyRequired = g_accessCodeRequired;
+        const auto previousFocus = GetFocus();
         g_busy = false;
         g_remoteState = refreshed->state;
         g_lastRemoteCode = refreshed->remoteCode;
@@ -1780,10 +1806,14 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
             SetWindowTextW(g_fnIdInput, g_fnId.c_str());
             if (GetText(g_loginError).empty()) {
                 SetWindowTextW(g_loginError, refreshed->statusError.c_str());
-                ApplyCredentialChallenge(refreshed->remoteCode);
+                // A status snapshot has no password for a new sign-in. Only
+                // reveal OTP after this form's own password attempt succeeds.
+                if (refreshed->remoteCode.starts_with(L"ACCESS_CODE_")) ApplyCredentialChallenge(refreshed->remoteCode);
             }
         }
         ProbeAccessCode(); Layout(window);
+        if (!wasLogin && g_viewLogin) FocusLoginInput();
+        else if (g_viewLogin) FocusNewAccessCode(previouslyRequired, previousFocus);
         return 0;
     }
     case kWorkerFailed:
@@ -1801,7 +1831,12 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
         if (!result || result->generation != g_probeGeneration || !g_viewLogin || g_loginInFlight ||
             result->fnId != NormalizeFnId(GetText(g_fnIdInput))) return 0;
         if (!result->succeeded) { g_probeTarget.clear(); return 0; }
-        if (result->required && !g_otpRequired) { g_accessCodeRequired = true; Layout(window); }
+        if (result->required && !g_otpRequired) {
+            const auto previousFocus = GetFocus();
+            const bool previouslyRequired = g_accessCodeRequired;
+            g_accessCodeRequired = true; Layout(window);
+            FocusNewAccessCode(previouslyRequired, previousFocus);
+        }
         return 0;
     }
     case kLoginResult: {
@@ -1902,11 +1937,11 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
             const auto username = GetText(g_usernameInput);
             const auto password = GetText(g_passwordInput);
             if (fnId.empty()) { SetWindowTextW(g_loginError, L("FN Connect ID 格式不正确")); SetFocus(g_fnIdInput); return 0; }
-            if (username.empty()) { SetWindowTextW(g_loginError, L("请输入 fnOS 用户名")); SetFocus(g_usernameInput); return 0; }
-            if (password.empty()) { SetWindowTextW(g_loginError, L("请输入 fnOS 密码")); SetFocus(g_passwordInput); return 0; }
             const auto accessCode = g_accessCodeRequired ? GetText(g_accessCodeInput) : std::wstring{};
             const auto otp = g_otpRequired ? GetText(g_otpInput) : std::wstring{};
             if (g_accessCodeRequired && accessCode.empty()) { SetWindowTextW(g_loginError, L("请输入 fnOS 访问码")); SetFocus(g_accessCodeInput); return 0; }
+            if (username.empty()) { SetWindowTextW(g_loginError, L("请输入 fnOS 用户名")); SetFocus(g_usernameInput); return 0; }
+            if (password.empty()) { SetWindowTextW(g_loginError, L("请输入 fnOS 密码")); SetFocus(g_passwordInput); return 0; }
             if (g_otpRequired && (otp.size() != 6 || !std::all_of(otp.begin(), otp.end(), [](wchar_t c) { return c >= L'0' && c <= L'9'; }))) {
                 SetWindowTextW(g_loginError, L("请输入 6 位 OTP")); SetFocus(g_otpInput); return 0;
             }
@@ -1941,9 +1976,11 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
             CancelAuthorization(g_authorizationRequest); g_authorizationRequest.clear(); ResetLoginFactors();
             g_viewLogin = true; g_loginRequested = true;
             SetWindowTextW(g_fnIdInput, g_fnId.c_str()); SetWindowTextW(g_identity, L("重新登录"));
+            SendMessageW(g_passwordInput, EM_SETPASSWORDCHAR, L'●', 0);
             SetWindowTextW(g_passwordInput, L""); SetWindowTextW(g_loginError, L"");
-            ApplyCredentialChallenge(g_lastRemoteCode); ProbeAccessCode(); Layout(window);
-            SetFocus(g_accessCodeRequired ? g_accessCodeInput : g_usernameInput); return 0;
+            RedrawWindow(GetParent(g_passwordInput), nullptr, nullptr, RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_ERASE);
+            if (g_lastRemoteCode.starts_with(L"ACCESS_CODE_")) ApplyCredentialChallenge(g_lastRemoteCode);
+            ProbeAccessCode(); Layout(window); FocusLoginInput(); return 0;
         case kChangeServer:
             if (g_loginInFlight) return 0;
             CancelAuthorization(g_authorizationRequest); g_authorizationRequest.clear(); ResetLoginFactors();
@@ -1951,6 +1988,11 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
             SetWindowTextW(g_fnIdInput, L""); SetWindowTextW(g_usernameInput, L"");
             SetWindowTextW(g_passwordInput, L""); SetWindowTextW(g_loginError, L"");
             Layout(window); SetFocus(g_fnIdInput); return 0;
+        case kLoginBack:
+            if (g_loginInFlight) return 0;
+            g_otpRequired = false; g_probeTarget = NormalizeFnId(GetText(g_fnIdInput)); SetWindowTextW(g_otpInput, L"");
+            SendMessageW(g_trustDevice, BM_SETCHECK, BST_UNCHECKED, 0);
+            SetWindowTextW(g_loginError, L""); Layout(window); SetFocus(g_passwordInput); return 0;
         case kLoginReturn:
         case kLoginCancel:
             if (g_loginInFlight || g_externalAuthorization || !g_authorizationRequest.empty()) {

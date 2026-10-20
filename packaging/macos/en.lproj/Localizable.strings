@@ -317,3 +317,4 @@
 "技术详情" = "Technical details";
 "未找到当前连接可用的地址" = "No address available for the current connection";
 "解析失败，请展开技术详情查看原因。" = "Resolution failed. Expand technical details for the cause.";
+"上一步" = "Back";

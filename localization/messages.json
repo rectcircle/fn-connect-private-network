@@ -316,5 +316,6 @@
   "暂时无法生成访问地址，请检查 NAS 的 FN Connect 和管理端口设置。": "Access address unavailable. Check FN Connect and management port settings on the NAS.",
   "技术详情": "Technical details",
   "未找到当前连接可用的地址": "No address available for the current connection",
-  "解析失败，请展开技术详情查看原因。": "Resolution failed. Expand technical details for the cause."
+  "解析失败，请展开技术详情查看原因。": "Resolution failed. Expand technical details for the cause.",
+  "上一步": "Back"
 }

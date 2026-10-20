@@ -24,6 +24,11 @@ elif [ "$#" -ne 0 ]; then
 fi
 
 # Close the running UI before removing its app bundle.
+console_uid="$(/usr/bin/stat -f %u /dev/console 2>/dev/null || true)"
+case "$console_uid" in
+  ''|*[!0-9]*|0) ;;
+  *) /bin/launchctl bootout "gui/${console_uid}/cn.rectcircle.fncpn.install-prompt" 2>/dev/null || true ;;
+esac
 /bin/ps -axo uid=,pid=,command= | while read -r uid pid command; do
   case "$command" in
     "/Applications/FnCPN.app/Contents/MacOS/FnCPN"*)

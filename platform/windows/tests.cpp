@@ -153,6 +153,21 @@ int main(int argc, char** argv) {
             }
             return 0;
         }
+        SetWindowTextW(g_fnIdInput, L"");
+        Check(PreferredLoginInput() == g_fnIdInput, "empty target gets initial focus");
+        SetWindowTextW(g_fnIdInput, L"focus-target");
+        SetWindowTextW(g_usernameInput, L"");
+        Check(PreferredLoginInput() == g_usernameInput, "missing username gets initial focus");
+        SetWindowTextW(g_usernameInput, L"prefilled-user");
+        Check(PreferredLoginInput() == g_passwordInput, "prefilled identity focuses password");
+        g_accessCodeRequired = true;
+        Check(PreferredLoginInput() == g_accessCodeInput, "access code precedes password for a known target");
+        SetWindowTextW(g_accessCodeInput, L"filled-access");
+        Check(PreferredLoginInput() == g_passwordInput, "filled access code is not refocused");
+        g_otpRequired = true;
+        Check(PreferredLoginInput() == g_otpInput, "OTP step never focuses hidden account fields");
+        ResetLoginFactors();
+        SetWindowTextW(g_usernameInput, L"");
         g_configured = true; g_loginRequested = true; g_viewLogin = true;
         SetWindowTextW(g_fnIdInput, L"new-target");
         auto* snapshot = new RefreshResult{}; snapshot->fnId = L"old-target"; snapshot->state = L"PAUSED";
@@ -182,6 +197,13 @@ int main(int argc, char** argv) {
         SendMessageW(window, kLoginResult, reinterpret_cast<WPARAM>(new LoginResult{L"wrong OTP", L"TWO_FACTOR_CODE_INVALID"}), 2);
         Check(GetText(g_otpInput).empty() && GetText(g_passwordInput) == L"retained-password" &&
             SendMessageW(g_trustDevice, BM_GETCHECK, 0, 0) == BST_CHECKED, "OTP rejection clears only the OTP");
+        Check(!(GetWindowLongW(g_usernameInput, GWL_STYLE) & WS_VISIBLE) &&
+            !(GetWindowLongW(g_passwordInput, GWL_STYLE) & WS_VISIBLE) &&
+            !(GetWindowLongW(g_fnIdInput, GWL_STYLE) & WS_VISIBLE), "OTP step hides all account fields");
+        SendMessageW(window, WM_COMMAND, kLoginBack, 0);
+        Check(!g_otpRequired && GetText(g_passwordInput) == L"retained-password" && g_authorizationRequest == L"pending",
+            "back preserves credentials and pending authorization");
+        Check(GetWindowLongW(g_passwordInput, GWL_STYLE) & WS_VISIBLE, "back reveals password field");
         const auto probeGeneration = g_probeGeneration;
         SetWindowTextW(g_fnIdInput, L"another-target");
         Check(!g_otpRequired && !g_accessCodeRequired && g_authorizationRequest.empty() &&
@@ -234,8 +256,12 @@ int main(int argc, char** argv) {
         SetWindowTextW(g_diagnosticValue, L"Short again"); UpdateDiagnosticScrollBar();
         Check(!(GetWindowLongW(g_diagnosticValue, GWL_STYLE) & WS_VSCROLL), "shrinking diagnostic hides scrollbar again");
         g_fnId = L"existing-nas";
+        g_lastRemoteCode = L"TWO_FACTOR_REQUIRED";
         SendMessageW(window,WM_COMMAND,kRelogin,0);
+        Check(!g_otpRequired, "relogin collects password before entering OTP from an old status");
         Check(GetText(g_fnIdInput) == L"existing-nas", "relogin retains FN Connect ID");
+        Check(GetText(g_passwordInput).empty() && SendMessageW(g_passwordInput, EM_GETPASSWORDCHAR, 0, 0) != 0,
+            "relogin has an empty masked password independent of the username");
         Check(GetText(g_identity) == L("重新登录"), "login heading does not duplicate FN ID");
         Check((GetWindowLongW(g_autostart,GWL_STYLE) & BS_TYPEMASK) == BS_AUTOCHECKBOX &&
             !(GetWindowLongW(g_autostart,GWL_STYLE) & BS_PUSHLIKE), "autostart is a checkbox");

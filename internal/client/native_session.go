@@ -132,7 +132,7 @@ func (c NativeSessionClient) Login(
 	if accessToken := nativeString(response, "accessToken"); nativeString(response, "token") == "" &&
 		(accessToken != "" || nativeBool(response, "isTwofaEnforced")) {
 		login.DeviceID = deviceID
-		response, err = submitTwofaCode(ctx, connection, response, accessToken, login)
+		response, err = submitTwofaCode(ctx, connection, response, accessToken, login, "CLI")
 		if err != nil {
 			return NativeSession{}, err
 		}
@@ -173,6 +173,7 @@ func submitTwofaCode(
 	challenge map[string]any,
 	accessToken string,
 	login NativeLogin,
+	deviceType string,
 ) (map[string]any, error) {
 	if login.TwofaCode == "" || (nativeBool(challenge, "isTwofaEnforced") && !nativeBool(challenge, "isBindTwofaSecret")) {
 		failure := model.NewError(
@@ -216,7 +217,7 @@ func submitTwofaCode(
 		"isTrustedDevice": login.TrustDevice,
 		"stay":            1,
 		"deviceName":      valueOrDefault(login.DeviceName, "FnCPN for macOS"),
-		"deviceType":      "CLI",
+		"deviceType":      deviceType,
 		"did":             login.DeviceID,
 		"si":              si,
 	}, "")
@@ -305,6 +306,9 @@ func (c NativeSessionClient) webLogin(
 	}
 	username := strings.TrimSpace(login.Username)
 	if err := validateLoginInput(username, login.Password); err != nil {
+		return AdminWebSession{}, err
+	}
+	if err := validateTwofaCode(login.TwofaCode); err != nil {
 		return AdminWebSession{}, err
 	}
 	deviceID := login.DeviceID
@@ -430,16 +434,15 @@ func (c NativeSessionClient) webLogin(
 	if !nativeSuccess(response) {
 		return AdminWebSession{}, nativeAuthenticationError("fnOS web login failed", response)
 	}
-	// The management Web session has no interactive two-factor step; a challenge
-	// here means the admin proxy stays unavailable while the tunnel session,
-	// which already answered the challenge, keeps working.
-	if nativeString(response, "token") == "" && nativeString(response, "accessToken") != "" {
-		return AdminWebSession{}, model.WithOperation(model.NewError(
-			model.ErrorFailedPrecondition,
-			"fnOS web login requires a two-factor code",
-			false,
-		), "native_session.web_login.twofa")
+	if accessToken := nativeString(response, "accessToken"); nativeString(response, "token") == "" &&
+		(accessToken != "" || nativeBool(response, "isTwofaEnforced")) {
+		login.DeviceID = deviceID
+		response, err = submitTwofaCode(ctx, connection, response, accessToken, login, "Browser")
+		if err != nil {
+			return AdminWebSession{}, err
+		}
 	}
+
 	session := AdminWebSession{
 		Version:   adminWebSessionVersion,
 		FNID:      fnID,

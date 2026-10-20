@@ -42,4 +42,23 @@ if [ "$count" -ge 50 ]; then
   exit 1
 fi
 
+# Load a one-shot GUI job so waiting for a button cannot hold up Installer.
+# Its template lives in the signed app bundle, not in a login LaunchAgents
+# directory: it is requested only by this installation, not on later logins.
+console_uid="$(/usr/bin/stat -f %u /dev/console 2>/dev/null || true)"
+case "$console_uid" in
+  ''|*[!0-9]*|0) exit 0 ;;
+esac
+if [ "${3:-/}" = / ] &&
+   /bin/launchctl print "gui/${console_uid}" >/dev/null 2>&1 &&
+   /usr/bin/pgrep -u "$console_uid" -x Installer >/dev/null 2>&1; then
+  /bin/launchctl bootout "gui/${console_uid}/cn.rectcircle.fncpn.install-prompt" 2>/dev/null || true
+  if ! /bin/launchctl asuser "$console_uid" \
+    /usr/bin/sudo -H -u "#${console_uid}" \
+    /bin/launchctl bootstrap "gui/${console_uid}" \
+    /Applications/FnCPN.app/Contents/Resources/install-prompt.plist; then
+    echo "FnCPN installed; launch prompt unavailable. Open FnCPN from Applications." >&2
+  fi
+fi
+
 exit 0

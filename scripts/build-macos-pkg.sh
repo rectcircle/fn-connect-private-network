@@ -100,6 +100,9 @@ cp -X "${ROOT_DIR}/packaging/macos/cn.rectcircle.fncpn.privileged.plist" \
 mkdir -p "${APP_DIR}/Contents/Resources"
 cp -X "${ROOT_DIR}/packaging/macos/cn.rectcircle.fncpn.client.plist" \
   "${APP_DIR}/Contents/Resources/client-agent.plist"
+cp -X "${ROOT_DIR}/packaging/macos/install-prompt.applescript" \
+  "${ROOT_DIR}/packaging/macos/install-prompt.plist" \
+  "${APP_DIR}/Contents/Resources/"
 cp -X "${ROOT_DIR}/packaging/macos/scripts/preinstall" "$SCRIPTS/"
 cp -X "${ROOT_DIR}/packaging/macos/scripts/postinstall" "$SCRIPTS/"
 cp -X "${ROOT_DIR}/packaging/macos/uninstall.sh" "${TOOL_DIR}/"
@@ -111,6 +114,8 @@ chmod 0755 \
   "${SCRIPTS}/preinstall" \
   "${SCRIPTS}/postinstall"
 chmod 0644 \
+  "${APP_DIR}/Contents/Resources/install-prompt.applescript" \
+  "${APP_DIR}/Contents/Resources/install-prompt.plist" \
   "${APP_DIR}/Contents/Info.plist" \
   "${APP_DIR}/Contents/Resources/client-agent.plist" \
   "${PAYLOAD}/Library/LaunchDaemons/cn.rectcircle.fncpn.privileged.plist"
