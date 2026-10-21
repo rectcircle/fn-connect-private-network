@@ -149,8 +149,9 @@ sudo pacman -U ./fncpn-core-*.pkg.tar.zst ./fncpn-ui-*.pkg.tar.zst
 fncpn-linux-setup
 ```
 
-草稿 RPM 尚未签名，不将关闭包签名检查作为正式安装方案；签名、公钥分发与相关发行版的
-安装验收仍须在公开发布前完成。SELinux 系统安装脚本恢复标准文件标签，不禁用强制访问控制；
+RPM 发布构建使用项目专用 OpenPGP 密钥签名；公钥、完整指纹与维护方式见
+[RPM 签名](rpm-signing.md)。自动安装先校验固定公钥与包签名，再导入系统信任；
+手动安装须先核对并导入公钥，不关闭包签名检查。SELinux 系统安装脚本恢复标准文件标签，不禁用强制访问控制；
 SELinux/AppArmor 强制模式、WebKit 沙箱与各桌面会话须在真实目标系统验收。
 
 包维护脚本按 dpkg、RPM、pacman 各自的参数和升级阶段生成，不能共用 dpkg 参数判断。

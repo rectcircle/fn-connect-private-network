@@ -16,6 +16,7 @@
 | [版本与兼容性](versioning-and-compatibility.md) | 从 1.0.0 生效的版本、协议、数据升级和发布约束 |
 | [验证记录](validation.md) | 按版本记录的验证范围、未验证项及有价值的历史实测 |
 | [Linux 支持](linux-support.md) | 发行版/架构矩阵、Core/UI 安装、systemd 与 DNS、ABI 和草稿 CI 验证边界 |
+| [RPM 签名](rpm-signing.md) | 公钥指纹、安装验签、CI Secrets、本地密钥与轮换 |
 | [Nix Flake 与 NixOS](nix.md) | 双架构源码构建、NixOS 模块、持久化数据与回滚 |
 | [Windows 开发与发布](windows-development.md) | 工具准备、双架构 MSI 构建、草稿发布与剩余实机验收 |
 

@@ -7,6 +7,7 @@ API=https://api.github.com
 INSTALL_TYPE=auto
 REQUESTED_VERSION=latest
 WORK_DIR=
+RPM_KEY_SHA256=cada20dd8f3458db0840ce52fccdff21ac3ce13aa018058cc3df2963e5dbaa24
 
 fail() { printf '错误：%s\n' "$*" >&2; exit 1; }
 info() { printf '%s\n' "$*" >&2; }
@@ -197,13 +198,27 @@ verify_packages() {
     done
     (cd "$WORK_DIR" && sha256sum --check --strict selected-SHA256SUMS) || fail '安装包 SHA256 不匹配，未安装'
 }
+verify_rpm_signatures() {
+    [ "$FORMAT" = rpm ] || return 0
+    local key="$WORK_DIR/RPM-GPG-KEY-fncpn" package output
+    api_get "contents/packaging/linux/keys/RPM-GPG-KEY-fncpn?ref=v$VERSION" "$key" application/vnd.github.raw+json || fail '无法下载 RPM 公钥'
+    printf '%s  %s\n' "$RPM_KEY_SHA256" "$key" | sha256sum --check --strict - || fail 'RPM 公钥与安装脚本固定的公钥不一致'
+    mkdir -m 700 "$WORK_DIR/rpm-keyring"
+    rpmkeys --dbpath "$WORK_DIR/rpm-keyring" --import "$key" || fail '无法读取 RPM 公钥'
+    for package in "${PACKAGE_NAMES[@]}"; do
+        output=$(LC_ALL=C rpmkeys --dbpath "$WORK_DIR/rpm-keyring" --checksig --verbose "$WORK_DIR/$package" 2>&1) || fail "RPM 签名校验失败：$package"
+        [[ "$output" =~ [Ss]ignature.*OK ]] && [[ ! "$output" =~ NOKEY|NOT[[:space:]]OK|BAD|UNSIGNED ]] || fail "RPM 缺少有效的项目签名：$package"
+    done
+    # Import only after every selected package verifies in an isolated keyring.
+    as_root rpmkeys --import "$key" || fail '无法向系统导入项目 RPM 公钥'
+}
 install_packages() {
     local name
     local -a files=()
     for name in "${PACKAGE_NAMES[@]}"; do files+=("$WORK_DIR/$name"); done
     case "$MANAGER" in
         apt-get) refresh_apt || return; as_root apt-get install -y "${files[@]}" ;;
-        dnf) as_root dnf install -y "${files[@]}" ;;
+        dnf) as_root dnf install -y --setopt=localpkg_gpgcheck=True "${files[@]}" ;;
         zypper) as_root zypper --non-interactive install "${files[@]}" ;;
         pacman)
             info 'Arch 将先完整更新系统，避免部分升级。'
@@ -239,8 +254,9 @@ main() {
     download_asset "SHA256SUMS-$VERSION"
     for name in "${PACKAGE_NAMES[@]}"; do download_asset "$name"; done
     verify_packages
+    verify_rpm_signatures
     info '校验通过，使用系统包管理器安装并解析运行依赖（保留系统签名策略）。'
-    install_packages || fail '包管理器安装失败；如遇未签名 RPM，请先完成包签名/信任配置，不要全局关闭签名校验'
+    install_packages || fail '包管理器安装失败；请查看包管理器错误；不要关闭签名校验'
     info "FnCPN $VERSION 安装完成。"
     if [ "$INSTALL_TYPE" = all ]; then
         info '在普通用户的桌面应用菜单打开 FnCPN，首次运行按提示授权特权服务。'

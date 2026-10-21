@@ -12,6 +12,7 @@ import sys
 import tempfile
 from linux_support import ROOT, package_name, target_profile
 from linux_abi import inspect
+from rpm_signing import KEY, verify
 
 
 def run(*args, **kwargs):
@@ -24,9 +25,9 @@ def install(profile, packages, reinstall=False):
         run('apt-get', 'install', '-y', '--no-install-recommends', *(['--reinstall'] if reinstall else []), *names)
     elif profile['format'] == 'rpm':
         if profile['osID'].startswith('opensuse'):
-            run('zypper', '--non-interactive', 'install', '--no-recommends', '--allow-unsigned-rpm', *(['--force'] if reinstall else []), *names)
+            run('zypper', '--non-interactive', 'install', '--no-recommends', *(['--force'] if reinstall else []), *names)
         else:
-            run('dnf', 'reinstall' if reinstall else 'install', '-y', '--setopt=localpkg_gpgcheck=False', '--setopt=install_weak_deps=False', *names)
+            run('dnf', 'reinstall' if reinstall else 'install', '-y', '--setopt=localpkg_gpgcheck=True', '--setopt=install_weak_deps=False', *names)
     else:
         run('pacman', '-U', '--noconfirm', *names)
 
@@ -133,6 +134,10 @@ def main():
     try:
         run(sys.executable, str(ROOT / 'scripts/check-linux-packages.py'), str(directory), target, arch)
         evidence['checks'].append('package-metadata')
+        if profile['format'] == 'rpm':
+            evidence['rpmSigning'] = verify(packages)
+            run('rpmkeys', '--import', str(KEY))
+            evidence['checks'].append('rpm-signature')
         before = installed_packages(profile)
         install(profile, packages[:1])
         core_packages = installed_packages(profile)

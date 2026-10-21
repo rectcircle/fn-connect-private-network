@@ -36,6 +36,7 @@ jobs:
         run: |
           go test ./...
           go vet ./...
+          python3 scripts/rpm_signing_test.py
           python3 scripts/linux_support_test.py
           python3 scripts/linux_compatibility_test.py
           python3 scripts/install_linux_test.py

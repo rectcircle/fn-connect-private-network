@@ -2,6 +2,7 @@
 """Exercise release inventories without building or replacing real packages."""
 import hashlib, json, os, pathlib, subprocess, sys, tempfile, unittest
 from linux_support import TARGETS, BUNDLES, package_name, release_packages
+from rpm_signing import signing_identity
 SCRIPT = pathlib.Path(__file__).with_name('release-manifest.py')
 class ReleaseInventoryTest(unittest.TestCase):
     def create_windows_candidates(self, root, version='1.0.0', commit='commit', fingerprint='a' * 64):
@@ -77,6 +78,8 @@ class ReleaseInventoryTest(unittest.TestCase):
             (lambda m: m.update(architecture='arm64'), 'clean release'),
             (lambda m: m['artifacts'].pop(), 'exactly matching'),
             (lambda m: m['artifacts'][0].update(sha256='0'*64), 'checksum'),
+            (lambda m: m.update(_testEvidence='rpm-unsigned'), 'RPM signing evidence'),
+            (lambda m: m.update(_testEvidence='no-rpm-signature'), 'compatibility evidence does not match'),
             (lambda m: m.update(_testEvidence='missing'), 'Missing Linux compatibility evidence'),
             (lambda m: m.update(_testEvidence='foreign'), 'compatibility evidence does not match'),
             (lambda m: m.update(_testEvidence='failed'), 'compatibility evidence does not match'),
@@ -98,13 +101,20 @@ class ReleaseInventoryTest(unittest.TestCase):
                             (out/name).write_bytes(b'fixture')
                             entries.append({'path':name,'sha256':hashlib.sha256(b'fixture').hexdigest()})
                         manifest={'productVersion':version,'commit':'commit','architecture':architecture,'distribution':target,'packageFormat':target,'workingTreeDirty':False,'artifacts':entries}
+                        if target=='rpm': manifest['rpmSigning']=signing_identity()
                         if target=='deb' and architecture=='amd64': mutation(manifest)
                         (out/'build-manifest.json').write_text(json.dumps(manifest))
                 mode=json.loads((root/'linux/deb/amd64/build-manifest.json').read_text()).get('_testEvidence')
+                if mode=='rpm-unsigned':
+                    path=root/'linux/rpm/amd64/build-manifest.json'
+                    record=json.loads(path.read_text());record.pop('rpmSigning');path.write_text(json.dumps(record))
                 (root/'linux-compat').mkdir()
                 for distro, profile in TARGETS.items():
                     for architecture in profile['architectures']:
                         evidence={'target':distro,'architecture':architecture,'bundle':profile['format'],'productVersion':version,'commit':'commit','passed':True,'checks':['package-metadata','dependency-resolution','core-version','ui-dynamic-linking','core-only-install','elf-abi','ui-frontend-handshake','package-reinstall','package-remove'],'artifacts':{package_name(component,version,distro,architecture):hashlib.sha256(b'fixture').hexdigest() for component in ('core','ui')}}
+                        if profile['format']=='rpm':
+                            evidence['rpmSigning']=signing_identity()
+                            if mode!='no-rpm-signature': evidence['checks'].append('rpm-signature')
                         if mode == 'foreign': evidence['commit']='other'
                         if mode == 'failed': evidence['passed']=False
                         if mode == 'no-ui': evidence['checks'].remove('ui-frontend-handshake')

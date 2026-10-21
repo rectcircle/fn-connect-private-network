@@ -111,6 +111,9 @@ jobs:
   linux-build:
     if: ${{ !inputs.publish }}
     uses: ./.github/workflows/build-linux.yml
+    secrets:
+      RPM_SIGNING_PRIVATE_KEY: ${{ secrets.RPM_SIGNING_PRIVATE_KEY }}
+      RPM_SIGNING_PASSPHRASE: ${{ secrets.RPM_SIGNING_PASSPHRASE }}
     permissions:
       contents: read
     with:

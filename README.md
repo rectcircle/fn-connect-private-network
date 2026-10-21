@@ -61,7 +61,8 @@ bash install-fncpn-linux.sh --type core --version 1.1.2
 
 脚本校验 Release 的 SHA256，再使用 apt、dnf、zypper 或 pacman 安装并解析运行依赖；
 必要时会请求 sudo，并补齐 curl、jq、校验工具及 CA 证书。Arch 会执行完整系统升级。
-系统包签名策略保持生效；不受系统信任的未签名 RPM 可能被拒绝，应先完成签名/信任配置。
+RPM 自动安装先核对固定公钥并验证项目签名，全部通过后导入系统信任，保持包管理器签名检查。
+公钥指纹和手动安装步骤见 [RPM 签名](docs/rpm-signing.md)。
 已有 UI 版本不匹配时，`--type core` 会要求改用 `--type all`；自动安装不支持降级。
 macOS、Windows、不支持的发行版/架构和无 systemd 的环境会直接报错。
 

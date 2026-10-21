@@ -105,9 +105,26 @@ class InstallerTest(unittest.TestCase):
                 sums.write_text(text)
                 self.shell(command, False)
 
+    def test_rpm_key_pin_and_signatures_before_system_import(self):
+        with tempfile.TemporaryDirectory() as directory:
+            public=ROOT/'packaging/linux/keys/RPM-GPG-KEY-fncpn'
+            common=f'WORK_DIR={shlex.quote(directory)}; FORMAT=rpm; VERSION=1.1.2; PACKAGE_NAMES=(core.rpm ui.rpm); api_get() {{ cp {shlex.quote(str(public))} "$2"; }}; as_root() {{ echo SYSTEM_IMPORT; }}; '
+            good='rpmkeys() { case "$*" in *--checksig*) echo "Header V4 RSA/SHA256 Signature: OK";; esac; }; '
+            result=self.shell(common+good+'verify_rpm_signatures')
+            self.assertIn('SYSTEM_IMPORT',result.stdout)
+            for output in ['Header SHA256 digest: OK','RSA Signature: NOKEY','RSA Signature: NOT OK']:
+                # Each shell gets a fresh isolated RPM database directory.
+                shutil.rmtree(pathlib.Path(directory)/'rpm-keyring')
+                mock='rpmkeys() { case "$*" in *--checksig*) echo '+shlex.quote(output)+';; esac; }; '
+                result=self.shell(common+mock+'verify_rpm_signatures',False)
+                self.assertNotIn('SYSTEM_IMPORT',result.stdout)
+            shutil.rmtree(pathlib.Path(directory)/'rpm-keyring')
+            result=self.shell(common+good+'RPM_KEY_SHA256='+('0'*64)+'; verify_rpm_signatures',False)
+            self.assertNotIn('SYSTEM_IMPORT',result.stdout)
+
     def test_package_transactions_and_stop_on_failed_update(self):
         common = 'WORK_DIR=/tmp/private; PACKAGE_NAMES=(core ui); as_root() { printf "%s\\n" "$*"; }; '
-        for manager, expected in [('apt-get', 'apt-get install -y /tmp/private/core /tmp/private/ui'), ('dnf','dnf install -y /tmp/private/core /tmp/private/ui'), ('zypper','zypper --non-interactive install /tmp/private/core /tmp/private/ui'), ('pacman','pacman -U --noconfirm /tmp/private/core /tmp/private/ui')]:
+        for manager, expected in [('apt-get', 'apt-get install -y /tmp/private/core /tmp/private/ui'), ('dnf','dnf install -y --setopt=localpkg_gpgcheck=True /tmp/private/core /tmp/private/ui'), ('zypper','zypper --non-interactive install /tmp/private/core /tmp/private/ui'), ('pacman','pacman -U --noconfirm /tmp/private/core /tmp/private/ui')]:
             result = self.shell(common+f'MANAGER={manager}; install_packages')
             self.assertIn(expected, result.stdout)
             self.assertNotIn('nogpgcheck', result.stdout)

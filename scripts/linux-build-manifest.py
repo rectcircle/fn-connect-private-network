@@ -2,12 +2,14 @@
 """Record the exact target's matching Core/UI packages and source evidence."""
 import hashlib
 import json
+import os
 import pathlib
 import subprocess
 import sys
 
 from linux_support import ROOT, package_name, package_profile
 from linux_abi import inspect
+from rpm_signing import verify
 
 
 def main():
@@ -27,6 +29,8 @@ def main():
     record={'productVersion':version,'commit':git('rev-parse','HEAD'),'architecture':arch,
             'distribution':target,'packageFormat':profile['format'],'buildOSRelease':os_release,
             'workingTreeDirty':bool(git('status','--porcelain')),'artifacts':artifacts}
+    if profile['format'] == 'rpm' and os.environ.get('RELEASE') == '1':
+        record['rpmSigning'] = verify([out/a['path'] for a in artifacts])
     record['abi'] = inspect(out/'fncpn', out/'fncpn-ui')
     (out/'build-manifest.json').write_text(json.dumps(record,indent=2)+'\n')
     (out/'SHA256SUMS').write_text(''.join(f"{a['sha256']}  {a['path']}\n" for a in artifacts))

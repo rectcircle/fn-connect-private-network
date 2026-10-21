@@ -9,6 +9,7 @@ import re
 import subprocess
 import tempfile
 from linux_support import release_packages
+from rpm_signing import signing_identity
 
 
 def run(*args):
@@ -65,6 +66,8 @@ def publish(directory, repository, make_public=False):
         required_linux_assets = {name for _,_,_,name in release_packages(version)}
         if not required_linux_assets.issubset(sources):
             raise SystemExit('Release inventory is missing required Linux Core/UI assets')
+        if manifest.get('build', {}).get('rpmSigning') != signing_identity():
+            raise SystemExit('Release inventory is missing matching RPM signing evidence')
     commit = run('git', 'rev-parse', 'HEAD')
     if manifest['version'] != version or manifest['commit'] != commit:
         raise SystemExit('Release inventory does not match checkout')

@@ -12,6 +12,7 @@
 - Wails v2 图形客户端保留原生 HTML/CSS/JavaScript，增加 Linux GTK3/WebKitGTK 4.1、Ayatana 托盘、独立后台窗口、登录自启和管理员授权入口。
 - 提供通用 deb、RPM 和 Arch Core/UI 双包，共 10 个 Linux 安装包；基线构建与多发行版兼容验证分离，发布草稿核对版本、commit、包哈希及目标验证证据。Arch Linux 目标为 amd64，其余清单目标为 amd64/arm64。
 - 新增 Linux 自动安装脚本：检测发行版、架构和桌面，支持 latest/指定版本、全部组件/Core，校验 SHA256；官网补齐中英文安装入口与 Linux/Nix 文档。
+- RPM 发布包增加 OpenPGP 签名，自动安装固定公钥并在隔离密钥库中验签，Fedora/openSUSE 兼容性测试保持签名检查；签名后再生成发布哈希。
 - 新增 Nix Flake：Linux 双架构 Core/UI、开发 shell 和 NixOS 服务模块，通过源码构建，不增加 Release 包。
 - Linux split DNS 使用 systemd-resolved 独立 dummy link 和受限转发桥；未使用 resolved stub 时明确降级，不覆盖用户的 `/etc/resolv.conf`。
 

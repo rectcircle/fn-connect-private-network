@@ -18,4 +18,6 @@ export FNCPN_UI_BINARY="$OUT/fncpn-ui"
 cp "$ROOT_DIR/ui/build/bin/fncpn-ui" "$FNCPN_UI_BINARY"
 export NFPM="${NFPM:-$(go env GOPATH)/bin/nfpm}"
 python3 "$ROOT_DIR/scripts/linux-package.py" ui "$TARGET" "$FNCPN_ARCH" "$FNCPN_UI_BINARY" "$OUT"
-python3 "$ROOT_DIR/scripts/linux-build-manifest.py" "$OUT" "$TARGET" "$FNCPN_ARCH"
+if [ "${DEFER_LINUX_MANIFEST:-0}" != 1 ]; then
+ python3 "$ROOT_DIR/scripts/linux-build-manifest.py" "$OUT" "$TARGET" "$FNCPN_ARCH"
+fi

@@ -7,6 +7,7 @@ import pathlib
 import tempfile
 import unittest
 from linux_support import release_packages
+from rpm_signing import signing_identity
 from unittest.mock import patch
 
 spec = importlib.util.spec_from_file_location('publisher', pathlib.Path(__file__).with_name('publish-release.py'))
@@ -45,7 +46,7 @@ class PublicationTest(unittest.TestCase):
                         content=name.encode();source.write_bytes(content)
                         sources[name]=source
                         artifacts.append({'file':name,'path':source.relative_to(out).as_posix(),'sha256':hashlib.sha256(content).hexdigest()})
-                (out / f'release-{version}.json').write_text(json.dumps({'version': version, 'commit': 'commit', 'artifacts': artifacts}))
+                (out / f'release-{version}.json').write_text(json.dumps({'version': version, 'commit': 'commit', 'artifacts': artifacts, 'build': {'rpmSigning': signing_identity()} if include_linux else {}}))
                 (out / f'SHA256SUMS-{version}').write_text(''.join(f"{a['sha256']}  {a['file']}\n" for a in artifacts))
                 calls = []
 

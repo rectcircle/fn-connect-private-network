@@ -10,6 +10,11 @@ on:
         type: boolean
         required: false
         default: false
+    secrets:
+      RPM_SIGNING_PRIVATE_KEY:
+        required: false
+      RPM_SIGNING_PASSPHRASE:
+        required: false
   workflow_dispatch:
     inputs:
       ref:
@@ -56,6 +61,7 @@ jobs:
       TARGET: ${{ matrix.target }}
       ARCH: ${{ matrix.arch }}
       RELEASE: ${{ inputs.release && '1' || '0' }}
+      DEFER_LINUX_MANIFEST: '1'
     steps:
       # Bootstrap before checkout because minimal images may not have git/Python.
       - name: Bootstrap Debian and Ubuntu container
@@ -108,6 +114,7 @@ jobs:
           sh scripts/test-linux-activation.sh
           go test ./...
           go vet ./...
+          python3 scripts/rpm_signing_test.py
           python3 scripts/install_linux_test.py
           python3 scripts/linux_support_test.py
           python3 scripts/linux_compatibility_test.py
@@ -129,6 +136,20 @@ jobs:
           if [ '${{ matrix.format }}' = deb ]; then
             apt-get --simulate install "./dist/linux/$TARGET/$ARCH/"*.deb
           fi
+      - name: Install RPM signing tools
+        if: inputs.release && matrix.format == 'rpm'
+        run: zypper --non-interactive install --no-recommends gpg2 rpm-build
+      - name: Sign RPM release packages
+        if: inputs.release && matrix.format == 'rpm'
+        env:
+          RPM_SIGNING_PRIVATE_KEY: ${{ secrets.RPM_SIGNING_PRIVATE_KEY }}
+          RPM_SIGNING_PASSPHRASE: ${{ secrets.RPM_SIGNING_PASSPHRASE }}
+        run: python3 scripts/rpm_signing.py sign "dist/linux/$TARGET/$ARCH/"*.rpm
+      - name: Reject unsigned, corrupt and untrusted RPM fixtures
+        if: inputs.release && matrix.format == 'rpm'
+        run: FNCPN_TEST_SIGNED_RPM="dist/linux/$TARGET/$ARCH/fncpn-core-$(cat internal/version/VERSION)-linux-$ARCH.rpm" python3 scripts/rpm_signing_test.py
+      - name: Record final package hashes and signing evidence
+        run: python3 scripts/linux-build-manifest.py "dist/linux/$TARGET/$ARCH" "$TARGET" "$ARCH"
       - uses: actions/upload-artifact@v4
         with:
           name: linux-packages-${{ matrix.target }}-${{ matrix.arch }}

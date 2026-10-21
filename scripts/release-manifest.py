@@ -2,6 +2,7 @@
 """Inventory the exact product release; RELEASE=1 refuses an existing inventory."""
 import hashlib, json, os, pathlib, sys, subprocess
 from linux_support import TARGETS, BUNDLES, package_name as linux_package_name
+from rpm_signing import signing_identity
 root, version, revision, arch = sys.argv[1:]
 root = pathlib.Path(root)
 target = root / f"release-{version}.json"
@@ -51,6 +52,8 @@ if tuple(map(int, version.split('.'))) >= (1, 1, 2):
                 build.get('architecture') != linux_arch or build.get('distribution') != linux_target or
                 build.get('packageFormat') != linux_target or build.get('workingTreeDirty') is not False):
                 raise SystemExit('Linux candidate must match the clean release version, commit, format and architecture')
+            if linux_target == 'rpm' and build.get('rpmSigning') != signing_identity():
+                raise SystemExit('RPM signing evidence does not match the project key')
             expected_names = {linux_package_name(component,version,linux_target,linux_arch) for component in ('core', 'ui')}
             entries = build.get('artifacts', [])
             if len(entries) != 2 or {entry.get('path') for entry in entries} != expected_names:
@@ -71,11 +74,16 @@ if tuple(map(int, version.split('.'))) >= (1, 1, 2):
             except (OSError, json.JSONDecodeError) as error:
                 raise SystemExit(f'Missing Linux compatibility evidence for {distro} {architecture}: {error}')
             expected = {linux_package_name(component,version,distro,architecture): by_name[linux_package_name(component,version,distro,architecture)] for component in ('core','ui')}
+            expected_checks = {'package-metadata','dependency-resolution','core-version','ui-dynamic-linking','core-only-install','elf-abi','ui-frontend-handshake','package-reinstall','package-remove'}
+            if profile['format'] == 'rpm':
+                expected_checks.add('rpm-signature')
+                if evidence.get('rpmSigning') != signing_identity():
+                    raise SystemExit('RPM compatibility signing evidence does not match the project key')
             if (evidence.get('target') != distro or evidence.get('architecture') != architecture or
                 evidence.get('bundle') != profile['format'] or evidence.get('productVersion') != version or
                 evidence.get('commit') != revision or evidence.get('artifacts') != expected or
                 evidence.get('passed') is not True or
-                set(evidence.get('checks', [])) != {'package-metadata','dependency-resolution','core-version','ui-dynamic-linking','core-only-install','elf-abi','ui-frontend-handshake','package-reinstall','package-remove'}):
+                set(evidence.get('checks', [])) != expected_checks):
                 raise SystemExit('Linux compatibility evidence does not match the release packages and commit')
 
 def tool(*command):
@@ -95,6 +103,7 @@ metadata = {"version": version, "commit": revision,
                       "macosArchitectures": ["arm64", "x64"],
                       "windowsArchitectures": ["arm64", "x64"]}}
 if tuple(map(int, version.split('.'))) >= (1, 1, 2):
+    metadata['build']['rpmSigning'] = signing_identity()
     metadata['build']['linuxArchitectures'] = ['amd64', 'arm64']
     metadata['build']['linuxTargets'] = list(TARGETS)
     metadata['build']['linuxBundles'] = list(BUNDLES)
