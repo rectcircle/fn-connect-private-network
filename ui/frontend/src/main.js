@@ -38,6 +38,7 @@ function render() {
  const direct=diagnostics.direct||{};
  const messages=[describeFailure(operationError||status.lastError,L),describeFailure(dns.lastError,L),direct.lastError&&('IPv6: '+describeFailure(direct.lastError,L)),direct.endpoint&&`UDP ${direct.endpoint}`,direct.candidateCount>0&&L('IPv6 候选 {0}，已尝试 {1}',direct.candidateCount,direct.attemptCount||0),diagnostics.lanOverlap&&L('本地与 NAS 网段重叠，仅保留隧道内 NAS 路由')].filter(Boolean);
  set('diagnostics',messages.join('\n')||L('无异常'));
+ $('diagnostics').className=(operationError||status.lastError||dns.lastError||direct.lastError)?'diagnostic-error':'';
  UpdateTray(busy?'PROBING':p.state,'FnCPN: '+title,p.action,p.needsLogin,busy).catch(console.error);
 }
 async function call(method,params={}) { const reply=await Call(method,params);if(reply.error)throw reply.error;return reply.result||{}; }
@@ -49,10 +50,10 @@ async function refresh() {
 }
 async function perform(task) {
  if(busy)return;busy=true;operationError=null;set('notice','');render();
- try{await task();}catch(error){const failure=typeof error==='string'?{code:'UNAVAILABLE',message:error}:error;if(editing||!diagnostics.fnId){set('login-error',describeFailure(failure,L));}else{operationError=failure;set('notice',describeFailure(failure,L));}}
+ try{await task();}catch(error){const failure=typeof error==='string'?{code:'UNAVAILABLE',message:error}:error;if(editing||!diagnostics.fnId){set('login-error',describeFailure(failure,L));}else{operationError=failure;}}
  finally{busy=false;render();await refresh();}
 }
-async function cancelAuthorization(){ const previous=requestId;requestId='';if(previous){try{await call('authorization-cancel',{requestId:previous});}catch(error){set('notice',describeFailure(error,L));}} }
+async function cancelAuthorization(){ const previous=requestId;requestId='';if(previous){try{await call('authorization-cancel',{requestId:previous});}catch(error){operationError=error;render();}} }
 function clearSecrets(){for(const id of ['password','access','otp'])$(id).value='';$('trust').checked=false;}
 async function login(change=false){await cancelAuthorization();editing=true;challenge=false;accessRequired=false;operationError=null;set('notice','');clearSecrets();$('fnid').value=change?'':diagnostics.fnId||'';$('username').value=change?'':diagnostics.username||'';set('login-error','');render();WindowShow();$(change?'fnid':'password').focus();}
 async function primary(){if(busy)return;if(diagnostics.status?.localNetworkWaiting)return perform(()=>call('continue-remote'));if(connected().needsLogin||!diagnostics.fnId)return login();return perform(()=>call(connected().connected?'disconnect':'connect'));}
@@ -86,15 +87,15 @@ $('copy-dns').onclick=()=>Copy(diagnostics.status?.dns?.suffix||'');
 $('copy').onclick=()=>Copy(JSON.stringify({...diagnostics,...(operationError?{operationError}:{})},null,2));
 $('logs').onclick=()=>perform(()=>OpenLogs());$('refresh').onclick=refresh;$('quit').onclick=()=>Quit();
 EventsOn('status-changed',refresh);
-EventsOn('daemon-error',message=>{set('notice',message);});
+EventsOn('daemon-error',message=>{if(editing||!diagnostics.fnId)set('login-error',message);else operationError={message};render();});
 EventsOn('authorize',async data=>{await login();$('fnid').value=data.fnId;requestId=data.requestId;render();$('password').focus();});
 EventsOn('tray-action',async action=>{
  if(action==='primary')await primary();else if(action==='login')await login();else if(action==='autostart')await perform(async()=>{const current=await Info();const next=!current.autoStart;const error=await SetAutoStart(next);if(error)throw {message:error};autoStart=next;});
 });
 const info=await Info();language=info.language;autoStart=info.autoStart;symbols={...fallbackSymbols,...info.symbols};document.documentElement.dataset.platform=info.platform;applyIcons();document.documentElement.lang=language==='zh'?'zh-CN':'en';set('version','v'+info.version);
 document.querySelectorAll('[data-i18n]').forEach(el=>{el.textContent=L(el.textContent);});document.querySelectorAll('[title]').forEach(el=>{el.title=L(el.title);el.setAttribute('aria-label',el.title);});
-if(info.startupError)set('notice',info.startupError);
 await refresh();
+if(info.startupError){if(editing||!diagnostics.fnId)set('login-error',info.startupError);else operationError={message:info.startupError};render();}
 await Ready();
 // Handshake ages change without status generations; refresh them at a modest rate.
 setInterval(refresh,15000);

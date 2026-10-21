@@ -74,10 +74,38 @@ FN Connect 发现响应中的 `port.httpsPort` 会被解析，但当前连接逻
 - 确认客户端能通过当前路径访问 NAS LAN IP 的 TCP 54790；DIRECT/RELAY 依赖已安装的 LAN 路由，网段冲突时 DNS 降级，不回退网关。
 - 在服务端管理页测试 LAN DNS/mDNS；确认 NAS 能访问上游 DNS、目标设备位于已启用的 LAN 网段。
 - 使用 LAN DNS 时允许 NAS 到实际上游的 UDP/TCP 53；使用 mDNS 时允许 NAS 与目标 LAN 的 UDP 5353 组播，网络隔离可能阻断它。无需把这些端口映射到公网，NAS 上 FnCPN 也不额外监听 DNS 53。
-- macOS 依赖本机 loopback DNS 和系统 resolver；Windows 依赖 loopback UDP/TCP 53 和 NRPT。端口或规则冲突可能只使 DNS 降级，IP 访问仍可用。
+- macOS 依赖本机 loopback DNS 和系统 resolver；Windows 依赖 loopback UDP/TCP 53 和 NRPT；
+  Linux 依赖 systemd-resolved stub 与自有 DNS 接口。端口或规则冲突可能只使 DNS 降级，IP 访问仍可用。
 - 浏览器自带 DoH、其他 VPN 或自定义解析器可能绕过系统规则。检查对应应用的解析设置，并与系统解析结果对照。
 
 解析语义和平台约束见 [接口契约](interfaces.md#局域网域名解析110)。
+
+## Linux：系统 DNS 失效或所有域名都无法解析
+
+若错误包含 `lookup ... on 127.0.0.53:53: server misbehaving`，先区分系统上游 DNS
+故障与 FnCPN 专用后缀故障。网关/IP 可达而普通公网域名也无法解析，通常需要检查系统 resolver：
+
+```sh
+ip route
+resolvectl status
+resolvectl query github.com
+# 使用 NetworkManager 的系统，检查物理网卡；替换 eth0 为实际接口
+nmcli -f GENERAL.STATE,GENERAL.CONNECTION,IP4.DNS,IP6.DNS device show eth0
+```
+
+若 DHCP DNS 已出现在 NetworkManager 中，但 `resolvectl status` 的物理链路没有上游
+DNS，可由管理员执行 `sudo nmcli general reload dns-full` 重新同步，再复查普通域名。
+这仅适用于 NetworkManager 管理的系统；不要把固定公共 DNS、关闭 IPv6、覆盖
+`/etc/resolv.conf` 或反复重连当作通用修复。其他网络管理器须按各自的 resolved 集成检查。
+
+Linux 分域 DNS 要求 resolved stub；发行版安装 `systemd-resolved` 依赖时可能切换
+`/etc/resolv.conf`，应同时确认原网络管理器继续向 resolved 提供 DHCP 上游。
+FnCPN 只设置自身 `fnd*` 接口的路由域和 DNS，且 `DefaultRoute=false`，不应接管公网解析。
+若同一物理接口同时被 NetworkManager 和 ifupdown/dhcpcd 管理，或出现重复 DHCP 地址/默认路由，
+先保存配置与日志，再在本地控制台统一管理方式；不要通过唯一的 SSH 会话直接停用网络服务。
+
+本轮 Debian 虚拟机曾出现上游 DNS 丢失，重新同步后 HTTPS 访问恢复，但清空来源尚未确定。
+此现象及手动恢复不作为 FnCPN 根因修复的证据，见 [验证记录](validation.md)。
 
 ## Linux：系统托盘 / 顶栏没有 FnCPN 图标
 
@@ -141,7 +169,9 @@ fncpn-ui
 `gnome-extensions info <实际UUID>` 检查状态及兼容性，并确认扩展总开关未关闭。
 
 FnCPN 关闭主窗口后会隐藏到托盘；托盘尚未可用时，可再次执行 `fncpn-ui` 找回窗口，
-不必重新安装 Core 或删除连接配置。
+不必重新安装 Core 或删除连接配置。“退出”会等待用户 Core 服务停止并清理连接，
+保留配置和自动连接意图；停止失败时 UI 保留并在诊断中报错。
+托盘“打开”会传递桌面激活令牌/菜单时间戳请求前台显示；Wayland 的最终焦点由桌面策略决定。
 
 ## 安装、证书与版本问题
 

@@ -20,6 +20,7 @@ Windows 日常开发只需要三个入口：
 | macOS/fnOS 构建 | `build-all.sh`、`build-macos-pkg.sh`、`build-fpk.sh`、`install-fnpack.sh` | 平台产物与 fnpack 环境 |
 | Linux 安装 | `install-linux.sh` | 自动检测发行版/桌面，从 GitHub latest 或指定版本安装全部/Core；`install_linux_test.py` 为无安装副作用的回归测试 |
 | Linux | `build-linux-core.sh`、`build-linux-ui.sh`、`test-debian13.sh` | Core 交叉构建、基线容器原生 UI 双包构建、多发行版共用包验证、远端预编译测试；见 [Linux 支持](../docs/linux-support.md) |
+| Linux 草稿验证 | `linux-compatibility.py`、`linux_abi.py`、`linux-ui-smoke.py`、`test-linux-activation.sh` | 包事务、目标库版本符号、真实 WebKit 前端启动及托盘激活 D-Bus 测试；完整矩阵仅草稿构建执行 |
 | 共享检查 | `check-release.sh`、`test-fnos-state-permissions.sh` | 跨平台/服务端验收 |
 | 生成资源 | `sync-version.py`、`sync-localizations.py`、`sync-native-localizations.py`、`generate-icons.swift` | 统一版本、翻译与产品图标 |
 | 发布 | `release-version.sh`、`release-manifest.py`、`publish-release.py`、`quark-release.py`、`update-cask.py` | 版本、资产清单、发布和 Homebrew 更新 |

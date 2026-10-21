@@ -52,9 +52,10 @@ UI 授权入口只启动已声明实例，不再执行 `systemctl enable`。
 
 ## 维护和验证
 
-`check-nix.yml` 在两个原生 Linux 架构执行 Flake 求值、Core/UI 构建和模块检查。
+`check-nix.yml` 在普通 push/PR 中只执行 Flake 与模块求值；草稿构建在两个原生 Linux
+架构执行 Core/UI 构建、模块检查和虚拟显示中的真实前端启动。
 这些检查不代替 NixOS 实机的 polkit、systemd、resolved、桌面和网络验收。
-本轮不触发远程 CI，也不在验证虚拟机安装 Nix。
+Nix 开发依赖只进入 CI，不在 Debian 验证虚拟机安装 Nix。
 
 更新 Go 依赖或影响 UI vendoring 的根模块源码后，使用 `scripts/update-nix-go-hashes.sh` 重新生成
 `nix/go-hashes.json`。该脚本在临时副本执行 `go mod vendor` 并用 Nix 计算 NAR hash；
@@ -63,4 +64,4 @@ UI 授权入口只启动已声明实例，不再执行 `systemctl enable`。
 本地验证记录（2026-10-21）：使用下载到项目 `.dev/` 的官方 Nix 2.31.2，
 核验锁定 nixpkgs 源码及两个 vendor 目录的 NAR hash，并对两个 Linux 架构的
 Core/UI derivation 和 NixOS 模块检查完成求值。未安装系统级 Nix，未在 macOS 构建 Linux 包。
-Linux 原生 Nix 构建和 NixOS 实机集成仍待后续 CI 与验收。
+后续草稿 CI 已通过 Linux 双架构原生构建及前端启动；NixOS 实机集成仍待验收。

@@ -1,12 +1,12 @@
 # 技术架构与核心决策
 
 以源码为依据，产品行为见 [产品需求](product.md)，远程与本地契约见 [接口](interfaces.md)。
-客户端共享 Go 连接核心，以平台适配层接入原生界面、IPC 和网络能力。macOS 与 Windows 在特权组件内嵌 wireguard-go，fnOS 使用内核 WireGuard；不随包启动外部 wg/bridge 工具。
+客户端共享 Go 连接核心，以平台适配层接入原生界面、IPC 和网络能力。macOS 与 Windows 在特权组件内嵌 wireguard-go，Linux 客户端与 fnOS 使用内核 WireGuard；不随包启动外部 wg/bridge 工具。
 
 ## 总体架构
 
 ```text
-客户端（当前：macOS、Windows；后续平台复用业务核心）
+客户端（macOS、Windows、Linux；共享业务核心）
 ┌──────────────────────────────┐
 │ 平台原生 UI / fncpn CLI       │
 │ 展示、原生登录表单、用户命令  │
@@ -39,22 +39,25 @@ fnOS
 └───────────────────────────────┘
 ```
 
-客户端数据面由系统特权组件持有 WireGuard（macOS root / Windows LocalSystem）；RELAY 的 WSS 连接由普通 client daemon 持有，通过 loopback UDP 转发密文；LOCAL 不创建隧道。图中的进程关系不表示 root 进程发起 WSS。
+客户端数据面由系统特权组件持有 WireGuard（macOS/Linux root / Windows LocalSystem）；RELAY 的 WSS 连接由普通 client daemon 持有，通过 loopback UDP 转发密文；LOCAL 不创建隧道。图中的进程关系不表示 root 进程发起 WSS。
 
 ### 客户端平台适配与扩展
 
-总体图描述客户端的逻辑职责，具体启动方式、IPC 和系统权限由平台实现。当前已支持 macOS 与 Windows；
+总体图描述客户端的逻辑职责，具体启动方式、IPC 和系统权限由平台实现。当前已实现 macOS、Windows 与 Linux；
 后续客户端复用 `internal/client` 的连接状态机、配置同步、选路及 DNS 逻辑，按平台接入 UI、
 进程生命周期、凭据存储、IPC、WireGuard、路由、DNS 和网络事件。
 
-| 能力 | macOS | Windows |
-|---|---|---|
-| 原生界面 | `FnCPN.app`，AppKit / WebKit | 原生 Windows UI，WebView2 |
-| 后台生命周期 | LaunchAgent / LaunchDaemon | 用户 daemon / Windows 系统服务 |
-| 特权身份 | root | LocalSystem |
-| 本地 IPC | Unix Socket 与 peer credential | Named Pipe 与 Windows 身份校验 |
-| WireGuard / 虚拟接口 | wireguard-go / utun | wireguard-go / Wintun |
-| 系统 DNS | loopback DNS + resolver 文件 | loopback DNS + NRPT |
+| 能力 | macOS | Windows | Linux |
+|---|---|---|---|
+| 界面 | 默认 AppKit / WebKit，可选 Wails v2 | 原生 Windows UI，WebView2 | Wails v2、GTK3 / WebKitGTK 4.1 |
+| 后台生命周期 | LaunchAgent / LaunchDaemon | 用户 daemon / Windows 系统服务 | systemd 用户服务 / 按 UID 隔离的系统服务 |
+| 特权身份 | root | LocalSystem | root |
+| 本地 IPC | Unix Socket 与 peer credential | Named Pipe 与 Windows 身份校验 | Unix Socket 与 peer credential |
+| WireGuard / 虚拟接口 | wireguard-go / utun | wireguard-go / Wintun | 内核 WireGuard / netlink |
+| 系统 DNS | loopback DNS + resolver 文件 | loopback DNS + NRPT | systemd-resolved 专属链路与受限 DNS bridge |
+
+Linux 不修改物理接口、转发或主机防火墙；安装、网络资源所有权与支持范围见
+[Linux 支持](linux-support.md)。NixOS 通过 [Flake 模块](nix.md) 声明服务。
 
 新增平台应实现业务核心定义的窄接口，保持 UI、连接状态机和系统网络权限的职责边界。
 若目标系统要求不同的进程或系统扩展模型，由平台适配承接；支持范围以实际实现和验收为准。
@@ -63,7 +66,7 @@ fnOS
 
 | 组件 | 负责 | 明确不负责 |
 |---|---|---|
-| 平台原生 UI（macOS / Windows） | 授权窗口、首次引导、状态和设置 | 不直接配置网络，不长期承载连接 |
+| 平台 UI（macOS / Windows / Linux） | 授权窗口、首次引导、状态和设置 | 不直接配置网络，不长期承载连接 |
 | `fncpn` 用户 CLI | 脚本化查询和控制客户端 daemon | 不读取 profile 执行连接，不直接调用系统特权能力 |
 | `fncpn client daemon` | 唯一客户端状态机、配置同步、授权凭证、选路和 WSS bridge | 以普通用户运行，不直接修改系统网络 |
 | `fncpn client privileged-daemon` | 进程内运行 WireGuard，并按结构化计划配置接口和路由 | 不联网、不解析凭据、不接受命令名和文件路径 |
@@ -74,7 +77,7 @@ fnOS
 
 ## Go 业务包设计
 
-`fncpn` Go 程序承载除原生 UI 以外的全部核心业务逻辑，不只是供 UI 调用的工具库。macOS、Windows 原生 UI 仅负责展示、收集登录输入和用户操作，并调用本地 IPC；fnOS 管理页通过网关 HTTP API 操作服务端。
+`fncpn` Go 程序承载除原生 UI 以外的全部核心业务逻辑，不只是供 UI 调用的工具库。各平台 UI 仅负责展示、收集登录输入和用户操作，并调用本地 IPC；fnOS 管理页通过网关 HTTP API 操作服务端。
 
 同一代码库按目标平台构建一个 `fncpn` 可执行文件，不同职责通过子命令启动。内部 package 按业务领域和平台边界命名，不设置 `core`、`common` 或 `utils` 等宽泛的中间层。
 
@@ -89,7 +92,7 @@ fnOS
 | `internal/privileged` | client/server 特权操作白名单、客户端凭据文件和计划调度 | 已校验请求 → 网络适配或受限凭据存储 |
 | `internal/platform/darwin` | utun、路由和系统事件适配 | 网络计划 ↔ macOS |
 | `internal/platform/windows` | Wintun、IP Helper、路由和网络事件适配 | 网络计划 ↔ Windows |
-| `internal/platform/linux` | netlink、内核 WireGuard、转发和 nftables 适配 | 服务端期望状态 ↔ Linux |
+| `internal/platform/linux` | netlink、内核 WireGuard；服务端另负责转发和 nftables | 客户端/服务端期望状态 ↔ Linux |
 | `internal/command` | 子命令解析、进程组装和生命周期入口 | 命令行 → 对应进程职责 |
 
 ### Go 实现约束
@@ -112,17 +115,17 @@ fnOS
 
 ### 单一二进制与子命令
 
-macOS、Windows 和 fnOS 分别构建适配自身平台的 Go 核心可执行文件（Windows 为 `fncpn.exe`）。同一平台的不同职责复用该文件，由 LaunchAgent、LaunchDaemon、Windows 服务或 fnOS 生命周期脚本以不同子命令启动；原生 UI 和平台驱动依赖单独打包。
+macOS、Windows、Linux 客户端和 fnOS 分别构建适配自身平台的 Go 核心可执行文件（Windows 为 `fncpn.exe`）。同一平台的不同职责复用该文件，由 LaunchAgent、LaunchDaemon、Windows 服务、systemd 或 fnOS 生命周期脚本以不同子命令启动；原生 UI 和平台驱动依赖单独打包。
 
 | 子命令 | 平台 | 运行身份 | 职责 |
 |---|---|---|---|
-| `fncpn client daemon` | macOS / Windows | 当前用户 | 客户端核心业务和用户 IPC |
-| `fncpn client privileged-daemon` | macOS / Windows | root / LocalSystem | 进程内 WireGuard、平台虚拟接口、路由和 DNS 配置 |
+| `fncpn client daemon` | macOS / Windows / Linux | 当前用户 | 客户端核心业务和用户 IPC |
+| `fncpn client privileged-daemon` | macOS / Windows / Linux | root / LocalSystem | WireGuard（Linux 为内核实现）、平台虚拟接口、路由和 DNS 配置 |
 | `fncpn server daemon` | fnOS | 应用专用普通用户 | HTTP/WSS、设备和配置管理 |
 | `fncpn server privileged-daemon` | fnOS | root | 内核 WireGuard、转发和防火墙 |
-| `fncpn status/connect/...` | macOS / Windows | 当前用户 | 用户 CLI，通过 IPC 控制 client daemon |
+| `fncpn status/connect/...` | macOS / Windows / Linux | 当前用户 | 用户 CLI，通过 IPC 控制 client daemon |
 
-各平台原生 UI 独立于 Go 核心二进制：macOS 使用 AppKit、ServiceManagement、UserNotifications 和 WebKit；Windows 使用原生 Windows UI 与 WebView2。
+各平台原生 UI 独立于 Go 核心二进制：macOS 使用 AppKit、ServiceManagement、UserNotifications 和 WebKit；Windows 使用原生 Windows UI 与 WebView2；Linux 使用 Wails v2 与 GTK3/WebKitGTK。
 
 ### WireGuard 集成
 

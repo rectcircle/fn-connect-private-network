@@ -65,7 +65,8 @@
   - 安全撤销必须阻止原设备继续同步配置和建立数据面，不能只删除当前 WireGuard peer。
 - 精确 IP 冲突时提供远端地址映射。
 - 按设备配置不同的 LAN 网段访问权限。
-- Intel Mac、Windows 和 Linux 图形客户端。
+- 扩大 Intel Mac、Windows 与 Linux 的实机验收覆盖；Linux 客户端已实现，
+  当前发行版目标与验证边界见 [Linux 支持](linux-support.md)。
 
 ### 明确不进入 P0
 

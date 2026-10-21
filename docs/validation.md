@@ -4,6 +4,37 @@
 产品要求见 [产品需求](product.md)，升级保证见 [版本契约](versioning-and-compatibility.md)。
 自动化通过、用户确认和带日志的实测分别记录；旧版证据不代表新版的所有专项通过。
 
+## 1.1.2 Linux 候选与 Debian 验证（2026-10-21）
+
+本轮仍为未公开草稿，macOS 默认原生 UI，Linux 使用 Wails v2。最后一轮文档与诊断样式
+更新尚须由新草稿 CI 验证；以下已完成记录对应更新前的候选，不预先宣称新 commit 通过。
+
+- [草稿构建 39614395493](https://github.com/rectcircle/fn-connect-private-network/actions/runs/39614395493)
+  对应 `2a28a23366347f8415a7286cca2b5e4efff6f313`，构建成功。5 组基线原生构建
+  Core/UI；21 组目标验证包依赖、实际安装、ELF 所需版本符号、`ldd -r`、普通用户
+  在 Xvfb + 会话 D-Bus 中启动真实 WebKit 前端、同版本重装和卸载。Nix 双架构构建、
+  模块检查与前端启动通过。报告绑定同一 commit、版本和发布包 SHA256。
+- Debian 13 arm64 从 GitHub 下载相同草稿的 Core/UI deb，校验发布清单与 SHA256 后
+  成套覆盖安装，`dpkg -V` 无差异，配置文件哈希保持不变，用户及特权服务就绪。
+  未向虚拟机安装开发环境。用户确认配置保留、IPv6 直连及临时禁用 IPv6 后的中继正常，
+  随后恢复原 IPv6 设置。该确认不扩大为其他发行版的实机验收。
+- 修复 DNS 虚拟接口触发物理网络快照变化、LAN 探测误经自身隧道、NetworkManager
+  接管自有接口引发重复激活；增加主题着色托盘图标、退出等待 Core 清理，以及 GTK
+  使用 Wayland 激活令牌/DBusMenu 点击时间戳请求窗口置前。
+- 托盘激活消息处理以独立 GTestDBus 会话测试实际 C 实现，覆盖令牌接收、原始时间戳、
+  对象路径过滤与一次性消费；该测试通过。真实桌面显示和焦点仍以用户实测为准。
+- 用户曾报告关机等待；上一启动日志中 FnCPN 服务在约 0.4 秒内停止，90 秒等待来自
+  Parallels `prlcc` scope。此记录不宣称解决所有关机等待，也未修改 Parallels 配置。
+- 最新 Debian 会话出现物理链路上游 DNS 丢失：网关可达，DHCP DNS 仍由 NetworkManager
+  持有，但 resolved 没有上游。恢复 DHCP 下发 DNS 并刷新 NetworkManager DNS 集成后，
+  GitHub 和 NAS HTTPS 版本入口返回 200。系统同时运行 ifupdown/dhcpcd 与 NetworkManager，
+  eth0 有重复地址和路由；尚无证据确定清空来源，未将该现象归因于 UI 修复，
+  也未把恢复操作记为根因修复。详见 [故障排查](troubleshooting.md#linux系统-dns-失效或所有域名都无法解析)。
+
+待验收边界：其他发行版的真实内核、SELinux/AppArmor 强制模式、GNOME/KDE/Wayland
+桌面集成和 NixOS 主机部署；RPM 正式签名及信任分发；正式历史版本二进制互通矩阵。
+容器共享 runner 内核，虚拟 X11 的启动检查不能证明各发行版桌面或内核行为。
+
 ## 1.1.1 认证兼容修复与候选验收（2026-10-20）
 
 用户于 2026-10-20 确认“macos 和 windows 都测好了”，随后确认“cli 也测试了，没问题”。

@@ -82,7 +82,8 @@ Wails 默认 PKG 目录为 `dist/wails-v2/`；显式设置 `DIST_DIR` 可覆盖�
   清除自动连接意图。托盘“打开”恢复最小化窗口并通过原生窗口 API 请求前台激活。
 
 macOS 专用桥接仅承接系统能力，界面和业务交互仍由 Wails v2 + vanilla 前端实现。
-Linux 的服务、自启和托盘适配已在 Debian 13 阶段实现；Linux 实际编译及安装验证留待 CI 阶段。此 UI 不替代现有 Windows 原生客户端。
+Linux 的服务、自启和托盘适配已在 Debian 13 arm64 安装验证；各包族原生构建和
+多发行版前端启动由草稿 CI 验证。此 UI 不替代现有 Windows 原生客户端。
 
 ## 验证
 
@@ -124,14 +125,16 @@ Wails 自定义标题区域负责居中标题和窗口拖动；SDK 27 的系统�
 ## Linux
 
 Linux 使用同一套原生 HTML/CSS/JavaScript 和 IPC 桥接，原生适配使用 GTK3、
-WebKitGTK 4.1 与 Ayatana AppIndicator。Core 独立于 UI 运行；退出 UI 不断开 Core。
+WebKitGTK 4.1 与 Ayatana AppIndicator。Core 独立于 UI 进程运行；关闭窗口隐藏到托盘，明确“退出”会停止用户 Core 并清理连接。
 管理后台使用独立、不含 Go 绑定的 WebKit 窗口。首次启动使用 pkexec 授权对应用户的特权服务。
 
 构建在 `packaging/linux/targets.json` 对应发行版与架构环境中运行：
-`TARGET=ubuntu22.04 ARCH=amd64 scripts/build-linux-ui.sh`，先构建同目标、同版本 Core。
+`TARGET=deb ARCH=amd64 scripts/build-linux-ui.sh`，先构建同目标、同版本 Core。
 macOS 可交叉编译 Core，不能直接链接 Linux 图形依赖。
 CI、deb/RPM/Arch 双包、系统路径、运行依赖和验证边界见 [Linux 支持](../docs/linux-support.md)。
-本轮尚未执行 Linux UI 的 CI 编译或 deb 安装验收。
+已完成 Linux UI 的原生 CI 编译、21 组目标容器的前端启动检查及 Debian 13 arm64
+草稿 deb 安装验证；真实桌面与用户测试范围见 [验证记录](../docs/validation.md)。
+主页操作错误统一显示在诊断详情中，异常诊断使用红色；登录错误保留在登录表单。
 
 ### Linux 托盘窗口激活
 

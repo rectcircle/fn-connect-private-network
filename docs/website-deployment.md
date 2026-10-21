@@ -8,7 +8,7 @@
 python3 -m http.server 4174 --bind 127.0.0.1 --directory website
 ```
 
-打开 <http://127.0.0.1:4174>。连接图和路径切换仅为示意，不建立实际网络连接。Homebrew 复制按钮复制包含 tap 的完整两行命令，需要 localhost 或 HTTPS 安全上下文；失败时提示从安装文档复制。
+打开 <http://127.0.0.1:4174>。连接图和路径切换仅为示意，不建立实际网络连接。Homebrew 复制按钮复制包含 tap 的完整两行命令，Linux 按钮复制下载及执行脚本的完整两行命令，需要 localhost 或 HTTPS 安全上下文；失败时提示从安装文档复制。
 
 ## Netlify
 
@@ -24,7 +24,7 @@ python3 -m http.server 4174 --bind 127.0.0.1 --directory website
 
 ## 自定义域名与 Cloudflare
 
-计划生产域名为 `https://fncpn.rectcircle.cn`。首页 canonical、分享元数据、sitemap 和 robots.txt 已统一使用该地址；域名配置和网站上线尚未执行。
+生产域名为 `https://fncpn.rectcircle.cn`。首页 canonical、分享元数据、sitemap 和 robots.txt 已统一使用该地址。
 
 1. 取得 Netlify 的实际生产地址，在 Domain management 中绑定 `fncpn.rectcircle.cn`并设为主域名，不迁移到 Netlify DNS。
 2. 在现有 Cloudflare 区域添加 `fncpn` 子域名的 CNAME，目标使用实际 `<site>.netlify.app` 主机名，不包含协议或路径。检查同名记录用途，避免冲突。
@@ -36,9 +36,10 @@ python3 -m http.server 4174 --bind 127.0.0.1 --directory website
 
 ## 维护
 
+- 下载区同时维护 Mac、Windows、Linux 和 Nix 入口；Linux 默认指向 latest 公开版，草稿需要 token，不能让网页自动选择草稿。GNOME 托盘、DNS 前提和包格式矩阵链接到对应文档。
 - 内容以根目录 README 和版本兼容文档为依据。平台支持、签名和验证范围变化时同步更新页面。
 - 下载链接进入 GitHub Releases；中文页面在 GitHub 或 Homebrew 访问较慢时另提供夸克网盘入口，用户按版本、平台及架构选包，避免网页硬编码产品版本导致过时。
 - 后续通过 Netlify Git 部署发布网页修改，无需创建产品版本 tag。
-- 当前交付为本地源码和部署配置，尚未执行 Netlify 发布或 Cloudflare DNS 变更。
+- 本地预览通过不等于生产部署成功；推送后应确认 Netlify 部署与生产页面内容。本文不记录或推断当前 Cloudflare 配置。
 
 参考：[Netlify 配置](https://docs.netlify.com/build/configure-builds/file-based-configuration/)、[外部 DNS](https://docs.netlify.com/manage/domains/configure-domains/configure-external-dns/)、[HTTPS](https://docs.netlify.com/manage/domains/secure-domains-with-https/https-ssl/)、[Cloudflare Full (strict)](https://developers.cloudflare.com/ssl/origin-configuration/ssl-modes/full-strict/)。

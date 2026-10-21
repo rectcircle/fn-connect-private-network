@@ -11,10 +11,15 @@
 - Linux 客户端（Debian 12 起、Ubuntu 22.04 起及清单内受支持 Fedora/Arch/openSUSE）：Core 提供无图形依赖的 Go CLI/daemon，内核 WireGuard、独立路由、网络资源所有权、故障恢复；特权服务按 UID 隔离 socket、凭据和状态。
 - Wails v2 图形客户端保留原生 HTML/CSS/JavaScript，增加 Linux GTK3/WebKitGTK 4.1、Ayatana 托盘、独立后台窗口、登录自启和管理员授权入口。
 - 提供通用 deb、RPM 和 Arch Core/UI 双包，共 10 个 Linux 安装包；基线构建与多发行版兼容验证分离，发布草稿核对版本、commit、包哈希及目标验证证据。Arch Linux 目标为 amd64，其余清单目标为 amd64/arm64。
+- 新增 Linux 自动安装脚本：检测发行版、架构和桌面，支持 latest/指定版本、全部组件/Core，校验 SHA256；官网补齐中英文安装入口与 Linux/Nix 文档。
 - 新增 Nix Flake：Linux 双架构 Core/UI、开发 shell 和 NixOS 服务模块，通过源码构建，不增加 Release 包。
 - Linux split DNS 使用 systemd-resolved 独立 dummy link 和受限转发桥；未使用 resolved stub 时明确降级，不覆盖用户的 `/etc/resolv.conf`。
 
 ### Fixed
+
+- Linux LAN 探测绑定物理接口，避免误经自身隧道；WireGuard/DNS 接口在创建时标记为 NetworkManager 不管理，避免反复激活。
+- Linux 托盘使用随主题着色的 SVG；打开窗口传递 Wayland 激活令牌与菜单点击时间戳，退出等待 Core 停止并清理连接，关闭窗口仍保留连接。
+- Wails 主页错误统一放入诊断详情并使用红色，去除底部重复提示；登录错误不再泄漏到主页。
 
 - Linux 物理网络快照排除 FnCPN 的 WireGuard/DNS 虚拟接口，避免 DNS 接口创建触发重复网络评估和重建，恢复稳定连接与主动断开。
 - Unix IPC 拒绝未授权请求后，在有限时间和字节范围内排空未解析的在途请求，确保调用方能收到权限错误；修复取消测试依赖短超时触发的时序不稳定。
@@ -23,7 +28,7 @@
 
 - 产品统一升级为 1.1.2。本次仅扩展平台实现与打包，不增加服务端协议要求；远程准入规则不变，允许连接 1.1.x 服务端，不设置最低 PATCH。
 - Debian 客户端建立独立的 Linux 网络日志 schema 1。包升级保留用户配置、身份和连接意图；UI 与 Core 必须以相同产品版本一起更新。
-- 已完成 Linux Core/UI 原生 CI 构建、21 组发行版/架构的依赖及动态链接检查、Nix 双架构构建，以及 Debian 13 arm64 安装、LOCAL 稳定性和主动断开检查。其他发行版实机安装/桌面、完整 NAS 端到端及正式历史版本兼容验收仍是草稿验证项，不能据此直接公开发布。
+- 已完成 Linux Core/UI 原生 CI 构建、21 组发行版/架构的实际安装、ABI/动态链接与真实前端启动检查、重装/卸载、Nix 双架构构建及前端启动，以及 Debian 13 arm64 安装、配置保留、LOCAL、IPv6 和中继检查。其他发行版实机安装/桌面、完整 NAS 端到端及正式历史版本兼容验收仍是草稿验证项，不能据此直接公开发布。Debian 验证中一次系统上游 DNS 丢失已恢复，来源尚未确定；记录见 [验证记录](docs/validation.md)，不宣称根因已修复。
 
 ## [1.1.1]
 

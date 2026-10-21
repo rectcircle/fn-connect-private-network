@@ -38,8 +38,19 @@ test('expired administration login error cannot carry over on return to main pag
  assert.equal(p.element('notice').textContent,'');assert.equal(p.element('login-error').textContent,'');
  assert.doesNotMatch(p.element('diagnostics').textContent,/管理后台登录已过期/);
 });
-test('daemon errors are shown and cleared when starting a new login',async()=>{
+test('daemon errors appear only in red diagnostics and clear on a new login',async()=>{
  const p=await page();p.events['daemon-error']('service unavailable');
- assert.equal(p.element('notice').textContent,'service unavailable');
+ assert.equal(p.element('notice').textContent,'');
+ assert.match(p.element('diagnostics').textContent,/service unavailable/);
+ assert.equal(p.element('diagnostics').className,'diagnostic-error');
  await p.api.login();assert.equal(p.element('notice').textContent,'');
+ assert.doesNotMatch(p.element('diagnostics').textContent,/service unavailable/);
+ assert.equal(p.element('diagnostics').className,'');
+});
+
+test('daemon errors remain visible in the login form without a footer notice',async()=>{
+ const p=await page();await p.api.login();p.events['daemon-error']('startup failed');
+ assert.equal(p.element('login-error').textContent,'startup failed');
+ assert.equal(p.element('notice').textContent,'');
+ assert.doesNotMatch(p.element('diagnostics').textContent,/startup failed/);
 });

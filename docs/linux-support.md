@@ -50,7 +50,9 @@ UI 沿用通过官方 Wails CLI vanilla 模板创建的 `ui/`，前端仅 HTML�
 Vite 用于构建。通过已有 Unix socket IPC 调用 Core，不复制连接逻辑。
 Linux 使用系统窗口装饰、SVG 功能图标和托盘；macOS 保留原生窗口与 SF Symbols。
 管理后台在独立 GTK WebKit 窗口中打开，不注入 Wails Go 绑定。
-退出 Linux UI 保留独立运行的 Core；关闭主窗口隐藏到托盘。
+明确点击“退出”会等待用户 Core 服务停止并清理连接，再关闭 UI；保留身份、配置和自动连接意图。
+停止失败时保留 UI 并在诊断中报错。关闭主窗口只隐藏到托盘，连接继续运行；
+点击“断开”则暂停自动连接。托盘“打开”通过桌面激活令牌/点击时间戳请求窗口置前。
 托盘是否显示依赖桌面环境的 AppIndicator 支持；GNOME 扩展的安装、启用和重新登录步骤见
 [系统托盘故障排查](troubleshooting.md#linux系统托盘--顶栏没有-fncpn-图标)。
 
@@ -161,12 +163,14 @@ RPM 在 post-transaction 阶段恢复，旧包升级移除阶段不停止新服�
 
 `.github/workflows/build-linux.yml` 将构建与兼容检查分开：5 组基线容器原生构建 Core/UI，
 执行 Go/UI 单测、静态检查及包检查。21 组目标容器下载同一份对应格式/架构的包，
-模拟依赖事务、解包执行 Core version，并检查 UI 动态库链接；不启动 systemd 或 GUI。
+实际安装 Core/UI、检查 ABI 与动态链接，并通过 Xvfb 和会话 D-Bus 启动真实 WebKit 前端，
+随后验证同版本重装与卸载；容器不启动完整 systemd 或真实桌面会话。
 每组保存目标、commit、包哈希及检查项目的证据，不能用重新构建的包替代兼容检查。
 并行上限为 4。开发工具只进入 CI 容器。
 
-`check.yml` 复用该流程和 `check-nix.yml`；Nix 在两个 Linux 架构构建 Core/UI 并验证模块求值，
-不上传额外 Release 包。手动运行构建 workflow 只上传 Actions artifacts。
+普通 `check.yml` 只运行轻量单测、脚本、前端和 Nix 求值；完整矩阵由草稿构建调用。
+Nix 在两个 Linux 架构构建 Core/UI、验证模块求值和真实前端启动，不上传额外 Release 包。
+手动运行构建 workflow 只上传 Actions artifacts。
 统一 `release.yml` 等待 Linux 和 Nix 检查，与 macOS、Windows、fnOS 产物汇总。
 从 1.1.2 起发布清单要求全部 10 个 Linux 包来自同一版本、同一干净 commit，
 且 21 组兼容性证据必须指向这些相同包的哈希；缺少组件、目标证据或哈希不一致即阻止发布清单。
@@ -181,13 +185,20 @@ RPM 在 post-transaction 阶段恢复，旧包升级移除阶段不停止新服�
   WireGuard、路由、恢复、所有权保护和受限 DNS bridge 能力测试。该 DNS 能力测试模拟 resolve1，
   本身不能证明宿主 resolver 集成。可重复运行 `scripts/test-debian13.sh`，不在虚拟机安装开发环境。
 - GitHub CI 原生构建 5 组 Core/UI 双包，21 组目标容器检查同一份对应安装包的依赖解析、
-  ELF、Core 版本及 UI 动态链接；Nix 在两个 Linux 架构构建 Core/UI 并检查模块。
+  ELF 版本符号、Core 版本、UI 动态链接及真实前端启动，再验证重装与卸载；
+  Nix 在两个 Linux 架构构建 Core/UI、检查模块并验证前端启动。
 - Debian 13 arm64 安装草稿 deb，检查桌面入口、polkit、服务及动态库。首次安装 resolved 后，
   通过重载 D-Bus、重启 resolved、刷新 NetworkManager DNS 集成恢复现有 DHCP DNS；
   此处是该虚拟机的安装验证记录，不代表所有 DNS 布局均能自动集成。
 - 定位并修复自有 `fnc`/`fnd` 虚拟接口触发物理网络变化的反馈循环；临时修复版在虚拟机中
   验证 LOCAL 与 DNS ready 稳定、断开后 PAUSED 与 DNS inactive 保持、自有 DNS 接口清理。
-  GitHub 草稿重建与覆盖安装须再次核对 commit 和校验和。
+  后续草稿按 commit 与 SHA256 校验后覆盖安装，用户确认配置保留、IPv6 直连及中继切换正常。
+- Linux 托盘图标使用可随主题着色的 SVG；WireGuard/DNS 接口在创建时标记为 NetworkManager
+  不管理，避免接管和重复激活。退出等待服务清理，托盘打开传递 Wayland 激活令牌和菜单时间戳。
+  前台显示仍受桌面策略约束，不能用容器测试代替真实桌面验收。
+- 最新 Debian 验证中出现过系统 resolved 丢失物理链路上游 DNS：恢复 DHCP DNS 后，
+  GitHub 与 NAS HTTPS 接口恢复。该虚拟机有两个网络管理器同时管理 eth0；
+  尚未确定 DNS 被清空的来源，不能把手动恢复记为根因修复。详见 [验证记录](validation.md)。
 - Linux 包维护脚本、安装脚本、发布完整性与哈希证据测试，以及 Go/UI 单测、vet、前端测试/构建
   和 workflow 静态检查。打包单测中的 UI fixture 不视作实际 UI 构建证明。
 

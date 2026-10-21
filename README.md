@@ -26,6 +26,10 @@ FnCPN 在自身的 fnOS HTTPS/WSS 连接中使用系统信任及内置、指纹�
 | Intel Mac | `fncpn-<version>-macos-x64-unsigned.pkg` |
 | Windows ARM64 | `fncpn-<version>-windows-arm64-unsigned.msi` |
 | Windows x64 | `fncpn-<version>-windows-x64-unsigned.msi` |
+| Debian / Ubuntu | `fncpn-{core,ui}-<version>-linux-{amd64,arm64}.deb` |
+| Fedora / openSUSE | `fncpn-{core,ui}-<version>-linux-{amd64,arm64}.rpm` |
+| Arch Linux | `fncpn-{core,ui}-<version>-linux-amd64.pkg.tar.zst` |
+| Nix / NixOS | [Flake 源码构建与模块](docs/nix.md)，无独立 Release 包 |
 
 ### Linux：自动安装
 
@@ -68,14 +72,17 @@ fncpn-linux-setup
 ```
 
 分域 DNS 需要 systemd-resolved 和 `127.0.0.53` stub，脚本不改写物理网络或
-`/etc/resolv.conf`。完整支持范围、手动安装和验证状态见 [Linux 支持](docs/linux-support.md)。
+`/etc/resolv.conf`；发行版安装 resolved 依赖时可能调整系统 resolver，须确认原有 DHCP DNS 仍正常。
+GNOME 顶栏图标需要 [AppIndicator 扩展](docs/troubleshooting.md#linux系统托盘--顶栏没有-fncpn-图标)。
+关闭窗口隐藏到托盘；“退出”会清理连接并停止用户 Core 服务，保留配置与连接意图。
+完整支持范围、手动安装和验证状态见 [Linux 支持](docs/linux-support.md)。
 
 ### Windows：安装
 
 按 Windows 系统架构选择 MSI，双击安装并批准管理员权限。FnCPN EXE/MSI 未签名，
 系统可能提示未知发布者；仅安装信任的来源。缺少 WebView2 Runtime 时首次安装需要联网。
 安装完成后从开始菜单或桌面打开 FnCPN。普通卸载与重装保留用户配置和凭据。
-Windows 正式安装包从 1.0.4 开始提供；RC 按发布顺序安装，公开后的修复使用新的 RC 编号。验证范围见 [变更记录](CHANGELOG.md)。
+Windows 正式安装包从 1.0.4 开始提供；公开版本的兼容修复使用新的 PATCH，不覆盖原产物。验证范围见 [变更记录](CHANGELOG.md)。
 
 ### NAS
 
