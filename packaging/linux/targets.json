@@ -367,7 +367,8 @@
         "desktop-file-utils",
         "bsdtar",
         "binutils",
-        "jq"
+        "jq",
+        "dbus-1-daemon"
       ]
     },
     {
@@ -408,7 +409,8 @@
         "desktop-file-utils",
         "bsdtar",
         "binutils",
-        "jq"
+        "jq",
+        "dbus-1-daemon"
       ]
     },
     {

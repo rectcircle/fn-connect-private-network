@@ -3,6 +3,10 @@
 #include <webkit2/webkit2.h>
 #include <libayatana-appindicator/app-indicator.h>
 #include <string.h>
+#include "activation_linux.h"
+#ifdef GDK_WINDOWING_WAYLAND
+#include <gdk/gdkwayland.h>
+#endif
 extern void fnGoAction(char*);
 static AppIndicator *indicator;
 static GtkWidget *connection, *relogin, *autostart, *admin_window, *admin_view;
@@ -13,8 +17,22 @@ static gboolean present_main(gpointer event_time){
  for(GList *entry=windows;entry;entry=entry->next){
   GtkWindow *window=GTK_WINDOW(entry->data);
   if(g_strcmp0(gtk_window_get_title(window),"FnCPN"))continue;
+  guint32 menu_time=0;
+  gchar *token=fn_activation_take(&menu_time);
+  guint32 timestamp=menu_time?menu_time:GPOINTER_TO_UINT(event_time);
   gtk_window_deiconify(window);gtk_widget_show(GTK_WIDGET(window));
-  gtk_window_present_with_time(window,GPOINTER_TO_UINT(event_time));
+#ifdef GDK_WINDOWING_WAYLAND
+  GdkDisplay *display=gtk_widget_get_display(GTK_WIDGET(window));
+  if(GDK_IS_WAYLAND_DISPLAY(display)){
+   GdkWindow *surface=gtk_widget_get_window(GTK_WIDGET(window));
+   if(surface)gdk_wayland_window_set_application_id(surface,"fncpn");
+   // GDK consumes this token when present_with_time requests Wayland focus.
+   if(token)gdk_wayland_display_set_startup_notification_id(display,token);
+  }else
+#endif
+  if(token)gtk_window_set_startup_id(window,token);
+  gtk_window_present_with_time(window,timestamp);
+  g_free(token);
   break;
  }
  g_list_free(windows);return G_SOURCE_REMOVE;
@@ -22,13 +40,18 @@ static gboolean present_main(gpointer event_time){
 void fn_present_main(void){g_idle_add(present_main,GUINT_TO_POINTER(GDK_CURRENT_TIME));}
 static void action(GtkMenuItem *item,gpointer name){
  if(refreshing)return;
- // Present directly on the GTK callback, retaining the menu activation time.
+ // DBusMenu activation has no GdkEvent; present_main also uses the original
+ // timestamp and token retained by the D-Bus filter.
  if(!strcmp((const char*)name,"show")){present_main(GUINT_TO_POINTER(gtk_get_current_event_time()));return;}
  fnGoAction((char*)name);
 }
 static GtkWidget *menu_item(GtkWidget *menu,const char *label,const char *name){GtkWidget *item=gtk_menu_item_new_with_label(label);g_signal_connect(item,"activate",G_CALLBACK(action),(gpointer)name);gtk_menu_shell_append(GTK_MENU_SHELL(menu),item);return item;}
 // macOS template PNGs stay black on GNOME; symbolic SVGs follow the panel theme.
 static gboolean setup(gpointer icon_path){
+ GError *activation_error=NULL;
+ if(!fn_activation_init(&activation_error)){
+  g_warning("FnCPN activation bus: %s",activation_error->message);g_clear_error(&activation_error);
+ }
  indicator=app_indicator_new("fncpn","fncpn-offline-symbolic",APP_INDICATOR_CATEGORY_APPLICATION_STATUS);
  app_indicator_set_icon_theme_path(indicator,(const char*)icon_path);g_free(icon_path);
  GtkWidget *menu=gtk_menu_new();menu_item(menu,label("打开 FnCPN","Open FnCPN"),"show");
@@ -38,7 +61,7 @@ static gboolean setup(gpointer icon_path){
  app_indicator_set_menu(indicator,GTK_MENU(menu));app_indicator_set_status(indicator,APP_INDICATOR_STATUS_ACTIVE);return G_SOURCE_REMOVE;
 }
 void fn_init(char *icon_path){g_idle_add(setup,g_strdup(icon_path));}
-static gboolean dispose(gpointer unused){if(admin_window)gtk_widget_destroy(admin_window);admin_window=admin_view=NULL;if(indicator){app_indicator_set_status(indicator,APP_INDICATOR_STATUS_PASSIVE);g_object_unref(indicator);indicator=NULL;}return G_SOURCE_REMOVE;}
+static gboolean dispose(gpointer unused){fn_activation_dispose();if(admin_window)gtk_widget_destroy(admin_window);admin_window=admin_view=NULL;if(indicator){app_indicator_set_status(indicator,APP_INDICATOR_STATUS_PASSIVE);g_object_unref(indicator);indicator=NULL;}return G_SOURCE_REMOVE;}
 void fn_dispose(void){g_idle_add(dispose,NULL);}
 typedef struct {char *state,*title,*action;int needs_login,busy,auto_start;} TrayState;
 static gboolean update(gpointer data){TrayState *value=data;if(indicator){

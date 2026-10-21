@@ -132,3 +132,15 @@ WebKitGTK 4.1 与 Ayatana AppIndicator。Core 独立于 UI 运行；退出 UI �
 macOS 可交叉编译 Core，不能直接链接 Linux 图形依赖。
 CI、deb/RPM/Arch 双包、系统路径、运行依赖和验证边界见 [Linux 支持](../docs/linux-support.md)。
 本轮尚未执行 Linux UI 的 CI 编译或 deb 安装验收。
+
+### Linux 托盘窗口激活
+
+GNOME Wayland 会为托盘点击提供一次性激活令牌。旧版 GTK AppIndicator 不处理
+`ProvideXdgActivationToken`，且其 GtkMenuItem 回调不保留 D-Bus 菜单点击时间戳。
+`activation_linux.c` 在 AppIndicator 共用的会话总线上接收这一标准方法，并观察
+DBusMenu 的原始点击时间戳。实际置前仍由 GTK 主线程完成：Wayland 将令牌交给
+GDK 后调用 present；X11 使用启动通知与原始时间戳。令牌最多保留五秒且只消费一次。
+不会设置永久置顶，也不修改桌面的焦点策略。
+
+`scripts/test-linux-activation.sh` 用独立 D-Bus 会话测试实际消息接收、时间戳传递、
+错误对象路径及一次性消费；完整 Linux 构建在各包族基线中运行该测试。
