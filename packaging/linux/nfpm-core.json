@@ -49,6 +49,10 @@
     {
       "src": "LICENSE",
       "dst": "/usr/share/doc/fncpn-core/copyright"
+    },
+    {
+      "src": "packaging/linux/udev/85-fncpn.rules",
+      "dst": "/usr/lib/udev/rules.d/85-fncpn.rules"
     }
   ]
 }

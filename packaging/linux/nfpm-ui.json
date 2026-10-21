@@ -22,7 +22,7 @@
       "dst": "/usr/share/icons/hicolor/256x256/apps/fncpn.png"
     },
     {
-      "src": "packaging/assets/Status-*.png",
+      "src": "packaging/linux/icons/*-symbolic.svg",
       "dst": "/usr/share/fncpn/icons/"
     },
     {

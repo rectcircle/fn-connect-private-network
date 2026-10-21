@@ -60,6 +60,7 @@ in {
     ];
     environment.systemPackages = [ core ] ++ lib.optional cfg.ui.enable cfg.ui.package;
     security.polkit.enable = true;
+    services.udev.packages = [ core ];
     services.resolved.enable = lib.mkIf cfg.dns.enable (lib.mkDefault true);
     systemd.services = builtins.listToAttrs (map rootService uids);
     systemd.user.services.fncpn-client = {

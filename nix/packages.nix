@@ -33,7 +33,8 @@ let
     ldflags = [ "-s" "-w" "-X github.com/rectcircle/fn-connect-private-network/internal/version.Revision=${revision}" ];
     nativeBuildInputs = [ pkgs.makeWrapper ];
     postInstall = ''
-      mkdir -p "$out/libexec/fncpn" "$out/share/polkit-1/actions"
+      mkdir -p "$out/libexec/fncpn" "$out/share/polkit-1/actions" "$out/lib/udev/rules.d"
+      cp packaging/linux/udev/85-fncpn.rules "$out/lib/udev/rules.d/"
       install -m755 packaging/linux/scripts/enable-client packaging/linux/scripts/wait-ready "$out/libexec/fncpn/"
       install -m755 packaging/linux/scripts/fncpn-linux-setup "$out/bin/"
       # NixOS modules enable units declaratively. The helper only starts an
@@ -93,7 +94,7 @@ let
       substituteInPlace "$out/share/applications/fncpn.desktop" \
         --replace-fail /usr/bin/fncpn-ui "$out/bin/fncpn-ui"
       cp ../packaging/assets/AppIcon.png "$out/share/icons/hicolor/256x256/apps/fncpn.png"
-      cp ../packaging/assets/Status-*.png "$out/share/fncpn/icons/"
+      cp ../packaging/linux/icons/*-symbolic.svg "$out/share/fncpn/icons/"
       # pkexec must come from the host's privileged wrapper, not a non-setuid
       # polkit executable in the Nix store.
       gappsWrapperArgs+=( --suffix PATH : ${lib.escapeShellArg (lib.makeBinPath [ pkgs.systemd pkgs.xdg-utils pkgs.libnotify ])} )

@@ -1,4 +1,6 @@
 #!/bin/sh
 set -eu
+# Affect future owned links without restarting NetworkManager or host networking.
+if command -v udevadm >/dev/null 2>&1; then udevadm control --reload-rules || true; fi
 if [ -d /run/systemd/system ]; then systemctl daemon-reload; fi
 # remove/purge intentionally retain user identities, configurations and root credentials.

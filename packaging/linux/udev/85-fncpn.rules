@@ -1,0 +1,4 @@
+# FnCPN reserves fnc<base36 UID> and fnd<generation> for its owned links.
+# Match at device creation: ownership aliases may be set after the add event.
+SUBSYSTEM=="net", KERNEL=="fnc[0-9a-z]*", ENV{NM_UNMANAGED}="1"
+SUBSYSTEM=="net", KERNEL=="fnd[0-9a-f]*", ENV{NM_UNMANAGED}="1"

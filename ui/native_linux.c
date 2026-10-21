@@ -10,8 +10,9 @@ static int refreshing;
 static const char *label(const char *zh,const char *en){return g_str_has_prefix(g_get_language_names()[0],"zh")?zh:en;}
 static void action(GtkMenuItem *item,gpointer name){if(!refreshing)fnGoAction((char*)name);}
 static GtkWidget *menu_item(GtkWidget *menu,const char *label,const char *name){GtkWidget *item=gtk_menu_item_new_with_label(label);g_signal_connect(item,"activate",G_CALLBACK(action),(gpointer)name);gtk_menu_shell_append(GTK_MENU_SHELL(menu),item);return item;}
+// macOS template PNGs stay black on GNOME; symbolic SVGs follow the panel theme.
 static gboolean setup(gpointer icon_path){
- indicator=app_indicator_new("fncpn","Status-offline",APP_INDICATOR_CATEGORY_APPLICATION_STATUS);
+ indicator=app_indicator_new("fncpn","fncpn-offline-symbolic",APP_INDICATOR_CATEGORY_APPLICATION_STATUS);
  app_indicator_set_icon_theme_path(indicator,(const char*)icon_path);g_free(icon_path);
  GtkWidget *menu=gtk_menu_new();menu_item(menu,label("打开 FnCPN","Open FnCPN"),"show");
  connection=menu_item(menu,label("连接","Connect"),"primary");relogin=menu_item(menu,label("重新登录","Sign in again"),"login");
@@ -24,10 +25,10 @@ static gboolean dispose(gpointer unused){if(admin_window)gtk_widget_destroy(admi
 void fn_dispose(void){g_idle_add(dispose,NULL);}
 typedef struct {char *state,*title,*action;int needs_login,busy,auto_start;} TrayState;
 static gboolean update(gpointer data){TrayState *value=data;if(indicator){
- const char *icon="Status-offline";
- if(!strcmp(value->state,"LOCAL")||!strcmp(value->state,"DIRECT")||!strcmp(value->state,"RELAY"))icon="Status-connected";
- if(value->busy||!strcmp(value->state,"PROBING")||!strcmp(value->state,"RECONNECTING"))icon="Status-working";
- if(!strcmp(value->state,"ERROR")||!strcmp(value->state,"AUTH_REQUIRED")||!strcmp(value->state,"DAEMON_UNAVAILABLE")||!strcmp(value->state,"SERVER_UNAVAILABLE"))icon="Status-attention";
+ const char *icon="fncpn-offline-symbolic";
+ if(!strcmp(value->state,"LOCAL")||!strcmp(value->state,"DIRECT")||!strcmp(value->state,"RELAY"))icon="fncpn-connected-symbolic";
+ if(value->busy||!strcmp(value->state,"PROBING")||!strcmp(value->state,"RECONNECTING"))icon="fncpn-working-symbolic";
+ if(!strcmp(value->state,"ERROR")||!strcmp(value->state,"AUTH_REQUIRED")||!strcmp(value->state,"DAEMON_UNAVAILABLE")||!strcmp(value->state,"SERVER_UNAVAILABLE"))icon="fncpn-attention-symbolic";
  app_indicator_set_icon_full(indicator,icon,value->title);app_indicator_set_title(indicator,value->title);
  gtk_menu_item_set_label(GTK_MENU_ITEM(connection),value->action);gtk_widget_set_sensitive(connection,!value->busy);
  gtk_widget_set_visible(relogin,!value->needs_login);gtk_widget_set_sensitive(relogin,!value->busy);

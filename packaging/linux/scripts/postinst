@@ -1,5 +1,7 @@
 #!/bin/sh
 set -eu
+# Affect future owned links without restarting NetworkManager or host networking.
+if command -v udevadm >/dev/null 2>&1; then udevadm control --reload-rules || true; fi
 [ "${1:-}" = configure ] || exit 0
 # Restore standard labels where SELinux is present; never disable enforcement.
 if command -v restorecon >/dev/null 2>&1; then

@@ -49,27 +49,27 @@ async function refresh() {
 }
 async function perform(task) {
  if(busy)return;busy=true;operationError=null;set('notice','');render();
- try{await task();}catch(error){operationError=typeof error==='string'?{code:'UNAVAILABLE',message:error}:error;set('notice',describeFailure(operationError,L));}
+ try{await task();}catch(error){const failure=typeof error==='string'?{code:'UNAVAILABLE',message:error}:error;if(editing||!diagnostics.fnId){set('login-error',describeFailure(failure,L));}else{operationError=failure;set('notice',describeFailure(failure,L));}}
  finally{busy=false;render();await refresh();}
 }
 async function cancelAuthorization(){ const previous=requestId;requestId='';if(previous){try{await call('authorization-cancel',{requestId:previous});}catch(error){set('notice',describeFailure(error,L));}} }
 function clearSecrets(){for(const id of ['password','access','otp'])$(id).value='';$('trust').checked=false;}
-async function login(change=false){await cancelAuthorization();editing=true;challenge=false;accessRequired=false;clearSecrets();$('fnid').value=change?'':diagnostics.fnId||'';$('username').value=change?'':diagnostics.username||'';set('login-error','');render();WindowShow();$(change?'fnid':'password').focus();}
+async function login(change=false){await cancelAuthorization();editing=true;challenge=false;accessRequired=false;operationError=null;set('notice','');clearSecrets();$('fnid').value=change?'':diagnostics.fnId||'';$('username').value=change?'':diagnostics.username||'';set('login-error','');render();WindowShow();$(change?'fnid':'password').focus();}
 async function primary(){if(busy)return;if(diagnostics.status?.localNetworkWaiting)return perform(()=>call('continue-remote'));if(connected().needsLogin||!diagnostics.fnId)return login();return perform(()=>call(connected().connected?'disconnect':'connect'));}
 $('login-form').addEventListener('submit',async event=>{
  event.preventDefault();if(busy)return;
  if(diagnostics.status?.localNetworkWaiting){await perform(()=>call('continue-remote'));return;}
  const fnId=normalizeFNID(value('fnid'));if(!fnId){set('login-error',L('FN Connect ID 格式不正确'));return;}
- busy=true;operationError=null;set('login-error','');render();
+ busy=true;operationError=null;set('notice','');set('login-error','');render();
  try {
   if(!requestId){const result=await call('authorization-begin',{fnId});if(!result.requestId)throw {code:'PROTOCOL_ERROR',message:L('授权请求无效')};requestId=result.requestId;}
   await call('authorize-native',{requestId,fnId,username:value('username').trim(),password:value('password'),...(value('access')?{accessCode:value('access')}:{}),...(value('otp')?{twofaCode:value('otp').trim()}:{}),...($('trust').checked?{trustDevice:true}:{})});
-  requestId='';editing=false;challenge=false;clearSecrets();
+  requestId='';editing=false;challenge=false;accessRequired=false;operationError=null;set('notice','');set('login-error','');clearSecrets();
  } catch(error) {
   if(error.remoteCode?.startsWith('ACCESS_CODE_')){accessRequired=true;challenge=false;}
   if(['TWO_FACTOR_REQUIRED','TWO_FACTOR_CODE_INVALID'].includes(error.remoteCode)){challenge=true;accessRequired=false;$('access').value='';$('otp').value='';}
   if(error.remoteCode==='TWO_FACTOR_SETUP_REQUIRED'){challenge=false;accessRequired=false;}
-  editing=true;operationError=error;set('login-error',describeFailure(error,L));
+  editing=true;set('login-error',describeFailure(error,L));
  } finally {busy=false;render();await refresh();if(challenge)$('otp').focus();}
 });
 $('fnid').addEventListener('blur',async()=>{
@@ -78,7 +78,7 @@ $('fnid').addEventListener('blur',async()=>{
 });
 $('primary').onclick=primary;$('retry').onclick=()=>perform(()=>call('retry'));
 $('change').onclick=()=>login(true);$('relogin').onclick=()=>login();
-$('back').onclick=()=>{challenge=false;$('otp').value='';$('trust').checked=false;render();$('password').focus();};
+$('back').onclick=()=>{challenge=false;$('otp').value='';$('trust').checked=false;set('login-error','');render();$('password').focus();};
 $('return').onclick=async()=>{await cancelAuthorization();editing=false;challenge=false;accessRequired=false;clearSecrets();set('login-error','');set('notice','');operationError=null;render();};
 $('admin').onclick=()=>perform(async()=>{const reply=await OpenAdmin();if(reply.error){if(reply.error.code==='AUTH_REQUIRED'||factorMessages[reply.error.remoteCode]){await login();throw {...reply.error,message:L('管理后台登录已过期')+' — '+L('请重新登录 FnCPN。当前隧道连接不受影响。')};}throw reply.error;}});
 $('open-nas').onclick=()=>perform(()=>OpenNAS(diagnostics.nasAddress));
