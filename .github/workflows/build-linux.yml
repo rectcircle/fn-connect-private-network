@@ -49,7 +49,7 @@ jobs:
       image: ${{ matrix.image }}
     defaults:
       run:
-        shell: bash
+        shell: /bin/bash --noprofile --norc -e -o pipefail {0}
     env:
       PATH: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
       DEBIAN_FRONTEND: noninteractive
@@ -79,7 +79,13 @@ jobs:
           ref: ${{ inputs.ref || github.ref }}
           fetch-depth: 0
       - name: Trust the mounted checkout for container Git commands
-        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          # Keep standard executable locations in the runner's prepended PATH.
+          # Minimal images may not expose PATH in Docker image metadata.
+          for directory in /usr/local/sbin /usr/local/bin /usr/sbin /usr/bin /sbin /bin; do
+            echo "$directory" >> "$GITHUB_PATH"
+          done
       - name: Install target-specific build dependencies
         run: python3 scripts/linux-ci-dependencies.py "$TARGET"
       - uses: actions/setup-go@v6
@@ -138,7 +144,7 @@ jobs:
       image: ${{ matrix.image }}
     defaults:
       run:
-        shell: bash
+        shell: /bin/bash --noprofile --norc -e -o pipefail {0}
     env:
       PATH: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
       DEBIAN_FRONTEND: noninteractive
@@ -163,7 +169,13 @@ jobs:
         with:
           ref: ${{ inputs.ref || github.ref }}
       - name: Trust the mounted checkout for container Git commands
-        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          # Keep standard executable locations in the runner's prepended PATH.
+          # Minimal images may not expose PATH in Docker image metadata.
+          for directory in /usr/local/sbin /usr/local/bin /usr/sbin /usr/bin /sbin /bin; do
+            echo "$directory" >> "$GITHUB_PATH"
+          done
       - uses: actions/download-artifact@v4
         with:
           name: linux-packages-${{ matrix.format }}-${{ matrix.arch }}
