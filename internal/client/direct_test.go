@@ -79,6 +79,29 @@ func TestIPv6SnapshotIsIndependentOfIPv4DefaultInterface(t *testing.T) {
 	}
 }
 
+func TestNetworkSnapshotIgnoresClientTunnelAndDNSLinkChurn(t *testing.T) {
+	physical := net.Interface{Index: 2, Name: "eth0", Flags: net.FlagUp}
+	read := func(iface net.Interface) ([]net.Addr, error) {
+		if iface.Name != "eth0" {
+			t.Fatalf("read owned virtual interface %s as physical", iface.Name)
+		}
+		return []net.Addr{&net.IPNet{IP: net.ParseIP("192.168.71.3"), Mask: net.CIDRMask(24, 32)}}, nil
+	}
+	before, err := networkSnapshot([]net.Interface{physical}, "eth0", read)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"fncrs", "fnd0123456789", "fndabcdef0123"} {
+		after, err := networkSnapshot([]net.Interface{physical, {Index: 99, Name: name, Flags: net.FlagUp}}, "eth0", read)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if before.Fingerprint() != after.Fingerprint() {
+			t.Fatalf("owned interface %s changed physical network identity", name)
+		}
+	}
+}
+
 func TestNetworkSnapshotRejectsIncompletePhysicalAddressTable(t *testing.T) {
 	readErr := errors.New("interface address table unavailable")
 	_, err := networkSnapshot(

@@ -4,6 +4,7 @@ cd "$(dirname "$0")/.."
 git diff --check
 python3 scripts/sync-version.py --check
 python3 scripts/sync-localizations.py --check
+python3 scripts/install_linux_test.py
 python3 scripts/release_manifest_test.py
 python3 scripts/publish_release_test.py
 python3 scripts/quark_release_test.py

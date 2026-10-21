@@ -51,7 +51,8 @@ Vite 用于构建。通过已有 Unix socket IPC 调用 Core，不复制连接�
 Linux 使用系统窗口装饰、SVG 功能图标和托盘；macOS 保留原生窗口与 SF Symbols。
 管理后台在独立 GTK WebKit 窗口中打开，不注入 Wails Go 绑定。
 退出 Linux UI 保留独立运行的 Core；关闭主窗口隐藏到托盘。
-托盘是否显示依赖桌面环境的 AppIndicator 支持，GNOME 可能需要相应扩展。
+托盘是否显示依赖桌面环境的 AppIndicator 支持；GNOME 扩展的安装、启用和重新登录步骤见
+[系统托盘故障排查](troubleshooting.md#linux系统托盘--顶栏没有-fncpn-图标)。
 
 普通用户首次启动 UI 时，通过 pkexec 授权固定的 `enable-client <uid>` 安装入口，
 启用对应 root 服务，再启动用户服务。CLI/无头用户可运行 `fncpn-linux-setup`，
@@ -88,6 +89,14 @@ Linux Client Engine 直接使用内核 WireGuard、netlink 与 wgctrl，不依�
 若系统没有使用 `127.0.0.53` stub，DNS 会明确降级，网络服务仍可用。
 安装 `systemd-resolved` 依赖时，Debian 自身维护脚本可能调整 resolver；管理员应核对
 `/etc/resolv.conf` 与原网络管理器的集成，不能假定安装包自动兼容所有 DNS 布局。
+
+## 自动安装
+
+用户入口为 `scripts/install-linux.sh`，执行命令见 [README](../README.md#linux自动安装)。
+默认自动选择桌面双包或无头 Core，支持 `--type all|core` 和 `--version latest|版本`。
+它通过 GitHub Release API 选择精确资产并校验 SHA256，遵守系统包签名策略；不自动降级，
+已有 UI 时要求组件成套更新。latest 只取公开正式版，指定草稿需要有读取权限的 token。
+脚本安装软件包，不替用户开启登录自启、修改 DNS 布局或自动创建 NAS 连接。
 
 ## 构建与安装
 
@@ -162,25 +171,26 @@ RPM 在 post-transaction 阶段恢复，旧包升级移除阶段不停止新服�
 从 1.1.2 起发布清单要求全部 10 个 Linux 包来自同一版本、同一干净 commit，
 且 21 组兼容性证据必须指向这些相同包的哈希；缺少组件、目标证据或哈希不一致即阻止发布清单。
 发布仍创建 GitHub Release 草稿，公开产物不可覆盖。
-本阶段没有 push、创建 tag、触发远程 workflow 或安装 CI 产物。
+草稿用于安装验证，不自动公开；用户验收后再决定是否发布。
 
 ## 已验证及待验证
 
-已在 macOS 交叉编译 Core，并将测试二进制发送到 `parallels-debian13`（Debian 13 arm64）：
-用户态单测，以及 `sudo unshare --net` 隔离网络空间内的真实内核 WireGuard 创建、
-地址/路由/状态/恢复/所有权保护、受限 DNS bridge 和清理验证。
-可重复执行 `scripts/test-debian13.sh`，远端只运行预编译测试，不安装 Go/C 编译环境。
-DNS 能力测试模拟 resolve1 调用，**没有验证真实 systemd-resolved 系统集成**。
+截至 2026-10-21，已完成：
 
-下一阶段经批准后：在 GitHub CI 编译所有目标 UI 和原生包，下载对应产物并在目标系统检查安装、
-systemd/polkit、真实 resolved、GTK/托盘、协议唤起、升级卸载及数据保留。
+- macOS 交叉编译 Core；Debian 13 arm64 执行预编译单测及隔离网络命名空间中的真实
+  WireGuard、路由、恢复、所有权保护和受限 DNS bridge 能力测试。该 DNS 能力测试模拟 resolve1，
+  本身不能证明宿主 resolver 集成。可重复运行 `scripts/test-debian13.sh`，不在虚拟机安装开发环境。
+- GitHub CI 原生构建 5 组 Core/UI 双包，21 组目标容器检查同一份对应安装包的依赖解析、
+  ELF、Core 版本及 UI 动态链接；Nix 在两个 Linux 架构构建 Core/UI 并检查模块。
+- Debian 13 arm64 安装草稿 deb，检查桌面入口、polkit、服务及动态库。首次安装 resolved 后，
+  通过重载 D-Bus、重启 resolved、刷新 NetworkManager DNS 集成恢复现有 DHCP DNS；
+  此处是该虚拟机的安装验证记录，不代表所有 DNS 布局均能自动集成。
+- 定位并修复自有 `fnc`/`fnd` 虚拟接口触发物理网络变化的反馈循环；临时修复版在虚拟机中
+  验证 LOCAL 与 DNS ready 稳定、断开后 PAUSED 与 DNS inactive 保持、自有 DNS 接口清理。
+  GitHub 草稿重建与覆盖安装须再次核对 commit 和校验和。
+- Linux 包维护脚本、安装脚本、发布完整性与哈希证据测试，以及 Go/UI 单测、vet、前端测试/构建
+  和 workflow 静态检查。打包单测中的 UI fixture 不视作实际 UI 构建证明。
+
+仍须完成其他发行版的实机安装/升级/卸载、桌面托盘、协议唤起、DNS 与数据保留验收；
+GNOME 扩展安装后需要重新登录，不能把“已安装扩展”当作“图标已在当前会话验收”。
 完整 fnOS 连接端到端与正式历史版本兼容验收仍按项目发布契约另行完成。
-
-本次多发行版扩展在本机验证目标清单、依赖与包维护适配、实际 deb/RPM/Arch 包格式、
-ELF/版本/所有权检查及发布完整性测试；不把打包单测中的 UI fixture 当作已编译 UI。
-新增发行版尚未完成原生 UI CI 编译、真实安装升级、DNS 与桌面会话验证。
-
-本次收敛后的本地验证：5 组真实 Core 包构建及包检查通过；Linux 打包与升级脚本测试、
-发布清单（含兼容性证据缺失/不匹配拦截）测试、发布器测试、Go/UI 单测与 vet、
-前端测试/构建、workflow actionlint 检查通过。Nix 锁定哈希与双架构模块求值通过；
-这些不代表 21 组目标已完成远程 CI 或真实安装验收。

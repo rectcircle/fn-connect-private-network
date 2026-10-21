@@ -1,11 +1,12 @@
 # FN Connect Private Network
 
-从 Mac 或 Windows 连接 fnOS NAS 和家庭局域网。FnCPN 自动选择局域网直达、IPv6 直连或 FN Connect 中继，无需手动配置密钥与路由。
+从 Mac、Windows 或 Linux 连接 fnOS NAS 和家庭局域网。FnCPN 自动选择局域网直达、IPv6 直连或 FN Connect 中继，无需手动配置密钥与路由。
 
 ## 使用条件
 
 - Apple Silicon 或 Intel Mac，macOS 13 或更新版本。
 - Windows 客户端：Windows 10 22H2（build 19045）或更新的 ARM64/x64 系统，不支持 32 位或 Windows Server。Windows 10 和原生 x64 已由用户完成验收。
+- Linux 客户端：Debian 12/13、Ubuntu 22.04/24.04/26.04/26.10、Fedora 43/44、openSUSE Leap 16.0/Tumbleweed（amd64/arm64），以及官方 Arch Linux（amd64）；需要 systemd。NixOS 使用 [Flake 模块](docs/nix.md)，不支持 Alpine。
 - 已启用 FN Connect 的 fnOS NAS，支持 x86_64 和 ARM64。
 - fnOS 用户账号。普通用户可以连接；安装软件和修改服务端网络设置需要管理员权限。
 
@@ -25,6 +26,49 @@ FnCPN 在自身的 fnOS HTTPS/WSS 连接中使用系统信任及内置、指纹�
 | Intel Mac | `fncpn-<version>-macos-x64-unsigned.pkg` |
 | Windows ARM64 | `fncpn-<version>-windows-arm64-unsigned.msi` |
 | Windows x64 | `fncpn-<version>-windows-x64-unsigned.msi` |
+
+### Linux：自动安装
+
+下载脚本后执行，默认从 GitHub **latest 公开正式版**获取安装包：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/rectcircle/fn-connect-private-network/main/scripts/install-linux.sh -o install-fncpn-linux.sh
+bash install-fncpn-linux.sh
+```
+
+脚本检测发行版、架构及桌面环境：有桌面时安装同版本 Core+UI，无桌面时仅安装 Core；
+通过 SSH 运行时，也会检查已安装的桌面会话文件。已有 UI 时默认将 Core/UI 成套更新。
+可使用两个参数覆盖默认行为：
+
+```bash
+# 无头 / CLI：仅安装 Core
+bash install-fncpn-linux.sh --type core
+
+# 指定版本（也接受 v1.1.2），安装 Core+UI
+bash install-fncpn-linux.sh --type all --version 1.1.2
+
+# 指定版本，仅安装 Core
+bash install-fncpn-linux.sh --type core --version 1.1.2
+```
+
+安装包从 **1.1.2** 开始提供；该版本未公开前，latest 可能没有 Linux 包，脚本会报错，
+不会自动改装草稿。指定草稿或读取私有 Release 时，需要先通过环境变量 `GH_TOKEN`
+（或 `GITHUB_TOKEN`）提供有读取权限的 GitHub token。
+
+脚本校验 Release 的 SHA256，再使用 apt、dnf、zypper 或 pacman 安装并解析运行依赖；
+必要时会请求 sudo，并补齐 curl、jq、校验工具及 CA 证书。Arch 会执行完整系统升级。
+系统包签名策略保持生效；不受系统信任的未签名 RPM 可能被拒绝，应先完成签名/信任配置。
+已有 UI 版本不匹配时，`--type core` 会要求改用 `--type all`；自动安装不支持降级。
+macOS、Windows、不支持的发行版/架构和无 systemd 的环境会直接报错。
+
+安装后，桌面用户从应用菜单启动 FnCPN；无头用户以需要连接 NAS 的普通用户执行：
+
+```bash
+fncpn-linux-setup
+```
+
+分域 DNS 需要 systemd-resolved 和 `127.0.0.53` stub，脚本不改写物理网络或
+`/etc/resolv.conf`。完整支持范围、手动安装和验证状态见 [Linux 支持](docs/linux-support.md)。
 
 ### Windows：安装
 

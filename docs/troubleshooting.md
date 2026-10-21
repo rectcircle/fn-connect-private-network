@@ -79,6 +79,70 @@ FN Connect 发现响应中的 `port.httpsPort` 会被解析，但当前连接逻
 
 解析语义和平台约束见 [接口契约](interfaces.md#局域网域名解析110)。
 
+## Linux：系统托盘 / 顶栏没有 FnCPN 图标
+
+FnCPN 的 Linux 托盘使用 AppIndicator / StatusNotifierItem。GNOME 需要相应 Shell 扩展才能在
+顶栏显示图标；仅安装应用的 Ayatana 运行库不会为 GNOME 添加托盘宿主。没有图标本身不表示
+Core 连接失败。其他桌面请先确认面板已启用兼容的托盘组件，无需安装 GNOME 扩展。
+
+### GNOME：安装托盘扩展
+
+在对应发行版执行以下一组命令：
+
+```bash
+# Debian / Ubuntu
+sudo apt update
+sudo apt install gnome-shell-extension-appindicator
+
+# Fedora
+sudo dnf install gnome-shell-extension-appindicator
+
+# Arch Linux：完整更新系统，避免部分升级
+sudo pacman -Syu gnome-shell-extension-appindicator
+```
+
+包信息可核对 [Fedora 官方包页面](https://packages.fedoraproject.org/pkgs/gnome-shell-extension-appindicator/gnome-shell-extension-appindicator/)
+和 [Arch 官方包页面](https://archlinux.org/packages/extra/any/gnome-shell-extension-appindicator/)。
+openSUSE 等系统若官方仓库没有提供适配当前 GNOME 的包，可从
+[GNOME Extensions 的 AppIndicator and KStatusNotifierItem Support 页面](https://extensions.gnome.org/extension/615/appindicator-support/)
+按网站提示安装与当前 GNOME Shell 兼容的版本。
+
+### 注销、重新登录，再以普通用户启用
+
+安装后保存工作，**注销桌面并重新登录**，让 GNOME 加载新扩展；仅关闭 FnCPN 或重新打开终端
+可能不够。在重新登录后的 GNOME 桌面终端执行，**不要使用 sudo**：
+
+```bash
+# 查找此系统实际安装的扩展 UUID
+gnome-extensions list | grep -Ei 'appindicator|statusnotifier'
+```
+
+不同发行版使用的 UUID 可能不同，以前一条命令输出为准。常见启用命令如下，选择对应一条：
+
+```bash
+# Debian / Ubuntu
+gnome-extensions enable ubuntu-appindicators@ubuntu.com
+
+# Fedora / Arch
+gnome-extensions enable appindicatorsupport@rgcjonas.gmail.com
+
+# 确认已启用
+gnome-extensions list --enabled
+```
+
+也可以在 GNOME 的“扩展”应用中打开 AppIndicator 扩展及扩展总开关。随后重新打开 FnCPN：
+
+```bash
+fncpn-ui
+```
+
+如果提示扩展不存在，先确认已经注销并重新登录，再核对 `gnome-extensions list` 中的 UUID，
+不要反复用另一个发行版的 UUID 启用。如果扩展已列出但图标仍不出现，使用
+`gnome-extensions info <实际UUID>` 检查状态及兼容性，并确认扩展总开关未关闭。
+
+FnCPN 关闭主窗口后会隐藏到托盘；托盘尚未可用时，可再次执行 `fncpn-ui` 找回窗口，
+不必重新安装 Core 或删除连接配置。
+
 ## 安装、证书与版本问题
 
 - **macOS 拦截安装或启动**：当前包未做 Developer ID 签名和公证；按 [安装说明](../README.md#mac手动安装) 处理可信来源的安装包。移除下载隔离标记不会授予局域网权限；系统询问局域网访问时也需允许。

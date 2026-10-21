@@ -18,6 +18,7 @@ Windows 日常开发只需要三个入口：
 |---|---|---|
 | macOS UI | `build-native-macos.sh`、`build-wails-macos.sh` | 生成完整 App；`macos-app-common.sh` 为共享资源与签名实现，PKG 入口用 `--ui native|wails` 选择，默认 native |
 | macOS/fnOS 构建 | `build-all.sh`、`build-macos-pkg.sh`、`build-fpk.sh`、`install-fnpack.sh` | 平台产物与 fnpack 环境 |
+| Linux 安装 | `install-linux.sh` | 自动检测发行版/桌面，从 GitHub latest 或指定版本安装全部/Core；`install_linux_test.py` 为无安装副作用的回归测试 |
 | Linux | `build-linux-core.sh`、`build-linux-ui.sh`、`test-debian13.sh` | Core 交叉构建、基线容器原生 UI 双包构建、多发行版共用包验证、远端预编译测试；见 [Linux 支持](../docs/linux-support.md) |
 | 共享检查 | `check-release.sh`、`test-fnos-state-permissions.sh` | 跨平台/服务端验收 |
 | 生成资源 | `sync-version.py`、`sync-localizations.py`、`sync-native-localizations.py`、`generate-icons.swift` | 统一版本、翻译与产品图标 |

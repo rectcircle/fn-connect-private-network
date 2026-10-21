@@ -3133,6 +3133,9 @@ func usablePhysicalInterface(name, defaultInterface string) bool {
 func isVirtualInterface(name string) bool {
 	for _, prefix := range []string{
 		"utun", "lo", "bridge", "awdl", "llw", "gif", "stf", "vbox", "vmnet",
+		// Linux client tunnel and split-DNS links are owned virtual interfaces.
+		// Including them feeds DNS link creation back into network discovery.
+		"fnc", "fnd",
 	} {
 		if strings.HasPrefix(name, prefix) {
 			return true

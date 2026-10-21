@@ -38,7 +38,8 @@
         "dbus",
         "desktop-file-utils",
         "libarchive-tools",
-        "binutils"
+        "binutils",
+        "jq"
       ]
     },
     {
@@ -78,7 +79,8 @@
         "dbus",
         "desktop-file-utils",
         "libarchive-tools",
-        "binutils"
+        "binutils",
+        "jq"
       ]
     },
     {
@@ -116,7 +118,8 @@
         "dbus",
         "desktop-file-utils",
         "libarchive-tools",
-        "binutils"
+        "binutils",
+        "jq"
       ]
     },
     {
@@ -156,7 +159,8 @@
         "dbus",
         "desktop-file-utils",
         "libarchive-tools",
-        "binutils"
+        "binutils",
+        "jq"
       ]
     },
     {
@@ -196,7 +200,8 @@
         "dbus",
         "desktop-file-utils",
         "libarchive-tools",
-        "binutils"
+        "binutils",
+        "jq"
       ]
     },
     {
@@ -236,7 +241,8 @@
         "dbus",
         "desktop-file-utils",
         "libarchive-tools",
-        "binutils"
+        "binutils",
+        "jq"
       ]
     },
     {
@@ -277,7 +283,8 @@
         "desktop-file-utils",
         "libarchive",
         "binutils",
-        "bsdtar"
+        "bsdtar",
+        "jq"
       ]
     },
     {
@@ -318,7 +325,8 @@
         "desktop-file-utils",
         "libarchive",
         "binutils",
-        "bsdtar"
+        "bsdtar",
+        "jq"
       ]
     },
     {
@@ -358,7 +366,8 @@
         "rpm-build",
         "desktop-file-utils",
         "bsdtar",
-        "binutils"
+        "binutils",
+        "jq"
       ]
     },
     {
@@ -398,7 +407,8 @@
         "rpm-build",
         "desktop-file-utils",
         "bsdtar",
-        "binutils"
+        "binutils",
+        "jq"
       ]
     },
     {
@@ -433,7 +443,8 @@
         "libayatana-appindicator",
         "desktop-file-utils",
         "libarchive",
-        "binutils"
+        "binutils",
+        "jq"
       ]
     }
   ],
