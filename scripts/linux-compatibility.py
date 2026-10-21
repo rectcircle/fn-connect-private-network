@@ -6,6 +6,7 @@ import os
 import pathlib
 import shlex
 import signal
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -46,23 +47,39 @@ def install_test_tools(profile):
         run('apt-get', 'install', '-y', '--no-install-recommends', 'binutils', 'xvfb', 'xauth', 'dbus', 'fonts-dejavu-core', 'passwd', 'libgl1-mesa-dri')
     elif profile['format'] == 'rpm':
         if profile['osID'].startswith('opensuse'):
-            run('zypper', '--non-interactive', 'install', '--no-recommends', 'binutils', 'xvfb', 'xauth', 'dbus-1', 'dejavu-fonts', 'shadow', 'Mesa-dri')
+            run('zypper', '--non-interactive', 'install', '--no-recommends', 'binutils', 'xorg-x11-server', 'xvfb-run', 'xauth', 'dbus-1', 'dejavu-fonts', 'shadow', 'Mesa-dri')
         else:
             run('dnf', 'install', '-y', 'binutils', 'xorg-x11-server-Xvfb', 'xorg-x11-xauth', 'dbus-daemon', 'dejavu-sans-fonts', 'shadow-utils', 'mesa-dri-drivers')
     else:
         run('pacman', '-S', '--needed', '--noconfirm', 'binutils', 'xorg-server-xvfb', 'xorg-xauth', 'dbus', 'ttf-dejavu', 'shadow', 'mesa')
 
 
+def sandbox_probe(out, as_user):
+    # Recent GTK uses Glycin/bubblewrap even for SVG theme icons. Test the
+    # nested user/mount/device namespaces first, with the same unprivileged user.
+    # Older distro stacks may not use an external bwrap executable.
+    if not shutil.which('bwrap'):
+        return
+    command = (['runuser', '-u', 'fncpn-smoke', '--'] if as_user else []) + [
+        'bwrap', '--unshare-all', '--die-with-parent', '--chdir', '/',
+        '--ro-bind', '/', '/', '--dev', '/dev', '--proc', '/proc', '/usr/bin/true']
+    with (out / 'sandbox.log').open('w') as log:
+        result = subprocess.run(command, stdout=log, stderr=subprocess.STDOUT, timeout=30)
+    if result.returncode:
+        raise RuntimeError('Nested image/WebKit sandbox unavailable; see sandbox.log')
+
+
 def smoke(out, version, commit, binary='/usr/bin/fncpn-ui', as_user=True):
     if as_user:
         run('useradd', '--create-home', '--uid', '12345', 'fncpn-smoke')
+    sandbox_probe(out, as_user)
     with tempfile.TemporaryDirectory(prefix='fncpn-ui-smoke-') as directory:
         if as_user:
             os.chown(directory, 12345, 12345)
         result = pathlib.Path(directory) / 'ready.json'
         command = (['runuser', '-u', 'fncpn-smoke', '--'] if as_user else []) + ['env',
                    'XDG_RUNTIME_DIR=' + directory, 'GDK_BACKEND=x11',
-                   'LIBGL_ALWAYS_SOFTWARE=1', 'LD_BIND_NOW=1',
+                   'LIBGL_ALWAYS_SOFTWARE=1', 'LD_BIND_NOW=1', 'G_MESSAGES_DEBUG=all',
                    'dbus-run-session', '--', 'xvfb-run', '-a',
                    '--server-args=-screen 0 1024x768x24 -nolisten tcp',
                    str(binary), '--smoke-test', str(result)]

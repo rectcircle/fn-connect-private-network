@@ -145,8 +145,9 @@ jobs:
     runs-on: ${{ matrix.runner }}
     container:
       image: ${{ matrix.image }}
-      # Let WebKit create its own sandbox namespaces; do not disable its sandbox.
-      options: --shm-size=1g --security-opt seccomp=unconfined --security-opt apparmor=unconfined
+      # Draft-only disposable containers must permit nested Glycin/WebKit
+      # sandboxes, including devpts mounts; UI still runs as an ordinary user.
+      options: --shm-size=1g --privileged
     defaults:
       run:
         shell: /bin/bash --noprofile --norc -e -o pipefail {0}

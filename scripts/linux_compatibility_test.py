@@ -54,7 +54,7 @@ class CompatibilityTest(unittest.TestCase):
                 pathlib.Path(command[-1]).write_text(json.dumps({'version':'1.1.2','commit':'old','platform':'linux','frontendReady':True}))
             def wait(self, **kwargs):
                 return 0
-        with tempfile.TemporaryDirectory() as directory, patch.object(compatibility.subprocess, 'Popen', Process):
+        with tempfile.TemporaryDirectory() as directory, patch.object(compatibility.subprocess, 'Popen', Process), patch.object(compatibility, 'sandbox_probe'):
             with self.assertRaisesRegex(ValueError, 'source/version mismatch'):
                 compatibility.smoke(pathlib.Path(directory), '1.1.2', 'new', as_user=False)
 
@@ -62,9 +62,26 @@ class CompatibilityTest(unittest.TestCase):
         class Process:
             def __init__(self, *args, **kwargs): pass
             def wait(self, **kwargs): return 0
-        with tempfile.TemporaryDirectory() as directory, patch.object(compatibility.subprocess, 'Popen', Process):
+        with tempfile.TemporaryDirectory() as directory, patch.object(compatibility.subprocess, 'Popen', Process), patch.object(compatibility, 'sandbox_probe'):
             with self.assertRaisesRegex(RuntimeError, 'before frontend handshake'):
                 compatibility.smoke(pathlib.Path(directory), '1.1.2', 'new', as_user=False)
+
+    def test_suse_test_tools_use_native_x_server_and_wrapper_packages(self):
+        with patch.object(compatibility, 'run') as run:
+            compatibility.install_test_tools({'format':'rpm', 'osID':'opensuse-leap'})
+            command=run.call_args.args
+            self.assertIn('xorg-x11-server',command)
+            self.assertIn('xvfb-run',command)
+            self.assertNotIn('xvfb',command)
+
+    def test_unavailable_nested_sandbox_fails_before_ui_launch(self):
+        with tempfile.TemporaryDirectory() as directory, patch.object(compatibility.shutil, 'which', return_value='/usr/bin/bwrap'), patch.object(compatibility.subprocess, 'run') as run:
+            run.return_value.returncode=1
+            with self.assertRaisesRegex(RuntimeError,'sandbox unavailable'):
+                compatibility.sandbox_probe(pathlib.Path(directory), as_user=True)
+            command=run.call_args.args[0]
+            self.assertEqual(command[:4],['runuser','-u','fncpn-smoke','--'])
+            self.assertIn('--dev',command)
 
     def test_reinstall_uses_native_maintenance_transaction(self):
         with patch.object(compatibility, 'run') as run:

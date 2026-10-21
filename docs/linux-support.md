@@ -215,7 +215,9 @@ Core 必须没有动态加载器和动态库依赖；UI 不得包含 RPATH/RUNPA
 版本与 commit 证据并退出。该模式不启动守护进程或发起 polkit 授权，不需要 NAS。
 最后执行同版本重装和卸载，验证维护脚本与可执行文件清理。
 
-测试不关闭 WebKit 沙箱。兼容性容器允许 WebKit 创建沙箱命名空间；Nix 的临时
+测试不关闭 WebKit 沙箱。草稿专用的一次性兼容性容器使用 privileged 模式，以支持 Glycin/WebKit 的嵌套
+用户命名空间与 devpts 挂载；UI 仍以普通用户运行，启动前单独验证 bubblewrap
+环境并保存 `sandbox.log`。该模式不用于普通 PR 任务。Nix 的临时
 runner 允许其 Nix store 中的 bubblewrap 创建用户命名空间。Xvfb 使用软件渲染。
 该测试不能替代 GNOME/KDE 托盘、Wayland、实际授权弹窗或不同发行版内核的验收。
 
