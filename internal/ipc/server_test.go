@@ -4,9 +4,14 @@ package ipc
 
 import (
 	"context"
+	"encoding/binary"
 	"errors"
 	"fmt"
+	"io"
+	"log/slog"
+	"net"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -169,7 +174,9 @@ func TestServerCancelsHandlerWhenClientDisconnects(t *testing.T) {
 	serverContext, stopServer := context.WithCancel(t.Context())
 	defer stopServer()
 	canceled := make(chan struct{})
+	started := make(chan struct{})
 	server := Server{SocketPath: socketPath, Mode: 0o600, Handler: HandlerFunc(func(ctx context.Context, r Request) Response {
+		close(started)
 		<-ctx.Done()
 		close(canceled)
 		return Failure(r.ID, ctx.Err())
@@ -177,9 +184,26 @@ func TestServerCancelsHandlerWhenClientDisconnects(t *testing.T) {
 	done := make(chan error, 1)
 	go func() { done <- server.Serve(serverContext) }()
 	waitForSocket(t, socketPath)
-	ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
+	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
-	_ = (Client{SocketPath: socketPath, Timeout: time.Second}).Call(ctx, "apply", nil, nil)
+	callDone := make(chan error, 1)
+	go func() {
+		callDone <- (Client{SocketPath: socketPath, Timeout: 5 * time.Second}).Call(ctx, "apply", nil, nil)
+	}()
+	select {
+	case <-started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("client request did not reach the handler")
+	}
+	cancel()
+	select {
+	case err := <-callDone:
+		if err == nil {
+			t.Fatal("canceled call unexpectedly succeeded")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("canceled client call did not return")
+	}
 	select {
 	case <-canceled:
 	case <-time.After(time.Second):
@@ -189,4 +213,80 @@ func TestServerCancelsHandlerWhenClientDisconnects(t *testing.T) {
 	if err := <-done; err != nil {
 		t.Fatal(err)
 	}
+}
+
+func TestRejectedPeerCanFinishUnparsedFrameAndReadFailure(t *testing.T) {
+	connection, done := rejectedTestConnection(t)
+	// Send only the header, wait for the rejection, then finish an invalid JSON
+	// payload. Authorization must precede decoding, and closing must not race
+	// the still-writing caller or invoke the handler.
+	var header [4]byte
+	binary.BigEndian.PutUint32(header[:], MaxFrameSize)
+	if _, err := connection.Write(header[:]); err != nil {
+		t.Fatal(err)
+	}
+	response, err := ReadResponse(connection)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.OK || response.Error == nil || response.Error.Code != model.ErrorPermissionDenied {
+		t.Fatalf("rejection = %+v", response)
+	}
+	if _, err := io.CopyN(connection, strings.NewReader(strings.Repeat("x", MaxFrameSize)), MaxFrameSize); err != nil {
+		t.Fatal(err)
+	}
+	connection.Close()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("rejected connection was not closed")
+	}
+}
+
+func TestRejectedSilentPeerDoesNotHoldServerConnection(t *testing.T) {
+	connection, done := rejectedTestConnection(t)
+	if _, err := ReadResponse(connection); err != nil {
+		t.Fatal(err)
+	}
+	// A peer that sends nothing and keeps the socket open cannot hold the
+	// rejection goroutine for the ordinary five-minute request timeout.
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("silent rejected peer held the connection")
+	}
+}
+
+func rejectedTestConnection(t *testing.T) (*net.UnixConn, <-chan struct{}) {
+	t.Helper()
+	path := fmt.Sprintf("/tmp/fncpn-ipc-rejected-%d.sock", os.Getpid())
+	_ = os.Remove(path)
+	listener, err := net.ListenUnix("unix", &net.UnixAddr{Name: path, Net: "unix"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { listener.Close(); os.Remove(path) })
+	done := make(chan struct{})
+	server := Server{
+		Authorize: func(context.Context, PeerIdentity) error { return RejectPeer("test rejection") },
+		Handler: HandlerFunc(func(context.Context, Request) Response {
+			t.Error("rejected request reached handler")
+			return Success("", nil)
+		}),
+	}
+	go func() {
+		defer close(done)
+		connection, err := listener.AcceptUnix()
+		if err != nil {
+			return
+		}
+		server.handleConnection(t.Context(), connection, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	}()
+	connection, err := net.DialUnix("unix", nil, &net.UnixAddr{Name: path, Net: "unix"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { connection.Close() })
+	connection.SetDeadline(time.Now().Add(5 * time.Second))
+	return connection, done
 }

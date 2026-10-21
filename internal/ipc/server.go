@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"os"
@@ -21,6 +22,7 @@ import (
 const (
 	defaultHandlerTimeout = 5 * time.Minute
 	responseWriteGrace    = 5 * time.Second
+	rejectionDrainGrace   = 250 * time.Millisecond
 )
 
 type Handler interface {
@@ -113,11 +115,11 @@ func (s Server) handleConnection(
 	if s.Authorize != nil {
 		identity, err := IdentifyPeer(connection)
 		if err != nil {
-			s.writeFailure(connection, "", err, logger)
+			s.rejectPeer(connection, err, logger)
 			return
 		}
 		if err := s.Authorize(parent, identity); err != nil {
-			s.writeFailure(connection, "", err, logger)
+			s.rejectPeer(connection, err, logger)
 			return
 		}
 		parent = WithPeerIdentity(parent, identity)
@@ -189,6 +191,17 @@ func (s Server) handleConnection(
 			err,
 		)
 	}
+}
+
+// Keep the rejection readable while the caller finishes its already in-flight
+// request. Closing a Unix socket with unread request bytes can reset the peer,
+// turning PERMISSION_DENIED into a write/transport failure. No rejected bytes
+// are parsed or dispatched; both their number and drain time are bounded.
+func (s Server) rejectPeer(connection *net.UnixConn, err error, logger *slog.Logger) {
+	_ = connection.SetDeadline(time.Now().Add(rejectionDrainGrace))
+	s.writeFailure(connection, "", err, logger)
+	_ = connection.CloseWrite()
+	_, _ = io.CopyN(io.Discard, connection, MaxFrameSize+4)
 }
 
 func (s Server) writeFailure(
