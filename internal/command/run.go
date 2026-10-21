@@ -804,7 +804,7 @@ func runPrivilegedDaemonWithReady(
 		service = privileged.NewClientService(
 			platform.NewClientEngine(processLogger, *stateDirectory),
 			secrets,
-		).WithDNSRules(privileged.NewDNSRules(*stateDirectory))
+		).WithDNSRules(privileged.NewDNSRules(*stateDirectory).WithAuthorizer(privileged.AuthorizePeer("client", *allowedUID)))
 	case "server":
 		service = privileged.NewServerService(
 			platform.NewServerEngine(processLogger, *stateDirectory),

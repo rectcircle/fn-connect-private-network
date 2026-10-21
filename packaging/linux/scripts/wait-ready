@@ -1,0 +1,12 @@
+#!/bin/sh
+set -eu
+[ "$#" = 2 ] || exit 2
+case "$1" in client|client-privileged) ;; *) exit 2 ;; esac
+attempt=0
+while [ "$attempt" -lt 10 ]; do
+ if /usr/bin/fncpn internal-healthcheck --role "$1" --socket "$2" >/dev/null 2>&1; then exit 0; fi
+ attempt=$((attempt + 1))
+ sleep 1
+done
+echo "FnCPN $1 socket did not become ready" >&2
+exit 1

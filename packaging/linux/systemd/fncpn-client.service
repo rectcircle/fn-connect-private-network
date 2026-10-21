@@ -1,0 +1,23 @@
+[Unit]
+Description=FnCPN client coordinator
+After=network.target
+
+[Service]
+Type=exec
+ExecStartPre=/usr/bin/mkdir -p %h/.config/fncpn %h/.local/state/fncpn
+ExecStart=/usr/bin/fncpn client daemon
+ExecStartPost=/usr/libexec/fncpn/wait-ready client %t/fncpn/client.sock
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=20
+UMask=0077
+RuntimeDirectory=fncpn
+RuntimeDirectoryMode=0700
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=no
+# Network privileges remain in the root helper. XDG config/state may be outside HOME.
+ProtectSystem=full
+
+[Install]
+WantedBy=default.target

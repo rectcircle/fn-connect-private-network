@@ -1,0 +1,12 @@
+#!/bin/sh
+set -eu
+case "${1:-}" in upgrade|remove|deconfigure) ;; *) exit 0 ;; esac
+if command -v pkill >/dev/null 2>&1; then
+ pkill -TERM -x fncpn-ui || [ "$?" = 1 ]
+ count=0
+ while pgrep -x fncpn-ui >/dev/null 2>&1; do
+  count=$((count + 1))
+  if [ "$count" -ge 15 ]; then echo 'FnCPN UI is still running; close it before changing packages.' >&2; exit 1; fi
+  sleep 1
+ done
+fi

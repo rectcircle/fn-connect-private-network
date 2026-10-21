@@ -1,0 +1,54 @@
+{
+  "name": "fncpn-core",
+  "platform": "linux",
+  "maintainer": "rectcircle <rectcircle96@gmail.com>",
+  "description": "FnCPN headless client and privileged network service",
+  "homepage": "https://fncpn.rectcircle.cn",
+  "license": "MIT",
+  "contents": [
+    {
+      "src": "${FNCPN_CORE_BINARY}",
+      "dst": "/usr/bin/fncpn",
+      "file_info": {
+        "mode": 493
+      }
+    },
+    {
+      "src": "packaging/linux/scripts/fncpn-linux-setup",
+      "dst": "/usr/bin/fncpn-linux-setup",
+      "file_info": {
+        "mode": 493
+      }
+    },
+    {
+      "src": "packaging/linux/scripts/wait-ready",
+      "dst": "/usr/libexec/fncpn/wait-ready",
+      "file_info": {
+        "mode": 493
+      }
+    },
+    {
+      "src": "packaging/linux/scripts/enable-client",
+      "dst": "/usr/libexec/fncpn/enable-client",
+      "file_info": {
+        "mode": 493
+      }
+    },
+    {
+      "src": "packaging/linux/systemd/fncpn-client.service",
+      "dst": "/usr/lib/systemd/user/fncpn-client.service"
+    },
+    {
+      "src": "packaging/linux/systemd/fncpn-client-privileged@.service",
+      "dst": "/usr/lib/systemd/system/fncpn-client-privileged@.service"
+    },
+    {
+      "src": "packaging/linux/polkit/cn.rectcircle.fncpn.enable-client.policy",
+      "dst": "/usr/share/polkit-1/actions/cn.rectcircle.fncpn.enable-client.policy"
+    },
+    {
+      "src": "LICENSE",
+      "dst": "/usr/share/doc/fncpn-core/copyright"
+    }
+  ]
+}

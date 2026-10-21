@@ -13,6 +13,10 @@ updates = {
     root / 'packaging/fnos/manifest': (r'(?m)^version=.*$', f'version={version}'),
     root / 'packaging/macos/Info.plist': (r'(<key>CFBundleShortVersionString</key>\s*<string>)[^<]+(</string>)', rf'\g<1>{core_version}\g<2>'),
 }
+# Wails UI is a local component of the same product, not a separately versioned app.
+wails_config = root / 'ui/wails.json'
+if wails_config.exists():
+    updates[wails_config] = (r'("productVersion"\s*:\s*")[^"]+(")', rf'\g<1>{version}\g<2>')
 # All package metadata uses the same numeric product version.
 plist_path = root / 'packaging/macos/Info.plist'
 

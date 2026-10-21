@@ -1,0 +1,8 @@
+#!/bin/sh
+set -eu
+[ "$(id -u)" = 0 ] || { echo 'Must run as root' >&2; exit 1; }
+[ "$#" = 1 ] || exit 2
+case "$1" in ''|*[!0-9]*) exit 2 ;; esac
+[ "$1" -ge 1000 ] && [ "$1" -le 2147483647 ] || { echo 'A regular user UID is required' >&2; exit 2; }
+getent passwd "$1" >/dev/null || { echo 'Unknown UID' >&2; exit 2; }
+exec systemctl enable --now "fncpn-client-privileged@$1.service"

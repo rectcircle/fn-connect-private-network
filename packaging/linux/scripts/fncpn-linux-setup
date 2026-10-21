@@ -1,0 +1,13 @@
+#!/bin/sh
+set -eu
+[ "$(id -u)" != 0 ] || { echo 'Run as the regular user, not sudo. The helper requests sudo itself.' >&2; exit 1; }
+sudo /usr/libexec/fncpn/enable-client "$(id -u)"
+# Match the daemon: ignore relative XDG overrides; never clear identities.
+umask 077
+config_root=${XDG_CONFIG_HOME:-$HOME/.config}
+state_root=${XDG_STATE_HOME:-$HOME/.local/state}
+case "$config_root" in /*) ;; *) config_root=$HOME/.config ;; esac
+case "$state_root" in /*) ;; *) state_root=$HOME/.local/state ;; esac
+mkdir -p "$config_root/fncpn" "$state_root/fncpn"
+systemctl --user daemon-reload
+systemctl --user enable --now fncpn-client.service

@@ -102,9 +102,22 @@ jobs:
             dist/windows-native/x64/fncpn-*-windows-x64-unsigned.msi
             dist/windows-native/x64/build-manifest.json
           if-no-files-found: error
+  nix-check:
+    if: ${{ !inputs.publish }}
+    uses: ./.github/workflows/check-nix.yml
+    with:
+      ref: ${{ inputs.tag || github.ref_name }}
+  linux-build:
+    if: ${{ !inputs.publish }}
+    uses: ./.github/workflows/build-linux.yml
+    permissions:
+      contents: read
+    with:
+      ref: ${{ inputs.tag || github.ref }}
+      release: true
   release:
     if: ${{ !inputs.publish }}
-    needs: windows-build
+    needs: [windows-build, linux-build, nix-check]
     runs-on: macos-15
     env:
       DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
@@ -141,6 +154,16 @@ jobs:
         with:
           name: windows-release-candidates-${{ inputs.tag || github.ref_name }}
           path: dist/windows
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: linux-packages-*
+          path: dist/linux
+          merge-multiple: true
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: linux-compat-*
+          path: dist/linux-compat
+          merge-multiple: true
       - name: Build release draft
         if: ${{ !inputs.publish }}
         run: ./scripts/build-all.sh

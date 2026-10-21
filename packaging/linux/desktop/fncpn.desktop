@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=FnCPN
+Comment=Connect to your fnOS private network
+Comment[zh_CN]=连接 fnOS 私有网络
+Exec=/usr/bin/fncpn-ui %u
+Icon=fncpn
+Terminal=false
+Categories=Network;
+MimeType=x-scheme-handler/fncpn;
+StartupNotify=true
+StartupWMClass=fncpn-ui

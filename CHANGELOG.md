@@ -4,6 +4,22 @@
 格式遵循 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)，版本规则见
 [版本与兼容性](docs/versioning-and-compatibility.md)。
 
+## [1.1.2]
+
+### Added
+
+- Linux 客户端（Debian 12 起、Ubuntu 22.04 起及清单内受支持 Fedora/Arch/openSUSE）：Core 提供无图形依赖的 Go CLI/daemon，内核 WireGuard、独立路由、网络资源所有权、故障恢复；特权服务按 UID 隔离 socket、凭据和状态。
+- Wails v2 图形客户端保留原生 HTML/CSS/JavaScript，增加 Linux GTK3/WebKitGTK 4.1、Ayatana 托盘、独立后台窗口、登录自启和管理员授权入口。
+- 提供通用 deb、RPM 和 Arch Core/UI 双包，共 10 个 Linux 安装包；基线构建与多发行版兼容验证分离，发布草稿核对版本、commit、包哈希及目标验证证据。Arch Linux 目标为 amd64，其余清单目标为 amd64/arm64。
+- 新增 Nix Flake：Linux 双架构 Core/UI、开发 shell 和 NixOS 服务模块，通过源码构建，不增加 Release 包。
+- Linux split DNS 使用 systemd-resolved 独立 dummy link 和受限转发桥；未使用 resolved stub 时明确降级，不覆盖用户的 `/etc/resolv.conf`。
+
+### 升级与验证范围
+
+- 产品统一升级为 1.1.2。本次仅扩展平台实现与打包，不增加服务端协议要求；远程准入规则不变，允许连接 1.1.x 服务端，不设置最低 PATCH。
+- Debian 客户端建立独立的 Linux 网络日志 schema 1。包升级保留用户配置、身份和连接意图；UI 与 Core 必须以相同产品版本一起更新。
+- 当前只完成 Mac 交叉编译、Debian 13 虚拟机单测与隔离网络能力验证。Linux UI 的真实构建/安装、系统 resolved 集成、真实 NAS 端到端和正式历史版本兼容验收仍是草稿验证项，不能据此直接公开发布。
+
 ## [1.1.1]
 
 ### Fixed

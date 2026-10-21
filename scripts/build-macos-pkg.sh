@@ -6,7 +6,23 @@ export COPYFILE_DISABLE=1
 export COPY_EXTENDED_ATTRIBUTES_DISABLE=1
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-DIST_DIR="${DIST_DIR:-${ROOT_DIR}/dist}"
+UI=native
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --ui)
+      [ "$#" -ge 2 ] || { echo 'Missing --ui value' >&2; exit 2; }
+      UI="$2"; shift 2 ;;
+    --help|-h) echo "Usage: $0 [--ui native|wails] (default: native)"; exit 0 ;;
+    *) echo "Unknown option: $1" >&2; exit 2 ;;
+  esac
+done
+case "$UI" in native|wails) ;; *) echo 'UI must be native or wails' >&2; exit 2 ;; esac
+# The native release location stays stable; alternate UI packages are isolated.
+if [ "$UI" = native ]; then
+  DIST_DIR="${DIST_DIR:-${ROOT_DIR}/dist}"
+else
+  DIST_DIR="${DIST_DIR:-${ROOT_DIR}/dist/wails-v2}"
+fi
 source "${ROOT_DIR}/scripts/release-version.sh"
 ARCH="${ARCH:-arm64}"
 case "$ARCH" in
@@ -30,7 +46,7 @@ if [ "$(uname -s)" != "Darwin" ]; then
   echo "macOS package must be built on macOS" >&2
   exit 1
 fi
-for tool in go python3 swiftc pkgbuild pkgutil plutil codesign bsdtar lsbom mkbom gzip iconutil otool lipo; do
+for tool in go python3 pkgbuild pkgutil plutil codesign bsdtar lsbom mkbom gzip iconutil otool lipo; do
   command -v "$tool" >/dev/null || {
     echo "missing build dependency: $tool" >&2
     exit 1
@@ -42,14 +58,8 @@ mkdir -p \
   "${PAYLOAD}/Library/LaunchDaemons" \
   "${PAYLOAD}/Library/LaunchAgents" \
   "${PAYLOAD}/usr/local/bin" \
-  "${APP_DIR}/Contents/MacOS" \
-  "${APP_DIR}/Contents/Resources" \
   "$SCRIPTS" \
   "$DIST_DIR"
-ASSET_DIR="${BUILD_DIR}/assets"
-cp -R "${ROOT_DIR}/packaging/assets" "$ASSET_DIR"
-swift "${ROOT_DIR}/scripts/generate-icons.swift" "$ASSET_DIR"
-iconutil -c icns "${ASSET_DIR}/AppIcon.iconset"
 
 (
   cd "$ROOT_DIR"
@@ -61,38 +71,12 @@ iconutil -c icns "${ASSET_DIR}/AppIcon.iconset"
     ./cmd/fncpn
 )
 
-swiftc \
-  -target "${MACH_ARCH}-apple-macos${MACOSX_DEPLOYMENT_TARGET}" \
-  -O \
-  -parse-as-library \
-  -framework AppKit \
-  -framework ServiceManagement \
-  -framework UserNotifications \
-  -framework WebKit \
-  "${ROOT_DIR}/platform/macos/FnCPNApp.swift" \
-  -o "${APP_DIR}/Contents/MacOS/FnCPN"
+# Both UI builders output a complete App bundle with the same product identity.
+ARCH="$ARCH" "$ROOT_DIR/scripts/build-${UI}-macos.sh" \
+  --output "$APP_DIR" --daemon "${TOOL_DIR}/fncpn"
+# Installed Apps use the fixed helper path. Standalone Apps bundle their daemon.
+rm "${APP_DIR}/Contents/Resources/fncpn"
 
-for binary in "${APP_DIR}/Contents/MacOS/FnCPN" "${TOOL_DIR}/fncpn"; do
-  if [ "$(lipo -archs "$binary")" != "$MACH_ARCH" ]; then
-    echo "Unexpected Mach-O architecture: $binary" >&2; exit 1
-  fi
-done
-minos="$(otool -l "${APP_DIR}/Contents/MacOS/FnCPN" | awk '/minos/{print $2; exit}')"
-if [ "$minos" != "$MACOSX_DEPLOYMENT_TARGET" ]; then
-  echo "Swift binary minimum macOS $minos differs from deployment target $MACOSX_DEPLOYMENT_TARGET" >&2
-  exit 1
-fi
-
-cp -R "${ROOT_DIR}/packaging/macos/en.lproj" "${ROOT_DIR}/packaging/macos/zh-Hans.lproj" "${APP_DIR}/Contents/Resources/"
-cp "${ROOT_DIR}/LICENSE" "${ROOT_DIR}/THIRD_PARTY_NOTICES.md" "${APP_DIR}/Contents/Resources/"
-cp -X "${ROOT_DIR}/packaging/macos/Info.plist" "${APP_DIR}/Contents/"
-plutil -replace FnCPNProductVersion -string "$VERSION" \
-  "${APP_DIR}/Contents/Info.plist"
-plutil -replace CFBundleVersion -string "$BUILD_NUMBER" \
-  "${APP_DIR}/Contents/Info.plist"
-cp -X "${ASSET_DIR}"/Status-*.png "${APP_DIR}/Contents/Resources/"
-cp -X "${ASSET_DIR}/AppIcon.icns" \
-  "${APP_DIR}/Contents/Resources/AppIcon.icns"
 cp -X "${ROOT_DIR}/packaging/macos/cn.rectcircle.fncpn.privileged.plist" \
   "${PAYLOAD}/Library/LaunchDaemons/"
 # The client LaunchAgent is user-managed: ship its template inside the app bundle

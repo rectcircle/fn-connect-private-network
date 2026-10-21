@@ -27,11 +27,16 @@ node --test internal/server/web/index.test.cjs
 
 ```bash
 ./scripts/build-all.sh
-./scripts/build-macos-pkg.sh
+./scripts/build-macos-pkg.sh                 # 默认 Swift/AppKit
+./scripts/build-macos-pkg.sh --ui wails      # Wails v2
 ./scripts/build-fpk.sh
 ```
 
-产物统一写入 `dist/`，打包中间文件使用系统临时目录。
+原生 macOS 与 fnOS 产物写入 `dist/`；Wails macOS PKG 默认写入 `dist/wails-v2/`，
+可用 `DIST_DIR` 指定其他输出目录。打包中间文件使用系统临时目录。
+macOS 两种 UI 共用应用标识、固定安装路径和安装维护流程，默认发布仍使用原生 UI。
+只构建 App 可使用 `build-native-macos.sh` 或 `build-wails-macos.sh`，详见
+[Wails 客户端](../ui/README.md)。
 
 FPK 构建要求通过 `FNPACK` 或 `PATH` 显式提供 `fnpack`，不依赖本地 PoC 文件。
 首次初始化默认使用 `10.253.203.0/24` 和 `54789/UDP`；冲突时
@@ -207,3 +212,6 @@ runner 只提取固定版本 CLI 的运行文件并校验压缩包 SHA256，不�
 校验后移动至公开目录，以及 Homebrew 并行更新。运行链接和未覆盖范围见
 [1.0.10 发布核验](validation.md#1010-构建与夸克镜像核验2026-10-15)。
 该次通过不代表凭据长期续期、不同账号或全部平台安装专项已验证。
+
+Linux 的通用安装包、构建基线和多发行版验证见 [Linux 支持](linux-support.md)；
+Nix Flake 源码构建与 NixOS 声明式部署见 [Nix 支持](nix.md)。

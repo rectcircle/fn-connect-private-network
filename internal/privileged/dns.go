@@ -29,17 +29,24 @@ type dnsJournal struct {
 	Owner   peer.Identity `json:"owner"`
 }
 type DNSRules struct {
-	install func(model.DNSPlan) error
-	remove  func(model.DNSPlan) error
-	verify  func(model.DNSPlan) error
-	mu      sync.Mutex
-	path    string
-	current *dnsJournal
-	expires time.Time
+	authorize ipc.Authorizer
+	install   func(model.DNSPlan) error
+	remove    func(model.DNSPlan) error
+	verify    func(model.DNSPlan) error
+	mu        sync.Mutex
+	path      string
+	current   *dnsJournal
+	expires   time.Time
 }
 
 func NewDNSRules(dir string) *DNSRules {
-	return &DNSRules{path: filepath.Join(dir, "dns-state.json"), install: installDNSRule, remove: removeDNSRule, verify: verifyDNSRule}
+	return &DNSRules{authorize: AuthorizePeer("client", -1), path: filepath.Join(dir, "dns-state.json"), install: installDNSRule, remove: removeDNSRule, verify: verifyDNSRule}
+}
+
+// WithAuthorizer keeps lease renewal authorization aligned with per-UID Linux services.
+func (r *DNSRules) WithAuthorizer(authorize ipc.Authorizer) *DNSRules {
+	r.authorize = authorize
+	return r
 }
 func validateDNSPlan(p model.DNSPlan) error {
 	if err := dns.ValidateSuffix(p.Suffix); err != nil {
@@ -110,7 +117,7 @@ func (r *DNSRules) Run(ctx context.Context) {
 			return
 		case <-tick.C:
 			r.mu.Lock()
-			if r.current != nil && (time.Now().After(r.expires) || AuthorizePeer("client", -1)(ctx, r.current.Owner) != nil) {
+			if r.current != nil && (time.Now().After(r.expires) || r.authorize(ctx, r.current.Owner) != nil) {
 				_ = r.removeLocked()
 			}
 			r.mu.Unlock()
@@ -197,6 +204,10 @@ func (r *DNSRules) Handle(ctx context.Context, req ipc.Request) ipc.Response {
 	}
 	r.current = &j
 	if err = r.install(plan); err != nil {
+		var pending interface{ CleanupPending() bool }
+		if errors.As(err, &pending) && pending.CleanupPending() {
+			return ipc.Failure(req.ID, model.WrapError(model.ErrorUnavailable, "install DNS rule; cleanup pending", true, err))
+		}
 		cleanupErr := os.Remove(r.path)
 		r.current = nil
 		return ipc.Failure(req.ID, model.WrapError(model.ErrorUnavailable, fmt.Sprintf("install DNS rule: %v", err), true, cleanupErr))

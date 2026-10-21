@@ -1,0 +1,26 @@
+{
+  "$schema": "https://wails.io/schemas/config.v2.json",
+  "name": "FnCPN Wails",
+  "outputfilename": "FnCPN Wails",
+  "frontend:install": "npm ci",
+  "frontend:build": "npm run build",
+  "frontend:dev:watcher": "npm run dev",
+  "frontend:dev:serverUrl": "auto",
+  "author": {
+    "name": "rectcircle",
+    "email": "rectcircle96@gmail.com"
+  },
+  "info": {
+    "companyName": "rectcircle",
+    "productName": "FnCPN Wails",
+    "productVersion": "1.1.2",
+    "copyright": "Copyright \u00a9 2026 rectcircle",
+    "comments": "Wails v2 macOS validation client",
+    "protocols": [
+      {
+        "scheme": "fncpn",
+        "role": "Viewer"
+      }
+    ]
+  }
+}

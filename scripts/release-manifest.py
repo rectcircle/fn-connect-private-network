@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Inventory the exact product release; RELEASE=1 refuses an existing inventory."""
 import hashlib, json, os, pathlib, sys, subprocess
+from linux_support import TARGETS, BUNDLES, package_name as linux_package_name
 root, version, revision, arch = sys.argv[1:]
 root = pathlib.Path(root)
 target = root / f"release-{version}.json"
@@ -38,6 +39,44 @@ for windows_arch in ("arm64", "x64"):
         raise SystemExit(f"Windows {windows_arch} MSI checksum does not match its build manifest")
     artifacts.append({"file": package_name, "path": (relative / package_name).as_posix(), "sha256": expected})
 
+if tuple(map(int, version.split('.'))) >= (1, 1, 2):
+    for linux_target, profile in BUNDLES.items():
+        for linux_arch in profile['architectures']:
+            relative = pathlib.Path('linux') / linux_target / linux_arch
+            try:
+                build = json.loads((root / relative / 'build-manifest.json').read_text())
+            except (OSError, json.JSONDecodeError) as error:
+                raise SystemExit(f'Missing Linux {linux_target} {linux_arch} build manifest: {error}')
+            if (build.get('productVersion') != version or build.get('commit') != revision or
+                build.get('architecture') != linux_arch or build.get('distribution') != linux_target or
+                build.get('packageFormat') != linux_target or build.get('workingTreeDirty') is not False):
+                raise SystemExit('Linux candidate must match the clean release version, commit, format and architecture')
+            expected_names = {linux_package_name(component,version,linux_target,linux_arch) for component in ('core', 'ui')}
+            entries = build.get('artifacts', [])
+            if len(entries) != 2 or {entry.get('path') for entry in entries} != expected_names:
+                raise SystemExit('Linux manifest must contain exactly matching Core/UI packages')
+            for entry in entries:
+                name = entry['path']
+                digest = hashlib.sha256((root / relative / name).read_bytes()).hexdigest()
+                if digest != entry.get('sha256'):
+                    raise SystemExit('Linux package checksum does not match its build manifest')
+                artifacts.append({'file': name, 'path': (relative / name).as_posix(), 'sha256': digest})
+
+    # Every supported target must have checked these exact shared archives.
+    by_name = {entry['file']: entry['sha256'] for entry in artifacts}
+    for distro, profile in TARGETS.items():
+        for architecture in profile['architectures']:
+            try:
+                evidence = json.loads((root/'linux-compat'/f'{distro}-{architecture}.json').read_text())
+            except (OSError, json.JSONDecodeError) as error:
+                raise SystemExit(f'Missing Linux compatibility evidence for {distro} {architecture}: {error}')
+            expected = {linux_package_name(component,version,distro,architecture): by_name[linux_package_name(component,version,distro,architecture)] for component in ('core','ui')}
+            if (evidence.get('target') != distro or evidence.get('architecture') != architecture or
+                evidence.get('bundle') != profile['format'] or evidence.get('productVersion') != version or
+                evidence.get('commit') != revision or evidence.get('artifacts') != expected or
+                set(evidence.get('checks', [])) != {'package-metadata','dependency-resolution','core-version','ui-dynamic-linking'}):
+                raise SystemExit('Linux compatibility evidence does not match the release packages and commit')
+
 def tool(*command):
     try:
         result = subprocess.run(command, capture_output=True, text=True)
@@ -54,6 +93,11 @@ metadata = {"version": version, "commit": revision,
                       "windowsSourceFingerprint": windows_fingerprint,
                       "macosArchitectures": ["arm64", "x64"],
                       "windowsArchitectures": ["arm64", "x64"]}}
+if tuple(map(int, version.split('.'))) >= (1, 1, 2):
+    metadata['build']['linuxArchitectures'] = ['amd64', 'arm64']
+    metadata['build']['linuxTargets'] = list(TARGETS)
+    metadata['build']['linuxBundles'] = list(BUNDLES)
+    metadata['build']['nixSystems'] = ['x86_64-linux', 'aarch64-linux']
 with target.open("x" if os.environ.get("RELEASE") == "1" else "w") as output:
     output.write(json.dumps(metadata, indent=2) + "\n")
 (root / f"SHA256SUMS-{version}").write_text("".join(f"{a['sha256']}  {a['file']}\n" for a in artifacts))

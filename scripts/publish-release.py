@@ -8,6 +8,7 @@ from pathlib import PurePosixPath
 import re
 import subprocess
 import tempfile
+from linux_support import release_packages
 
 
 def run(*args):
@@ -60,6 +61,10 @@ def publish(directory, repository, make_public=False):
     if not required_windows_assets.issubset(sources):
         missing = ', '.join(sorted(required_windows_assets - set(sources)))
         raise SystemExit('Release inventory is missing required Windows MSI assets: ' + missing)
+    if tuple(map(int, version.split('.'))) >= (1, 1, 2):
+        required_linux_assets = {name for _,_,_,name in release_packages(version)}
+        if not required_linux_assets.issubset(sources):
+            raise SystemExit('Release inventory is missing required Linux Core/UI assets')
     commit = run('git', 'rev-parse', 'HEAD')
     if manifest['version'] != version or manifest['commit'] != commit:
         raise SystemExit('Release inventory does not match checkout')

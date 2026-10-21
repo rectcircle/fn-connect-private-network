@@ -22,6 +22,14 @@ jobs:
       - run: ./scripts/check-release.sh
       - name: Verify root-owned fnOS state recovery
         run: sudo bash scripts/test-fnos-state-permissions.sh
+  linux:
+    uses: ./.github/workflows/build-linux.yml
+    permissions:
+      contents: read
+    with:
+      ref: ${{ github.ref }}
+  nix:
+    uses: ./.github/workflows/check-nix.yml
   windows:
     # Match the native build generator (Visual Studio 17 2022).
     # windows-2025 now defaults to VS 2026.

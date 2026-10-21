@@ -1,0 +1,33 @@
+#!/usr/bin/env python3
+"""Record the exact target's matching Core/UI packages and source evidence."""
+import hashlib
+import json
+import pathlib
+import subprocess
+import sys
+
+from linux_support import ROOT, package_name, package_profile
+
+
+def main():
+    out=pathlib.Path(sys.argv[1]);target=sys.argv[2];arch=sys.argv[3]
+    profile=package_profile(target,arch)
+    version=(ROOT/'internal/version/VERSION').read_text().strip()
+    def git(*args): return subprocess.check_output(['git','-C',str(ROOT),*args],text=True).strip()
+    artifacts=[]
+    for component in ('core','ui'):
+        name=package_name(component,version,target,arch)
+        path=out/name
+        if not path.is_file():raise SystemExit('Missing package: '+str(path))
+        artifacts.append({'path':name,'sha256':hashlib.sha256(path.read_bytes()).hexdigest()})
+    # Package content/metadata validation is mandatory before writing evidence.
+    subprocess.run([sys.executable,str(ROOT/'scripts/check-linux-packages.py'),str(out),target,arch],check=True)
+    os_release=pathlib.Path('/etc/os-release').read_text()
+    record={'productVersion':version,'commit':git('rev-parse','HEAD'),'architecture':arch,
+            'distribution':target,'packageFormat':profile['format'],'buildOSRelease':os_release,
+            'workingTreeDirty':bool(git('status','--porcelain')),'artifacts':artifacts}
+    (out/'build-manifest.json').write_text(json.dumps(record,indent=2)+'\n')
+    (out/'SHA256SUMS').write_text(''.join(f"{a['sha256']}  {a['path']}\n" for a in artifacts))
+
+
+if __name__=='__main__':main()

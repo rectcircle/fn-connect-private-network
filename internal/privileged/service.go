@@ -237,6 +237,9 @@ func (s *Service[NetworkStatus, StatusEnvelope]) Recover(ctx context.Context) er
 }
 
 func (s *Service[NetworkStatus, StatusEnvelope]) Close(ctx context.Context) error {
+	if closer, ok := any(s.engine).(interface{ Close(context.Context) error }); ok {
+		return closer.Close(ctx)
+	}
 	return s.engine.Remove(ctx)
 }
 
@@ -284,13 +287,16 @@ func (s *Service[NetworkStatus, StatusEnvelope]) Handle(
 
 func (s *ClientService) WithDNSRules(rules *DNSRules) *ClientService { s.dns = rules; return s }
 func (s *ClientService) Recover(ctx context.Context) error {
+	if err := s.Service.Recover(ctx); err != nil {
+		return err
+	}
 	if s.dns != nil {
 		if err := s.dns.Recover(ctx); err != nil {
 			logging.FromContext(ctx, nil).Error("recover DNS rules; network service remains available", "error", err)
 		}
 		go s.dns.Run(ctx)
 	}
-	return s.Service.Recover(ctx)
+	return nil
 }
 func (s *ClientService) Close(ctx context.Context) error {
 	var dnsErr error

@@ -1,0 +1,174 @@
+name: Build Linux
+on:
+  workflow_call:
+    inputs:
+      ref:
+        type: string
+        required: false
+        default: ''
+      release:
+        type: boolean
+        required: false
+        default: false
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Source branch or existing version tag
+        type: string
+        required: true
+        default: main
+      release:
+        description: Enforce matching clean release tag (artifacts only)
+        type: boolean
+        default: false
+permissions:
+  contents: read
+jobs:
+  targets:
+    runs-on: ubuntu-24.04
+    outputs:
+      matrix: ${{ steps.targets.outputs.matrix }}
+      compatibility: ${{ steps.targets.outputs.compatibility }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+      - id: targets
+        run: |
+          echo "matrix=$(python3 scripts/linux_support.py build-matrix)" >> "$GITHUB_OUTPUT"
+          echo "compatibility=$(python3 scripts/linux_support.py matrix)" >> "$GITHUB_OUTPUT"
+  build:
+    needs: targets
+    name: ${{ matrix.target }} ${{ matrix.arch }}
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix: ${{ fromJSON(needs.targets.outputs.matrix) }}
+    runs-on: ${{ matrix.runner }}
+    container:
+      image: ${{ matrix.image }}
+    defaults:
+      run:
+        shell: bash
+    env:
+      DEBIAN_FRONTEND: noninteractive
+      TARGET: ${{ matrix.target }}
+      ARCH: ${{ matrix.arch }}
+      RELEASE: ${{ inputs.release && '1' || '0' }}
+    steps:
+      # Bootstrap before checkout because minimal images may not have git/Python.
+      - name: Bootstrap Debian and Ubuntu container
+        if: matrix.family == 'deb'
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends git ca-certificates curl python3 tar xz-utils
+      - name: Bootstrap Fedora container
+        if: matrix.family == 'fedora'
+        run: dnf install -y git ca-certificates curl python3 tar xz
+      - name: Bootstrap openSUSE container
+        if: matrix.family == 'suse'
+        run: |
+          zypper --non-interactive refresh
+          zypper --non-interactive install --no-recommends git ca-certificates curl python3 tar xz
+      - name: Bootstrap Arch container (full rolling upgrade)
+        if: matrix.family == 'arch'
+        run: pacman -Syu --noconfirm --needed git ca-certificates curl python tar xz
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+          fetch-depth: 0
+      - name: Install target-specific build dependencies
+        run: python3 scripts/linux-ci-dependencies.py "$TARGET"
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.27.1'
+          cache-dependency-path: |
+            go.sum
+            ui/go.sum
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.14.0'
+          cache: npm
+          cache-dependency-path: ui/frontend/package-lock.json
+      - name: Install pinned build tools
+        run: |
+          go install github.com/wailsapp/wails/v2/cmd/wails@v2.17.0
+          go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.40.0
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+      - name: Verify source, scripts and unit tests
+        run: |
+          test "$(go env GOARCH)" = "$ARCH"
+          python3 scripts/sync-version.py --check
+          go test ./...
+          go vet ./...
+          python3 scripts/linux_support_test.py
+          python3 scripts/release_manifest_test.py
+          python3 scripts/publish_release_test.py
+          bash -n scripts/build-linux-core.sh scripts/build-linux-ui.sh scripts/test-debian13.sh
+          for script in packaging/linux/scripts/*; do sh -n "$script"; done
+          npm --prefix ui/frontend ci
+          npm --prefix ui/frontend test
+          npm --prefix ui/frontend run build
+          (cd ui && go test -tags webkit2_41 ./... && go vet -tags webkit2_41 ./...)
+          desktop-file-validate packaging/linux/desktop/fncpn.desktop
+      - name: Build matching Core and UI packages on the target distribution
+        run: |
+          scripts/build-linux-core.sh
+          scripts/build-linux-ui.sh
+          python3 scripts/check-linux-packages.py "dist/linux/$TARGET/$ARCH" "$TARGET" "$ARCH"
+          test -z "$(ldd "dist/linux/$TARGET/$ARCH/fncpn-ui" | grep 'not found' || true)"
+          if [ '${{ matrix.format }}' = deb ]; then
+            apt-get --simulate install "./dist/linux/$TARGET/$ARCH/"*.deb
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-packages-${{ matrix.target }}-${{ matrix.arch }}
+          path: dist/linux/
+          if-no-files-found: error
+
+  compatibility:
+    needs: [targets, build]
+    name: Compatibility ${{ matrix.target }} ${{ matrix.arch }}
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix: ${{ fromJSON(needs.targets.outputs.compatibility) }}
+    runs-on: ${{ matrix.runner }}
+    container:
+      image: ${{ matrix.image }}
+    defaults:
+      run:
+        shell: bash
+    env:
+      DEBIAN_FRONTEND: noninteractive
+    steps:
+      - name: Bootstrap Debian and Ubuntu
+        if: matrix.family == 'deb'
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends git ca-certificates python3
+      - name: Bootstrap Fedora
+        if: matrix.family == 'fedora'
+        run: dnf install -y git ca-certificates python3
+      - name: Bootstrap openSUSE
+        if: matrix.family == 'suse'
+        run: |
+          zypper --non-interactive refresh
+          zypper --non-interactive install --no-recommends git ca-certificates python3
+      - name: Bootstrap Arch
+        if: matrix.family == 'arch'
+        run: pacman -Syu --noconfirm --needed git ca-certificates python
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: linux-packages-${{ matrix.format }}-${{ matrix.arch }}
+          path: dist/linux
+      - name: Resolve dependencies and check the same shared binaries
+        run: python3 scripts/linux-compatibility.py '${{ matrix.target }}' '${{ matrix.arch }}' dist/linux
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-compat-${{ matrix.target }}-${{ matrix.arch }}
+          path: dist/linux-compat/
+          if-no-files-found: error

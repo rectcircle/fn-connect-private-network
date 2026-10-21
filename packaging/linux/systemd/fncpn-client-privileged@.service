@@ -1,0 +1,30 @@
+[Unit]
+Description=FnCPN privileged client network service for UID %i
+After=network.target dbus.service systemd-resolved.service
+Wants=systemd-resolved.service
+
+[Service]
+Type=exec
+ExecStart=/usr/bin/fncpn client privileged-daemon --allow-uid %i --socket /run/fncpn/%i/privileged.sock --state-dir /var/lib/fncpn/client/%i --log-file /var/log/fncpn/client-privileged-%i.log
+ExecStartPost=/usr/libexec/fncpn/wait-ready client-privileged /run/fncpn/%i/privileged.sock
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=20
+RuntimeDirectory=fncpn/%i
+RuntimeDirectoryMode=0711
+StateDirectory=fncpn/client/%i
+StateDirectoryMode=0700
+LogsDirectory=fncpn
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
+
+[Install]
+WantedBy=multi-user.target

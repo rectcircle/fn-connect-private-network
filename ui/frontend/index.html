@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>FnCPN</title></head>
+<body><div class="window-titlebar" aria-hidden="true">FnCPN</div><main>
+<header><img src="/src/assets/appicon.png" width="40" height="40" alt=""><h1>FnCPN <small id="version"></small></h1></header>
+<section id="login" hidden><h2 data-i18n>登录 fnOS</h2>
+<form id="login-form">
+<div class="credentials"><label for="fnid">FN Connect ID</label><input id="fnid" autocomplete="off" placeholder="home-nas" maxlength="253" required></div>
+<div id="access-row" hidden><label for="access" data-i18n>访问码</label><input id="access" type="password" autocomplete="off"></div>
+<div class="credentials"><label for="username" data-i18n>用户名</label><input id="username" autocomplete="username" required></div>
+<div class="credentials"><label for="password" data-i18n>密码</label><input id="password" type="password" autocomplete="current-password" required></div>
+<div id="otp-row" hidden><label for="otp">OTP</label><span><input id="otp" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="[0-9]{6}"><label class="trust"><input id="trust" type="checkbox"><span data-i18n>信任此设备</span></label></span></div>
+<div class="login-actions"><button id="submit-login" type="submit" class="primary"><img class="symbol" data-symbol="arrow.right" alt=""><span class="button-label" data-i18n>登录并连接</span></button><button id="back" type="button" hidden><img class="symbol" data-symbol="arrow.left" alt=""><span class="button-label" data-i18n>上一步</span></button><button id="return" type="button" hidden><img class="symbol" data-symbol="arrow.left" alt=""><span class="button-label" data-i18n>返回连接详情</span></button></div>
+</form><p id="login-error" role="alert"></p></section>
+<section id="details" hidden><h2 id="identity"></h2><p id="status" role="status" aria-live="polite"></p>
+<dl><dt data-i18n>连接路径</dt><dd id="path"></dd><dt data-i18n>隧道地址</dt><dd id="address"></dd><dt data-i18n>网络接口</dt><dd id="interface"></dd><dt data-i18n>最近握手</dt><dd id="handshake"></dd><dt>DNS</dt><dd class="dns-value"><span id="dns"></span> <button id="copy-dns" class="icon" title="复制 DNS 后缀"><img class="symbol" data-symbol="doc.on.doc" alt=""></button></dd><dt data-i18n>特权服务</dt><dd id="root"></dd><dt data-i18n>IPv6 检测</dt><dd id="direct"></dd><dt>NAS IP</dt><dd class="nas-value"><span id="nas"></span> <button id="open-nas" class="icon" title="在浏览器中打开 NAS 管理页面"><img class="symbol" data-symbol="arrow.up.right.square" alt=""></button></dd></dl>
+<div class="actions"><button id="primary" class="primary"><img class="symbol" data-symbol="stop.fill" alt=""><span class="button-label"></span></button><button id="relogin"><img class="symbol" data-symbol="person.badge.key" alt=""><span class="button-label" data-i18n>重新登录</span></button><button id="retry"><img class="symbol" data-symbol="arrow.clockwise" alt=""><span class="button-label" data-i18n>重新检测</span></button></div>
+<label for="diagnostics" class="caption" data-i18n>诊断详情</label><pre id="diagnostics" tabindex="0"></pre></section>
+<footer><div><button id="change"><img class="symbol" data-symbol="arrow.left.arrow.right" alt=""><span class="button-label" data-i18n>更换 NAS</span></button><button id="admin"><img class="symbol" data-symbol="globe" alt=""><span class="button-label" data-i18n>管理后台</span></button><span id="spinner" hidden aria-label="Working">◌</span><button id="copy" class="tool-icon" title="复制诊断信息"><img class="symbol" data-symbol="doc.on.doc" alt=""></button><button id="logs" class="tool-icon" title="打开日志"><img class="symbol" data-symbol="folder" alt=""></button><button id="refresh" class="tool-icon" title="刷新状态"><img class="symbol" data-symbol="arrow.clockwise" alt=""></button></div><button id="quit"><img class="symbol" data-symbol="power" alt=""><span class="button-label" data-i18n>退出</span></button></footer>
+<p id="notice" role="alert"></p>
+</main><script type="module" src="/src/main.js"></script></body></html>

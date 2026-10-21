@@ -16,7 +16,9 @@ Windows 日常开发只需要三个入口：
 
 | 组 | 脚本 | 用途 |
 |---|---|---|
+| macOS UI | `build-native-macos.sh`、`build-wails-macos.sh` | 生成完整 App；`macos-app-common.sh` 为共享资源与签名实现，PKG 入口用 `--ui native|wails` 选择，默认 native |
 | macOS/fnOS 构建 | `build-all.sh`、`build-macos-pkg.sh`、`build-fpk.sh`、`install-fnpack.sh` | 平台产物与 fnpack 环境 |
+| Linux | `build-linux-core.sh`、`build-linux-ui.sh`、`test-debian13.sh` | Core 交叉构建、基线容器原生 UI 双包构建、多发行版共用包验证、远端预编译测试；见 [Linux 支持](../docs/linux-support.md) |
 | 共享检查 | `check-release.sh`、`test-fnos-state-permissions.sh` | 跨平台/服务端验收 |
 | 生成资源 | `sync-version.py`、`sync-localizations.py`、`sync-native-localizations.py`、`generate-icons.swift` | 统一版本、翻译与产品图标 |
 | 发布 | `release-version.sh`、`release-manifest.py`、`publish-release.py`、`quark-release.py`、`update-cask.py` | 版本、资产清单、发布和 Homebrew 更新 |
@@ -24,3 +26,5 @@ Windows 日常开发只需要三个入口：
 | 设计预览 | `preview-icon-concepts.swift`、`preview-private-network-icon.swift` | 图标方案预览，不参与 Windows setup |
 
 不应将共享或其他平台脚本当成 Windows 迁移残留删除。新增 Windows 内部辅助放到 `windows/`，优先接入统一入口，不再增加平行的常用入口。
+
+Nix 源码构建、模块配置和依赖 hash 更新见 [Nix 支持](../docs/nix.md)。

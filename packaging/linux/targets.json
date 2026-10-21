@@ -1,0 +1,492 @@
+{
+  "reviewedOn": "2026-10-21",
+  "targets": [
+    {
+      "id": "debian12",
+      "label": "Debian 12",
+      "osID": "debian",
+      "osVersion": "12",
+      "image": "debian:12",
+      "format": "deb",
+      "architectures": [
+        "amd64",
+        "arm64"
+      ],
+      "coreDependencies": [
+        "systemd",
+        "dbus",
+        "sudo",
+        "procps",
+        "util-linux",
+        "systemd-resolved"
+      ],
+      "uiDependencies": [
+        "libgtk-3-0",
+        "libwebkit2gtk-4.1-0",
+        "libayatana-appindicator3-1",
+        "polkitd",
+        "pkexec",
+        "xdg-utils"
+      ],
+      "buildDependencies": [
+        "build-essential",
+        "pkg-config",
+        "libgtk-3-dev",
+        "libwebkit2gtk-4.1-dev",
+        "libayatana-appindicator3-dev",
+        "dpkg-dev",
+        "dbus",
+        "desktop-file-utils",
+        "libarchive-tools",
+        "binutils"
+      ]
+    },
+    {
+      "id": "debian13",
+      "label": "Debian 13",
+      "osID": "debian",
+      "osVersion": "13",
+      "image": "debian:13",
+      "format": "deb",
+      "architectures": [
+        "amd64",
+        "arm64"
+      ],
+      "coreDependencies": [
+        "systemd",
+        "dbus",
+        "sudo",
+        "procps",
+        "util-linux",
+        "systemd-resolved"
+      ],
+      "uiDependencies": [
+        "libgtk-3-0t64",
+        "libwebkit2gtk-4.1-0",
+        "libayatana-appindicator3-1",
+        "polkitd",
+        "pkexec",
+        "xdg-utils"
+      ],
+      "buildDependencies": [
+        "build-essential",
+        "pkg-config",
+        "libgtk-3-dev",
+        "libwebkit2gtk-4.1-dev",
+        "libayatana-appindicator3-dev",
+        "dpkg-dev",
+        "dbus",
+        "desktop-file-utils",
+        "libarchive-tools",
+        "binutils"
+      ]
+    },
+    {
+      "id": "ubuntu22.04",
+      "label": "Ubuntu 22.04",
+      "osID": "ubuntu",
+      "osVersion": "22.04",
+      "image": "ubuntu:22.04",
+      "format": "deb",
+      "architectures": [
+        "amd64",
+        "arm64"
+      ],
+      "coreDependencies": [
+        "systemd",
+        "dbus",
+        "sudo",
+        "procps",
+        "util-linux"
+      ],
+      "uiDependencies": [
+        "libgtk-3-0",
+        "libwebkit2gtk-4.1-0",
+        "libayatana-appindicator3-1",
+        "policykit-1",
+        "xdg-utils"
+      ],
+      "buildDependencies": [
+        "build-essential",
+        "pkg-config",
+        "libgtk-3-dev",
+        "libwebkit2gtk-4.1-dev",
+        "libayatana-appindicator3-dev",
+        "dpkg-dev",
+        "dbus",
+        "desktop-file-utils",
+        "libarchive-tools",
+        "binutils"
+      ]
+    },
+    {
+      "id": "ubuntu24.04",
+      "label": "Ubuntu 24.04",
+      "osID": "ubuntu",
+      "osVersion": "24.04",
+      "image": "ubuntu:24.04",
+      "format": "deb",
+      "architectures": [
+        "amd64",
+        "arm64"
+      ],
+      "coreDependencies": [
+        "systemd",
+        "dbus",
+        "sudo",
+        "procps",
+        "util-linux",
+        "systemd-resolved"
+      ],
+      "uiDependencies": [
+        "libgtk-3-0t64",
+        "libwebkit2gtk-4.1-0",
+        "libayatana-appindicator3-1",
+        "polkitd",
+        "pkexec",
+        "xdg-utils"
+      ],
+      "buildDependencies": [
+        "build-essential",
+        "pkg-config",
+        "libgtk-3-dev",
+        "libwebkit2gtk-4.1-dev",
+        "libayatana-appindicator3-dev",
+        "dpkg-dev",
+        "dbus",
+        "desktop-file-utils",
+        "libarchive-tools",
+        "binutils"
+      ]
+    },
+    {
+      "id": "ubuntu26.04",
+      "label": "Ubuntu 26.04",
+      "osID": "ubuntu",
+      "osVersion": "26.04",
+      "image": "ubuntu:26.04",
+      "format": "deb",
+      "architectures": [
+        "amd64",
+        "arm64"
+      ],
+      "coreDependencies": [
+        "systemd",
+        "dbus",
+        "sudo",
+        "procps",
+        "util-linux",
+        "systemd-resolved"
+      ],
+      "uiDependencies": [
+        "libgtk-3-0t64",
+        "libwebkit2gtk-4.1-0",
+        "libayatana-appindicator3-1",
+        "polkitd",
+        "pkexec",
+        "xdg-utils"
+      ],
+      "buildDependencies": [
+        "build-essential",
+        "pkg-config",
+        "libgtk-3-dev",
+        "libwebkit2gtk-4.1-dev",
+        "libayatana-appindicator3-dev",
+        "dpkg-dev",
+        "dbus",
+        "desktop-file-utils",
+        "libarchive-tools",
+        "binutils"
+      ]
+    },
+    {
+      "id": "ubuntu26.10",
+      "label": "Ubuntu 26.10",
+      "osID": "ubuntu",
+      "osVersion": "26.10",
+      "image": "ubuntu:26.10",
+      "format": "deb",
+      "architectures": [
+        "amd64",
+        "arm64"
+      ],
+      "coreDependencies": [
+        "systemd",
+        "dbus",
+        "sudo",
+        "procps",
+        "util-linux",
+        "systemd-resolved"
+      ],
+      "uiDependencies": [
+        "libgtk-3-0t64",
+        "libwebkit2gtk-4.1-0",
+        "libayatana-appindicator3-1",
+        "polkitd",
+        "pkexec",
+        "xdg-utils"
+      ],
+      "buildDependencies": [
+        "build-essential",
+        "pkg-config",
+        "libgtk-3-dev",
+        "libwebkit2gtk-4.1-dev",
+        "libayatana-appindicator3-dev",
+        "dpkg-dev",
+        "dbus",
+        "desktop-file-utils",
+        "libarchive-tools",
+        "binutils"
+      ]
+    },
+    {
+      "id": "fedora43",
+      "label": "Fedora 43",
+      "osID": "fedora",
+      "osVersion": "43",
+      "image": "fedora:43",
+      "format": "rpm",
+      "architectures": [
+        "amd64",
+        "arm64"
+      ],
+      "coreDependencies": [
+        "systemd",
+        "systemd-resolved",
+        "dbus",
+        "sudo",
+        "procps-ng",
+        "util-linux"
+      ],
+      "uiDependencies": [
+        "gtk3",
+        "webkit2gtk4.1",
+        "libayatana-appindicator-gtk3",
+        "polkit",
+        "xdg-utils"
+      ],
+      "buildDependencies": [
+        "gcc",
+        "gcc-c++",
+        "make",
+        "pkgconf-pkg-config",
+        "gtk3-devel",
+        "webkit2gtk4.1-devel",
+        "libayatana-appindicator-gtk3-devel",
+        "rpm-build",
+        "desktop-file-utils",
+        "libarchive",
+        "binutils",
+        "bsdtar"
+      ]
+    },
+    {
+      "id": "fedora44",
+      "label": "Fedora 44",
+      "osID": "fedora",
+      "osVersion": "44",
+      "image": "fedora:44",
+      "format": "rpm",
+      "architectures": [
+        "amd64",
+        "arm64"
+      ],
+      "coreDependencies": [
+        "systemd",
+        "systemd-resolved",
+        "dbus",
+        "sudo",
+        "procps-ng",
+        "util-linux"
+      ],
+      "uiDependencies": [
+        "gtk3",
+        "webkit2gtk4.1",
+        "libayatana-appindicator-gtk3",
+        "polkit",
+        "xdg-utils"
+      ],
+      "buildDependencies": [
+        "gcc",
+        "gcc-c++",
+        "make",
+        "pkgconf-pkg-config",
+        "gtk3-devel",
+        "webkit2gtk4.1-devel",
+        "libayatana-appindicator-gtk3-devel",
+        "rpm-build",
+        "desktop-file-utils",
+        "libarchive",
+        "binutils",
+        "bsdtar"
+      ]
+    },
+    {
+      "id": "opensuse-leap16.0",
+      "label": "openSUSE Leap 16.0",
+      "osID": "opensuse-leap",
+      "osVersion": "16.0",
+      "image": "opensuse/leap:16.0",
+      "format": "rpm",
+      "architectures": [
+        "amd64",
+        "arm64"
+      ],
+      "coreDependencies": [
+        "systemd",
+        "systemd-resolved",
+        "dbus-1",
+        "sudo",
+        "procps",
+        "util-linux"
+      ],
+      "uiDependencies": [
+        "libgtk-3-0",
+        "libwebkit2gtk-4_1-0",
+        "libayatana-appindicator3-1",
+        "polkit",
+        "xdg-utils"
+      ],
+      "buildDependencies": [
+        "gcc",
+        "gcc-c++",
+        "make",
+        "pkg-config",
+        "pkgconfig(gtk+-3.0)",
+        "pkgconfig(webkit2gtk-4.1)",
+        "pkgconfig(ayatana-appindicator3-0.1)",
+        "rpm-build",
+        "desktop-file-utils",
+        "bsdtar",
+        "binutils"
+      ]
+    },
+    {
+      "id": "opensuse-tumbleweed",
+      "label": "openSUSE Tumbleweed",
+      "osID": "opensuse-tumbleweed",
+      "osVersion": "",
+      "image": "opensuse/tumbleweed:latest",
+      "format": "rpm",
+      "architectures": [
+        "amd64",
+        "arm64"
+      ],
+      "coreDependencies": [
+        "systemd",
+        "systemd-resolved",
+        "dbus-1",
+        "sudo",
+        "procps",
+        "util-linux"
+      ],
+      "uiDependencies": [
+        "libgtk-3-0",
+        "libwebkit2gtk-4_1-0",
+        "libayatana-appindicator3-1",
+        "polkit",
+        "xdg-utils"
+      ],
+      "buildDependencies": [
+        "gcc",
+        "gcc-c++",
+        "make",
+        "pkg-config",
+        "pkgconfig(gtk+-3.0)",
+        "pkgconfig(webkit2gtk-4.1)",
+        "pkgconfig(ayatana-appindicator3-0.1)",
+        "rpm-build",
+        "desktop-file-utils",
+        "bsdtar",
+        "binutils"
+      ]
+    },
+    {
+      "id": "archlinux",
+      "label": "Arch Linux (rolling)",
+      "osID": "arch",
+      "osVersion": "",
+      "image": "archlinux:base",
+      "format": "archlinux",
+      "architectures": [
+        "amd64"
+      ],
+      "coreDependencies": [
+        "systemd",
+        "dbus",
+        "sudo",
+        "procps-ng",
+        "util-linux"
+      ],
+      "uiDependencies": [
+        "gtk3",
+        "webkit2gtk-4.1",
+        "libayatana-appindicator",
+        "polkit",
+        "xdg-utils"
+      ],
+      "buildDependencies": [
+        "base-devel",
+        "pkgconf",
+        "gtk3",
+        "webkit2gtk-4.1",
+        "libayatana-appindicator",
+        "desktop-file-utils",
+        "libarchive",
+        "binutils"
+      ]
+    }
+  ],
+  "bundles": {
+    "deb": {
+      "baseline": "ubuntu22.04",
+      "architectures": [
+        "amd64",
+        "arm64"
+      ],
+      "coreDependencies": [
+        "systemd (>= 249)",
+        "systemd-resolved | systemd (<< 252)",
+        "dbus",
+        "sudo",
+        "procps",
+        "util-linux"
+      ],
+      "uiDependencies": [
+        "libgtk-3-0 | libgtk-3-0t64",
+        "libwebkit2gtk-4.1-0",
+        "libayatana-appindicator3-1",
+        "polkitd | policykit-1",
+        "pkexec | policykit-1",
+        "xdg-utils"
+      ]
+    },
+    "rpm": {
+      "baseline": "opensuse-leap16.0",
+      "architectures": [
+        "amd64",
+        "arm64"
+      ],
+      "coreDependencies": [
+        "systemd",
+        "systemd-resolved",
+        "sudo",
+        "util-linux",
+        "/usr/bin/pkill",
+        "/usr/bin/pgrep",
+        "/usr/bin/getent",
+        "/usr/bin/dbus-send"
+      ],
+      "uiDependencies": [
+        "/usr/bin/pkexec",
+        "/usr/bin/xdg-open"
+      ]
+    },
+    "archlinux": {
+      "baseline": "archlinux",
+      "architectures": [
+        "amd64"
+      ]
+    }
+  }
+}

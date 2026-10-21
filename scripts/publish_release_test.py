@@ -6,6 +6,7 @@ import os
 import pathlib
 import tempfile
 import unittest
+from linux_support import release_packages
 from unittest.mock import patch
 
 spec = importlib.util.spec_from_file_location('publisher', pathlib.Path(__file__).with_name('publish-release.py'))
@@ -14,7 +15,7 @@ spec.loader.exec_module(publisher)
 
 
 class PublicationTest(unittest.TestCase):
-    def exercise(self, draft, corrupt=False, publish=True, version="1.0.0", flattened=False, missing_architecture=None):
+    def exercise(self, draft, corrupt=False, publish=True, version="1.0.0", flattened=False, missing_architecture=None, include_linux=False):
         with tempfile.TemporaryDirectory() as temporary:
             root = pathlib.Path(temporary)
             previous = pathlib.Path.cwd()
@@ -37,6 +38,13 @@ class PublicationTest(unittest.TestCase):
                     sha = hashlib.sha256(architecture.encode()).hexdigest()
                     sources[name] = source
                     artifacts.append({'file': name, 'path': f'windows/{architecture}/{name}', 'sha256': sha})
+                if include_linux:
+                    for target,architecture,component,name in release_packages(version):
+                        source=out/'linux'/target/architecture/name
+                        source.parent.mkdir(parents=True,exist_ok=True)
+                        content=name.encode();source.write_bytes(content)
+                        sources[name]=source
+                        artifacts.append({'file':name,'path':source.relative_to(out).as_posix(),'sha256':hashlib.sha256(content).hexdigest()})
                 (out / f'release-{version}.json').write_text(json.dumps({'version': version, 'commit': 'commit', 'artifacts': artifacts}))
                 (out / f'SHA256SUMS-{version}').write_text(''.join(f"{a['sha256']}  {a['file']}\n" for a in artifacts))
                 calls = []
@@ -124,6 +132,13 @@ class PublicationTest(unittest.TestCase):
 
     def test_downloaded_release_assets_can_be_verified_from_flat_layout(self):
         self.assertEqual(self.exercise(True, publish=False, flattened=True), ['edit', 'upload'])
+
+    def test_complete_linux_release_stays_a_draft(self):
+        self.assertEqual(self.exercise(None,publish=False,version='1.1.2',include_linux=True),['create','upload'])
+
+    def test_linux_release_requires_all_targets_and_components(self):
+        with self.assertRaisesRegex(SystemExit, 'Linux'):
+            self.exercise(None, publish=False, version='1.1.2')
 
     def test_inventory_missing_windows_architecture_is_rejected(self):
         with self.assertRaisesRegex(SystemExit, 'missing required Windows MSI assets'):

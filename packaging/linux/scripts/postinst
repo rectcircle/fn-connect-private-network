@@ -1,0 +1,44 @@
+#!/bin/sh
+set -eu
+[ "${1:-}" = configure ] || exit 0
+# Restore standard labels where SELinux is present; never disable enforcement.
+if command -v restorecon >/dev/null 2>&1; then
+ restorecon /usr/bin/fncpn /usr/bin/fncpn-linux-setup /usr/libexec/fncpn/enable-client /usr/libexec/fncpn/wait-ready
+fi
+if [ -d /run/systemd/system ]; then
+ systemctl daemon-reload
+ root_record=/var/lib/fncpn/package-maintenance/active-root-units
+ if [ -f "$root_record" ]; then
+  sort -u "$root_record" | while IFS= read -r unit; do
+   case "$unit" in fncpn-client-privileged@*.service) ;; *) continue ;; esac
+   uid=${unit#fncpn-client-privileged@}; uid=${uid%.service}
+   case "$uid" in ''|*[!0-9]*) continue ;; esac
+   systemctl start "$unit"
+  done
+  rm -f "$root_record"
+ fi
+fi
+# Reload all logged-in user managers, including currently inactive clients.
+for directory in /run/user/[0-9]*; do
+ [ -S "$directory/bus" ] || continue
+ uid=${directory##*/}
+ case "$uid" in *[!0-9]*) continue ;; esac
+ user=$(getent passwd "$uid" | cut -d: -f1)
+ [ -n "$user" ] || continue
+ runuser -u "$user" -- env XDG_RUNTIME_DIR="$directory" DBUS_SESSION_BUS_ADDRESS="unix:path=$directory/bus" systemctl --user daemon-reload
+done
+# Upgrade only the services which were running; preserve config, identity and intent.
+record=/var/lib/fncpn/package-maintenance/active-users
+if [ -f "$record" ]; then
+ while IFS= read -r uid; do
+  case "$uid" in ''|*[!0-9]*) continue ;; esac
+  user=$(getent passwd "$uid" | cut -d: -f1)
+  [ -n "$user" ] || continue
+  if [ -d /run/systemd/system ]; then systemctl start "fncpn-client-privileged@$uid.service"; fi
+  if [ -S "/run/user/$uid/bus" ]; then
+   runuser -u "$user" -- env XDG_RUNTIME_DIR="/run/user/$uid" DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$uid/bus" systemctl --user daemon-reload
+   runuser -u "$user" -- env XDG_RUNTIME_DIR="/run/user/$uid" DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$uid/bus" systemctl --user start fncpn-client.service
+  fi
+ done < "$record"
+ rm -f "$record"
+fi

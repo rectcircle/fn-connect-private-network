@@ -1,0 +1,41 @@
+#!/bin/sh
+set -eu
+case "${1:-}" in upgrade|remove|deconfigure) ;; *) exit 0 ;; esac
+# Stop UI before local components change. It persists no secrets or network state.
+if command -v pkill >/dev/null 2>&1; then
+ pkill -TERM -x fncpn-ui || [ "$?" = 1 ]
+ count=0
+ while pgrep -x fncpn-ui >/dev/null 2>&1; do
+  count=$((count + 1))
+  if [ "$count" -ge 15 ]; then echo 'FnCPN UI is still running; close it before changing packages.' >&2; exit 1; fi
+  sleep 1
+ done
+fi
+install -d -m 0700 /var/lib/fncpn/package-maintenance
+umask 077
+touch /var/lib/fncpn/package-maintenance/active-users
+for directory in /run/user/[0-9]*; do
+ [ -d "$directory" ] || continue
+ uid=${directory##*/}
+ case "$uid" in *[!0-9]*) continue ;; esac
+ user=$(getent passwd "$uid" | cut -d: -f1)
+ [ -n "$user" ] && [ -S "$directory/bus" ] || continue
+ if runuser -u "$user" -- env XDG_RUNTIME_DIR="$directory" DBUS_SESSION_BUS_ADDRESS="unix:path=$directory/bus" systemctl --user is-active --quiet fncpn-client.service; then
+  printf '%s\n' "$uid" >> /var/lib/fncpn/package-maintenance/active-users
+  runuser -u "$user" -- env XDG_RUNTIME_DIR="$directory" DBUS_SESSION_BUS_ADDRESS="unix:path=$directory/bus" systemctl --user stop fncpn-client.service
+ fi
+done
+if [ -d /run/systemd/system ]; then
+ if [ "${1:-}" = upgrade ]; then
+  systemctl list-units --all --type=service --state=active --no-legend --plain 'fncpn-client-privileged@*.service' |
+   awk '{print $1}' >> /var/lib/fncpn/package-maintenance/active-root-units
+ fi
+ systemctl stop 'fncpn-client-privileged@*.service'
+ if [ "${1:-}" = remove ]; then
+  for unit in /etc/systemd/system/multi-user.target.wants/fncpn-client-privileged@*.service; do
+   [ -L "$unit" ] || continue
+   systemctl disable "${unit##*/}"
+  done
+  rm -f /var/lib/fncpn/package-maintenance/active-users /var/lib/fncpn/package-maintenance/active-root-units
+ fi
+fi

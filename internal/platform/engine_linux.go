@@ -9,10 +9,8 @@ import (
 	"github.com/rectcircle/fn-connect-private-network/internal/privileged"
 )
 
-func NewClientEngine(_ *slog.Logger, _ string) privileged.ClientEngine {
-	return privileged.NewUnavailableClientEngine(
-		"client network engine is only available on macOS",
-	)
+func NewClientEngine(logger *slog.Logger, stateDirectory string) privileged.ClientEngine {
+	return linuxplatform.NewSystemClientEngine(logger, stateDirectory)
 }
 
 func NewServerEngine(
