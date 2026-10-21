@@ -80,29 +80,6 @@ FN Connect 发现响应中的 `port.httpsPort` 会被解析，但当前连接逻
 
 解析语义和平台约束见 [接口契约](interfaces.md#局域网域名解析110)。
 
-## Linux：系统 DNS 失效或所有域名都无法解析
-
-若错误包含 `lookup ... on 127.0.0.53:53: server misbehaving`，先区分系统上游 DNS
-故障与 FnCPN 专用后缀故障。网关/IP 可达而普通公网域名也无法解析，通常需要检查系统 resolver：
-
-```sh
-ip route
-resolvectl status
-resolvectl query github.com
-# 使用 NetworkManager 的系统，检查物理网卡；替换 eth0 为实际接口
-nmcli -f GENERAL.STATE,GENERAL.CONNECTION,IP4.DNS,IP6.DNS device show eth0
-```
-
-若 DHCP DNS 已出现在 NetworkManager 中，但 `resolvectl status` 的物理链路没有上游
-DNS，可由管理员执行 `sudo nmcli general reload dns-full` 重新同步，再复查普通域名。
-这仅适用于 NetworkManager 管理的系统；不要把固定公共 DNS、关闭 IPv6、覆盖
-`/etc/resolv.conf` 或反复重连当作通用修复。其他网络管理器须按各自的 resolved 集成检查。
-
-Linux 分域 DNS 要求 resolved stub；发行版安装 `systemd-resolved` 依赖时可能切换
-`/etc/resolv.conf`，应同时确认原网络管理器继续向 resolved 提供 DHCP 上游。
-若同一物理接口同时被 NetworkManager 和 ifupdown/dhcpcd 管理，或出现重复 DHCP 地址/默认路由，
-先保存配置与日志，再在本地控制台统一管理方式；不要通过唯一的 SSH 会话直接停用网络服务。
-
 ## Linux：系统托盘 / 顶栏没有 FnCPN 图标
 
 FnCPN 的 Linux 托盘使用 AppIndicator / StatusNotifierItem。GNOME 需要相应 Shell 扩展才能在
