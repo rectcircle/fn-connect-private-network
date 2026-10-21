@@ -196,9 +196,6 @@ Nix 在两个 Linux 架构构建 Core/UI、验证模块求值和真实前端启�
 - Linux 托盘图标使用可随主题着色的 SVG；WireGuard/DNS 接口在创建时标记为 NetworkManager
   不管理，避免接管和重复激活。退出等待服务清理，托盘打开传递 Wayland 激活令牌和菜单时间戳。
   前台显示仍受桌面策略约束，不能用容器测试代替真实桌面验收。
-- 最新 Debian 验证中出现过系统 resolved 丢失物理链路上游 DNS：恢复 DHCP DNS 后，
-  GitHub 与 NAS HTTPS 接口恢复。该虚拟机有两个网络管理器同时管理 eth0；
-  尚未确定 DNS 被清空的来源，不能把手动恢复记为根因修复。详见 [验证记录](validation.md)。
 - Linux 包维护脚本、安装脚本、发布完整性与哈希证据测试，以及 Go/UI 单测、vet、前端测试/构建
   和 workflow 静态检查。打包单测中的 UI fixture 不视作实际 UI 构建证明。
 

@@ -164,3 +164,78 @@ footer{border-top:1px solid var(--line)}
 .mirror-heading code{padding:2px 5px;border-radius:3px;background:#f4f8ff;color:var(--ink);font:12px monospace}
 .download-title .download-mirror p{margin:8px 0 0;font-size:10px;line-height:1.7}
 html[lang="en"] .download-mirror{display:none}
+
+/* Download in installation order: server first, one client at a time. */
+.download{display:block;padding:52px 48px;background:#e8f0fc;scroll-margin-top:112px}
+.download-title{margin-bottom:30px}
+.download-title h2{font-size:40px;line-height:1.3;margin:14px 0 10px}
+.download-title>p{margin:0;font-size:14px}
+.download-card{border:1px solid #c8d8ee;border-radius:10px;background:#f8fbff;padding:26px 30px}
+.download-step{font:10px monospace;letter-spacing:1.5px;color:var(--muted);margin-bottom:16px}
+.server-download-content{display:flex;align-items:center;justify-content:space-between;gap:24px}
+.server-download h3{font-size:22px;margin:0}
+.server-download p{font-size:12px;margin:7px 0 0}
+.server-download .button{white-space:nowrap;padding:13px 24px}
+.client-download{margin-top:18px}
+.client-heading{font-size:22px;margin:0 0 20px}
+.download-tabs{display:flex;gap:6px;border-bottom:1px solid #c8d8ee;margin-bottom:25px}
+.download-tabs button{border:0;border-bottom:2px solid transparent;background:transparent;color:var(--muted);padding:12px 20px;font:inherit;font-size:14px;cursor:pointer}
+.download-tabs button[aria-selected="true"]{color:#2455a1;border-bottom-color:#347deb;font-weight:650}
+.download-tabs button:hover{color:#2455a1;background:#edf3fe}
+.download-tabs button:focus-visible,.download-panel:focus-visible{outline:2px solid #347deb;outline-offset:4px}
+.download-panel{max-width:850px;min-height:200px}
+.download-panel .download-row h3{font-size:20px}
+.download-options p{font-size:13px;line-height:1.8}
+.download-options small{font-size:11px;line-height:1.8}
+.download-options .brew{margin:14px 0 0}
+.download-options .brew code{font-size:12px;padding:16px 18px}
+.download-options .brew button{min-width:64px;font-size:12px}
+.download-links{display:flex;flex-wrap:wrap;gap:10px 24px;margin-top:20px;font-size:12px}
+.download-links a,.download-sources>.text-link{text-decoration:underline;text-underline-offset:4px}
+.install-details{margin-top:20px;border-top:1px solid #dbe5f3;padding-top:15px}
+.install-details summary{justify-content:flex-start;gap:14px;font-size:12px;color:var(--muted)}
+.install-details[open] summary span{transform:rotate(45deg)}
+.download-footer{display:flex;align-items:flex-start;justify-content:space-between;gap:36px;margin-top:30px}
+.download-sources>p{font-size:12px;margin:0 0 8px}
+.download-sources>.text-link{font-size:12px}
+.download-sources .download-mirror{margin-top:18px}
+.download-sources .download-mirror p{font-size:11px;margin:8px 0 0}
+.download-footer .install-support{margin:0}
+.download-footer .support-note{font-size:11px;max-width:300px;margin:10px 0 0}
+@media(max-width:700px){
+ .download{padding:30px 20px;scroll-margin-top:84px}
+ .download-title h2{font-size:30px;letter-spacing:-1px}
+ .download-card{padding:22px 18px}
+ .server-download-content{align-items:flex-start;flex-direction:column;gap:18px}
+ .download-tabs{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:0;margin:0 -4px 22px}
+ .download-tabs button{padding:12px 4px;font-size:12px;white-space:normal}
+ .download-panel{min-height:0}
+ .download-row{gap:12px;flex-wrap:wrap}
+ .download-options .brew code{font-size:11px;padding:12px}
+ .download-options .brew button{min-width:46px;font-size:11px}
+ .download-footer{flex-direction:column;gap:24px}
+}
+
+/* Keep release information and support alongside the install selectors. */
+.download{display:grid;grid-template-columns:minmax(0,.85fr) minmax(0,1.15fr);gap:56px;align-items:start}
+.download-title{margin:0}
+.download-title h2{font-size:46px;line-height:1.25;margin:22px 0}
+.download-title>p{margin-bottom:26px}
+.download-sources{margin-bottom:26px}
+.download-title .install-support{margin-top:28px}
+.download-title .support-note{font-size:11px;line-height:1.7;max-width:300px;margin:12px 0 0}
+.download-installations{min-width:0}
+.download-card{padding:24px}
+.server-download-content{gap:16px}
+.server-download h3,.client-heading{font-size:20px}
+.server-download .button{padding:12px 18px}
+.download-tabs button{padding:12px 14px;font-size:13px}
+.download-options .brew code{font-size:11px;padding:14px}
+.download-options .brew button{min-width:48px}
+@media(max-width:1000px){.download{gap:32px;padding:36px 28px}.download-card{padding:22px}.download-tabs button{padding:12px 9px;font-size:12px}}
+@media(max-width:700px){
+ .download{grid-template-columns:1fr;gap:30px;padding:30px 20px}
+ .download-title h2{font-size:36px}
+ .download-card{padding:22px 18px}
+ .download-tabs button{padding:12px 4px;font-size:12px}
+}

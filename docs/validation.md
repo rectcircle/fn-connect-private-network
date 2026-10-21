@@ -25,11 +25,6 @@
   对象路径过滤与一次性消费；该测试通过。真实桌面显示和焦点仍以用户实测为准。
 - 用户曾报告关机等待；上一启动日志中 FnCPN 服务在约 0.4 秒内停止，90 秒等待来自
   Parallels `prlcc` scope。此记录不宣称解决所有关机等待，也未修改 Parallels 配置。
-- 最新 Debian 会话出现物理链路上游 DNS 丢失：网关可达，DHCP DNS 仍由 NetworkManager
-  持有，但 resolved 没有上游。恢复 DHCP 下发 DNS 并刷新 NetworkManager DNS 集成后，
-  GitHub 和 NAS HTTPS 版本入口返回 200。系统同时运行 ifupdown/dhcpcd 与 NetworkManager，
-  eth0 有重复地址和路由；尚无证据确定清空来源，未将该现象归因于 UI 修复，
-  也未把恢复操作记为根因修复。详见 [故障排查](troubleshooting.md#linux系统-dns-失效或所有域名都无法解析)。
 
 待验收边界：其他发行版的真实内核、SELinux/AppArmor 强制模式、GNOME/KDE/Wayland
 桌面集成和 NixOS 主机部署；RPM 正式签名及信任分发；正式历史版本二进制互通矩阵。

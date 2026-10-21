@@ -8,7 +8,13 @@
 python3 -m http.server 4174 --bind 127.0.0.1 --directory website
 ```
 
-打开 <http://127.0.0.1:4174>。连接图和路径切换仅为示意，不建立实际网络连接。Homebrew 复制按钮复制包含 tap 的完整两行命令，Linux 按钮复制下载及执行脚本的完整两行命令，需要 localhost 或 HTTPS 安全上下文；失败时提示从安装文档复制。
+打开 <http://127.0.0.1:4174>，下载区可直接访问 <http://127.0.0.1:4174/#download>。
+下载区采用左右分栏：左侧是全部版本、网盘与捐赠入口，右侧按服务端在上、客户端在下排列；客户端通过 macOS、Windows、Linux、Nix/NixOS Tab 切换。
+浏览器识别到 Mac、Windows 或 Linux 时默认激活对应 Tab；无法识别或移动端默认 macOS，
+用户仍可手动切换。浏览器不能可靠识别 Linux 发行版，Nix 需手动选择。
+连接图和路径切换仅为示意，不建立实际网络连接。Homebrew 复制按钮复制包含 tap 的完整两行命令，Linux 按钮复制下载及执行脚本的完整两行命令，需要 localhost 或 HTTPS 安全上下文；失败时提示从安装文档复制。
+
+平台识别的无依赖测试：`node --test website/download-platform.test.mjs`。
 
 ## Netlify
 

@@ -100,12 +100,8 @@ DNS，可由管理员执行 `sudo nmcli general reload dns-full` 重新同步，
 
 Linux 分域 DNS 要求 resolved stub；发行版安装 `systemd-resolved` 依赖时可能切换
 `/etc/resolv.conf`，应同时确认原网络管理器继续向 resolved 提供 DHCP 上游。
-FnCPN 只设置自身 `fnd*` 接口的路由域和 DNS，且 `DefaultRoute=false`，不应接管公网解析。
 若同一物理接口同时被 NetworkManager 和 ifupdown/dhcpcd 管理，或出现重复 DHCP 地址/默认路由，
 先保存配置与日志，再在本地控制台统一管理方式；不要通过唯一的 SSH 会话直接停用网络服务。
-
-本轮 Debian 虚拟机曾出现上游 DNS 丢失，重新同步后 HTTPS 访问恢复，但清空来源尚未确定。
-此现象及手动恢复不作为 FnCPN 根因修复的证据，见 [验证记录](validation.md)。
 
 ## Linux：系统托盘 / 顶栏没有 FnCPN 图标
 

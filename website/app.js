@@ -1,3 +1,5 @@
+import {detectDownloadPlatform} from './download-platform.mjs';
+
 const translations = {
   '● 连接示意':'● Connection illustration','macOS / Windows / Linux':'macOS / Windows / Linux','fnOS x86_64 & ARM64':'fnOS x86_64 & ARM64','MIT 开源':'MIT open source',' · fnOS x86_64 & ARM64 · MIT 开源':' · fnOS x86_64 & ARM64 · MIT open source','fnOS 服务端':'fnOS server','x86_64 / ARM64 · 需要启用 FN Connect':'x86_64 / ARM64 · FN Connect required','。':'.','在外，也在网内':'Your network, anywhere','共享 NAS':'Shared NAS','私有网络 · 已连接':'Private network · Connected','本地局域网':'Local network','个人 · 家人 · 团队':'You · Family · Team','内网':'LAN','加密隧道':'Encrypted tunnel','一条连接，回到熟悉的网络。':'One connection brings your familiar network close.','距离变了，访问习惯不必变。':'Your location changes. Your access stays familiar.','NAS 文件':'NAS files','本地局域网':'Local network','原生客户端':'Native apps','自动选路 ↗':'Automatic routing ↗',
   '首页':'Home','产品介绍':'Overview','连接方式':'How it works','开始使用':'Get started','常见问题':'FAQ','下载客户端':'Download','为 fnOS 而生的私有网络':'A private network for fnOS','无论在哪。':'Wherever you are.','你的网络，':'Your network,','就在身旁。':'is close by.','无论是自己的文件、家人的 NAS，还是团队的共享资源，都能从 Mac、Windows 或 Linux 连接 fnOS NAS 和局域网。无需自建中转服务器，无需为每个服务逐一配置端口暴露，也无需手动配置密钥与路由。让熟悉的访问方式，不受地点限制。':'Access your files, family NAS, and team resources from Mac, Windows, or Linux. Connect to fnOS and your LAN without building a relay, exposing services one by one, or configuring keys and routes by hand.','开始连接':'Connect now','在 GitHub 查看源码 ↗':'View source on GitHub ↗','在外，也在网内':'Your network, anywhere','本地局域网':'Local network','个人 · 家人 · 团队':'You · Family · Team','一条连接，回到熟悉的网络。':'One connection brings your familiar network close.',
@@ -23,6 +25,37 @@ Object.assign(translations, {
   "Nix / NixOS 通过 Flake 源码构建，不提供独立二进制包。": "Nix / NixOS builds from Flake sources; no separate binary package is published.",
   "Nix Flake 与 NixOS 模块 ↗": "Nix Flake and NixOS module ↗"
 });
+Object.assign(translations, {
+  '下一站，保持连接。': 'Your next stop, always connected.',
+  '选择你的客户端': 'Choose your client',
+  '客户端系统': 'Client operating system',
+  '版本选择与系统要求': 'Versions and system requirements',
+  '提供无头 Core、桌面 UI 和 NixOS 服务模块，按需声明安装。': 'Includes a headless Core, desktop UI, and NixOS service module for declarative installation.'
+});
+const downloadTabs = [...document.querySelectorAll('[data-download-platform]')];
+function selectDownload(tab, focus = false) {
+  for (const item of downloadTabs) {
+    const selected = item === tab;
+    item.setAttribute('aria-selected', String(selected));
+    item.tabIndex = selected ? 0 : -1;
+    document.getElementById(item.getAttribute('aria-controls')).hidden = !selected;
+  }
+  if (focus) tab.focus();
+}
+for (const [index, tab] of downloadTabs.entries()) {
+  tab.addEventListener('click', () => selectDownload(tab));
+  tab.addEventListener('keydown', event => {
+    let next;
+    if (event.key === 'ArrowRight') next = (index + 1) % downloadTabs.length;
+    if (event.key === 'ArrowLeft') next = (index + downloadTabs.length - 1) % downloadTabs.length;
+    if (event.key === 'Home') next = 0;
+    if (event.key === 'End') next = downloadTabs.length - 1;
+    if (next !== undefined) {event.preventDefault();selectDownload(downloadTabs[next], true);}
+  });
+}
+// An unrecognized/mobile browser can still choose any desktop installer manually.
+const detectedPlatform = detectDownloadPlatform(navigator);
+selectDownload(downloadTabs.find(tab => tab.dataset.downloadPlatform === detectedPlatform) || downloadTabs[0]);
 const languageToggle = document.querySelector('#language-toggle');
 const menuToggle = document.querySelector('#menu-toggle');
 const siteNav = document.querySelector('#site-nav');
