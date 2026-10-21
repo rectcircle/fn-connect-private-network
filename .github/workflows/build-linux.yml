@@ -51,6 +51,7 @@ jobs:
       run:
         shell: bash
     env:
+      PATH: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
       DEBIAN_FRONTEND: noninteractive
       TARGET: ${{ matrix.target }}
       ARCH: ${{ matrix.arch }}
@@ -137,6 +138,7 @@ jobs:
       run:
         shell: bash
     env:
+      PATH: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
       DEBIAN_FRONTEND: noninteractive
     steps:
       - name: Bootstrap Debian and Ubuntu

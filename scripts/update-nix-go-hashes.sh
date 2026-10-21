@@ -4,7 +4,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TEMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TEMP_DIR"' EXIT
 mkdir -p "$TEMP_DIR/source/ui"
-cp "$ROOT_DIR/go.mod" "$ROOT_DIR/go.sum" "$TEMP_DIR/source/"
+cp "$ROOT_DIR/go.mod" "$ROOT_DIR/go.sum" "$ROOT_DIR/LICENSE" "$TEMP_DIR/source/"
 cp -R "$ROOT_DIR/cmd" "$ROOT_DIR/internal" "$TEMP_DIR/source/"
 # Copy only source; caches and generated binaries cannot affect vendoring.
 tar -C "$ROOT_DIR/ui" --exclude=node_modules --exclude=vendor --exclude=build --exclude=dist -cf - . | tar -C "$TEMP_DIR/source/ui" -xf -
