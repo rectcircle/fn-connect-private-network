@@ -11,6 +11,7 @@ import subprocess
 import tempfile
 import urllib.request
 import zipfile
+from linux_support import release_packages
 
 REPOSITORY = 'rectcircle/fn-connect-private-network'
 CLI_VERSION = '1.0.24-29460f9'
@@ -146,8 +147,10 @@ def inventory(directory, tag, release, commit):
     required = {f'fncpn-{version}-{system}-{arch}{suffix}'
                 for system, suffix in [('macos', '-unsigned.pkg'), ('windows', '-unsigned.msi'), ('fnos', '.fpk')]
                 for arch in ('arm64', 'x64')}
-    if len(artifacts) != 6 or {a['file'] for a in artifacts} != required:
-        raise ValueError('Release must contain exactly six platform installers')
+    if tuple(map(int, version.split('.'))) >= (1, 1, 2):
+        required.update(name for _, _, _, name in release_packages(version))
+    if len(artifacts) != len(required) or {a['file'] for a in artifacts} != required:
+        raise ValueError('Release installers do not match the supported platform inventory')
     names = required | {manifest_name, sums_name}
     assets = release['assets']
     if len(assets) != len(names) or {a['name'] for a in assets} != names:

@@ -55,8 +55,8 @@ bash install-fncpn-linux.sh --type all --version 1.1.2
 bash install-fncpn-linux.sh --type core --version 1.1.2
 ```
 
-安装包从 **1.1.2** 开始提供；该版本未公开前，latest 可能没有 Linux 包，脚本会报错，
-不会自动改装草稿。指定草稿或读取私有 Release 时，需要先通过环境变量 `GH_TOKEN`
+Linux 安装包从 **1.1.2** 开始提供；latest 获取最新公开正式版，不会自动改装草稿。
+指定草稿或读取私有 Release 时，需要先通过环境变量 `GH_TOKEN`
 （或 `GITHUB_TOKEN`）提供有读取权限的 GitHub token。
 
 脚本校验 Release 的 SHA256，再使用 apt、dnf、zypper 或 pacman 安装并解析运行依赖；

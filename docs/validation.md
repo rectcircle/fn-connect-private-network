@@ -4,10 +4,24 @@
 产品要求见 [产品需求](product.md)，升级保证见 [版本契约](versioning-and-compatibility.md)。
 自动化通过、用户确认和带日志的实测分别记录；旧版证据不代表新版的所有专项通过。
 
+## 1.1.2 正式发布验收（2026-10-22）
+
+- 最终发布 commit 为 `c3fd6b2e67243ff1cafde2d2ec3ab5e4c11d210d`，
+  [草稿构建 39634507085](https://github.com/rectcircle/fn-connect-private-network/actions/runs/39634507085)
+  成功，包含 21 组 Linux 发行版/架构验证、双架构 Nix 构建及 RPM 签名检查。
+- 独立下载 18 个发布资产，16 个安装包 SHA256 与清单逐项匹配，清单 commit 与 tag 一致；
+  4 个 RPM 在只含项目公钥的临时密钥库中验签通过。公开沿用这批产物，不重新构建。
+- Debian 13 arm64 成套覆盖安装最终 Core/UI，配置哈希不变，`dpkg -V` 无差异，
+  用户服务、特权服务、UI 和托盘启动。用户确认“验证无问题”，并确认兼容验收无问题后授权公开。
+  兼容验收按用户确认记录，不补写未提供的逐项历史二进制组合、日志或额外平台实测。
+- GitHub Release 已公开，Homebrew Cask 更新成功。首次夸克镜像因旧脚本仍要求恰好 6 个安装包而在上传前失败；
+  镜像工具现按版本及 Linux 支持矩阵校验完整安装包清单，独立镜像任务重试不重建或覆盖 GitHub 资产。
+- 历史候选记录及其他发行版真实桌面/内核、NixOS 主机集成的验证边界保留如下。
+
 ## 1.1.2 Linux 候选与 Debian 验证（2026-10-21）
 
-本轮仍为未公开草稿，macOS 默认原生 UI，Linux 使用 Wails v2。最后一轮文档与诊断样式
-更新尚须由新草稿 CI 验证；以下已完成记录对应更新前的候选，不预先宣称新 commit 通过。
+以下为 2026-10-21 的历史候选记录；最终发布验收见上一节。macOS 默认原生 UI，
+Linux 使用 Wails v2，不将历史候选的验证结果扩大为最终 commit 的新增实测。
 
 - [草稿构建 39614395493](https://github.com/rectcircle/fn-connect-private-network/actions/runs/39614395493)
   对应 `2a28a23366347f8415a7286cca2b5e4efff6f313`，构建成功。5 组基线原生构建
@@ -27,7 +41,7 @@
   Parallels `prlcc` scope。此记录不宣称解决所有关机等待，也未修改 Parallels 配置。
 
 待验收边界：其他发行版的真实内核、SELinux/AppArmor 强制模式、GNOME/KDE/Wayland
-桌面集成和 NixOS 主机部署；签名 RPM 的新一轮草稿验证；正式历史版本二进制互通矩阵。
+桌面集成和 NixOS 主机部署；签名 RPM 的最终 CI 验证及用户兼容验收确认已补充于上一节。
 容器共享 runner 内核，虚拟 X11 的启动检查不能证明各发行版桌面或内核行为。
 
 ## 1.1.1 认证兼容修复与候选验收（2026-10-20）

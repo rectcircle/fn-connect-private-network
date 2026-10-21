@@ -141,22 +141,40 @@ class MirrorTest(unittest.TestCase):
 
 
 class InventoryTest(unittest.TestCase):
-    def exercise(self, tamper=None):
+    def exercise(self, tamper=None, version='1.0.10'):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             artifacts = []
             for system, suffix in [('macos', '-unsigned.pkg'), ('windows', '-unsigned.msi'), ('fnos', '.fpk')]:
                 for arch in ('arm64', 'x64'):
-                    name = f'fncpn-1.0.10-{system}-{arch}{suffix}'
+                    name = f'fncpn-{version}-{system}-{arch}{suffix}'
                     (root/name).write_bytes(name.encode())
                     artifacts.append({'file':name, 'sha256':mirror.digest(root/name)})
-            (root/'release-1.0.10.json').write_text(json.dumps({'version':'1.0.10', 'commit':'abc', 'channel':'stable','artifacts':artifacts}))
-            (root/'SHA256SUMS-1.0.10').write_text(''.join(f"{a['sha256']}  {a['file']}\n" for a in artifacts))
+            if tuple(map(int, version.split('.'))) >= (1, 1, 2):
+                for _, _, _, name in mirror.release_packages(version):
+                    (root/name).write_bytes(name.encode())
+                    artifacts.append({'file':name,'sha256':mirror.digest(root/name)})
+            (root/f'release-{version}.json').write_text(json.dumps({'version':version, 'commit':'abc', 'channel':'stable','artifacts':artifacts}))
+            (root/f'SHA256SUMS-{version}').write_text(''.join(f"{a['sha256']}  {a['file']}\n" for a in artifacts))
             release={'assets':[{'name':p.name,'size':p.stat().st_size,'digest':'sha256:'+mirror.digest(p)} for p in root.iterdir()]}
             if tamper: tamper(root, release)
-            return mirror.inventory(root, 'v1.0.10', release, 'abc')
+            return mirror.inventory(root, 'v'+version, release, 'abc')
 
     def test_valid_inventory(self): self.assertEqual(len(self.exercise()), 8)
+    def test_linux_release_has_all_18_assets(self):
+        self.assertEqual(len(self.exercise(version='1.1.2')),18)
+
+    def test_linux_inventory_missing_component_duplicate_or_unknown_asset_rejected(self):
+        for mode in ('missing','duplicate','extra'):
+            def tamper(root, release):
+                path=root/'release-1.1.2.json';manifest=json.loads(path.read_text())
+                if mode=='missing':manifest['artifacts'].pop()
+                elif mode=='duplicate':manifest['artifacts'][-1]=manifest['artifacts'][0]
+                else:manifest['artifacts'].append({'file':'unknown.rpm','sha256':'0'*64})
+                path.write_text(json.dumps(manifest))
+            with self.subTest(mode=mode), self.assertRaisesRegex(ValueError,'platform inventory'):
+                self.exercise(tamper,version='1.1.2')
+
     def test_modified_bytes_rejected(self):
         with self.assertRaises(ValueError):
             self.exercise(lambda root, release:(root/'fncpn-1.0.10-macos-arm64-unsigned.pkg').write_bytes(b'wrong'))
