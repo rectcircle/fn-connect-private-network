@@ -104,3 +104,15 @@ char *fn_symbols(void) {
   return strdup([[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding].UTF8String);
  }
 }
+
+void fn_present_main(void) {
+ dispatch_async(dispatch_get_main_queue(), ^{
+  for (NSWindow *window in NSApp.windows) {
+   if ([window.title isEqualToString:@"FnCPN"]) {
+    [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
+    [window deminiaturize:nil]; [window makeKeyAndOrderFront:nil];
+    [NSApp activateIgnoringOtherApps:YES]; break;
+   }
+  }
+ });
+}

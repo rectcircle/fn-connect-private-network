@@ -32,6 +32,10 @@ type App struct {
 	privilegedNotified bool
 	startupError       string
 	smokeResult        string
+	quitting           bool
+	startupContext     context.Context
+	startupCancel      context.CancelFunc
+	startupDone        chan struct{}
 }
 
 var desktopApp *App
@@ -41,19 +45,23 @@ func NewApp() *App {
 }
 func (a *App) startup(ctx context.Context) {
 	a.ctx, a.cancel = context.WithCancel(ctx)
+	a.startupContext, a.startupCancel = context.WithCancel(a.ctx)
+	a.startupDone = make(chan struct{})
 	desktopApp = a
 	nativeInit()
 	// Package smoke tests never start services or request privileges.
 	if a.smokeResult != "" {
+		close(a.startupDone)
 		return
 	}
 	go func() {
-		if err := a.startDaemon(); err != nil {
+		if err := a.startDaemon(); err != nil && a.startupContext.Err() == nil {
 			a.mu.Lock()
 			a.startupError = err.Error()
 			a.mu.Unlock()
 			runtime.EventsEmit(a.ctx, "daemon-error", err.Error())
 		}
+		close(a.startupDone)
 		a.watch()
 	}()
 }
@@ -109,6 +117,12 @@ func (a *App) startDaemon() error {
 var allowedMethods = map[string]bool{"diagnose": true, "status": true, "connect": true, "disconnect": true, "retry": true, "continue-remote": true, "authorization-begin": true, "authorization-cancel": true, "authorize-native": true, "detect-access-code": true}
 
 func (a *App) Call(method string, params map[string]any) Reply {
+	a.mu.Lock()
+	quitting := a.quitting
+	a.mu.Unlock()
+	if quitting {
+		return Reply{Error: model.NewError(model.ErrorFailedPrecondition, "client is exiting", false)}
+	}
 	if a.smokeResult != "" {
 		return Reply{Error: model.NewError(model.ErrorUnavailable, "UI smoke test runs without client services", false)}
 	}
@@ -210,7 +224,38 @@ func (a *App) OpenNAS(address string) error {
 func (a *App) OpenLogs() error { return uiOpenLogs() }
 
 func (a *App) Copy(text string) error { return runtime.ClipboardSetText(a.ctx, text) }
-func (a *App) Quit()                  { runtime.Quit(a.ctx) }
+func (a *App) Quit() {
+	go a.quitWith(a.preparePlatformQuit, func() { runtime.Quit(a.ctx) }, func(err error) {
+		a.showMainWindow()
+		runtime.EventsEmit(a.ctx, "daemon-error", err.Error())
+	})
+}
+
+func (a *App) quitWith(stop func(context.Context) error, closeUI func(), report func(error)) {
+	a.mu.Lock()
+	if a.quitting {
+		a.mu.Unlock()
+		return
+	}
+	a.quitting = true
+	a.mu.Unlock()
+	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
+	defer cancel()
+	if err := stop(ctx); err != nil {
+		a.mu.Lock()
+		a.quitting = false
+		a.mu.Unlock()
+		report(err)
+		return
+	}
+	closeUI()
+}
+
+func (a *App) showMainWindow() {
+	runtime.WindowUnminimise(a.ctx)
+	runtime.WindowShow(a.ctx)
+	nativePresentMain()
+}
 func (a *App) handleURL(address string) {
 	u, err := url.Parse(address)
 	if err != nil || u.Scheme != "fncpn" || u.Host != "authorize" {
@@ -228,7 +273,7 @@ func (a *App) handleURL(address string) {
 	}
 	a.mu.Unlock()
 	if ready {
-		runtime.WindowShow(a.ctx)
+		a.showMainWindow()
 		runtime.EventsEmit(a.ctx, "authorize", map[string]string{"fnId": id, "requestId": request})
 	}
 }
@@ -239,7 +284,7 @@ func nativeAction(action string) {
 	}
 	switch action {
 	case "show":
-		runtime.WindowShow(a.ctx)
+		a.showMainWindow()
 	case "quit":
 		a.Quit()
 	case "homepage":

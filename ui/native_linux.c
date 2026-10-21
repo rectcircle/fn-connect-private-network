@@ -8,7 +8,24 @@ static AppIndicator *indicator;
 static GtkWidget *connection, *relogin, *autostart, *admin_window, *admin_view;
 static int refreshing;
 static const char *label(const char *zh,const char *en){return g_str_has_prefix(g_get_language_names()[0],"zh")?zh:en;}
-static void action(GtkMenuItem *item,gpointer name){if(!refreshing)fnGoAction((char*)name);}
+static gboolean present_main(gpointer event_time){
+ GList *windows=gtk_window_list_toplevels();
+ for(GList *entry=windows;entry;entry=entry->next){
+  GtkWindow *window=GTK_WINDOW(entry->data);
+  if(g_strcmp0(gtk_window_get_title(window),"FnCPN"))continue;
+  gtk_window_deiconify(window);gtk_widget_show(GTK_WIDGET(window));
+  gtk_window_present_with_time(window,GPOINTER_TO_UINT(event_time));
+  break;
+ }
+ g_list_free(windows);return G_SOURCE_REMOVE;
+}
+void fn_present_main(void){g_idle_add(present_main,GUINT_TO_POINTER(GDK_CURRENT_TIME));}
+static void action(GtkMenuItem *item,gpointer name){
+ if(refreshing)return;
+ // Present directly on the GTK callback, retaining the menu activation time.
+ if(!strcmp((const char*)name,"show")){present_main(GUINT_TO_POINTER(gtk_get_current_event_time()));return;}
+ fnGoAction((char*)name);
+}
 static GtkWidget *menu_item(GtkWidget *menu,const char *label,const char *name){GtkWidget *item=gtk_menu_item_new_with_label(label);g_signal_connect(item,"activate",G_CALLBACK(action),(gpointer)name);gtk_menu_shell_append(GTK_MENU_SHELL(menu),item);return item;}
 // macOS template PNGs stay black on GNOME; symbolic SVGs follow the panel theme.
 static gboolean setup(gpointer icon_path){

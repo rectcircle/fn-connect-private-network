@@ -9,6 +9,7 @@ package main
 void fn_init(void);
 void fn_notify_root(void);
 void fn_dispose(void);
+void fn_present_main(void);
 void fn_tray(char*,char*,char*,int,int);
 void fn_admin(char*);
 int fn_autostart(void);
@@ -71,3 +72,5 @@ func nativeSymbols() map[string]string {
 	_ = json.Unmarshal([]byte(C.GoString(value)), &symbols)
 	return symbols
 }
+
+func nativePresentMain() { C.fn_present_main() }

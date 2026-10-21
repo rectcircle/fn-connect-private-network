@@ -7,6 +7,7 @@ package main
 #include <stdlib.h>
 void fn_init(char*);
 void fn_dispose(void);
+void fn_present_main(void);
 void fn_tray(char*,char*,char*,int,int,int);
 void fn_admin(char*);
 */
@@ -31,7 +32,8 @@ func nativeInit() {
 	defer C.free(unsafe.Pointer(path))
 	C.fn_init(path)
 }
-func nativeDispose() { C.fn_dispose() }
+func nativeDispose()     { C.fn_dispose() }
+func nativePresentMain() { C.fn_present_main() }
 func nativeTray(state, title, action string, needsLogin, busy bool) {
 	s, t, a := C.CString(state), C.CString(title), C.CString(action)
 	defer C.free(unsafe.Pointer(s))

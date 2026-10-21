@@ -7,7 +7,6 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
 	"github.com/wailsapp/wails/v2/pkg/options/mac"
-	"github.com/wailsapp/wails/v2/pkg/runtime"
 	"log"
 	"os"
 	"path/filepath"
@@ -39,7 +38,7 @@ func main() {
 		Menu:              appMenu, OnStartup: app.startup, OnDomReady: app.ready, OnShutdown: app.shutdown,
 		Mac: &mac.Options{TitleBar: mac.TitleBarHidden(), OnUrlOpen: app.handleURL},
 		SingleInstanceLock: &options.SingleInstanceLock{UniqueId: "cn.rectcircle.fncpn.wails", OnSecondInstanceLaunch: func(data options.SecondInstanceData) {
-			runtime.WindowShow(app.ctx)
+			app.showMainWindow()
 			for _, arg := range data.Args {
 				app.handleURL(arg)
 			}

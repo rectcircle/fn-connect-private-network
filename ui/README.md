@@ -76,8 +76,10 @@ Wails 默认 PKG 目录为 `dist/wails-v2/`；显式设置 `DIST_DIR` 可覆盖�
   `fncpn://authorize/...` 授权唤起、特权服务不可用通知。
 - 管理后台通过现有 `admin-proxy` IPC 在独立 WKWebView 打开。仅接受 daemon 返回的
   loopback HTTP 地址；远程内容不加载 Wails bindings。
-- 自己启动的 daemon 在退出时正常 shutdown/bootout，保留自动连接意图；显式断开
-  则沿用原生 daemon 的断开语义。
+- macOS 自己启动的 daemon 在退出时正常 shutdown/bootout，保留自动连接意图；
+  Linux 的明确“退出”会等待用户 Core 服务停止、清理连接后关闭 UI，同样保留连接意图。
+  停止失败时保留 UI 并显示错误；关闭窗口只隐藏窗口，不停止连接。显式“断开”会
+  清除自动连接意图。托盘“打开”恢复最小化窗口并通过原生窗口 API 请求前台激活。
 
 macOS 专用桥接仅承接系统能力，界面和业务交互仍由 Wails v2 + vanilla 前端实现。
 Linux 的服务、自启和托盘适配已在 Debian 13 阶段实现；Linux 实际编译及安装验证留待 CI 阶段。此 UI 不替代现有 Windows 原生客户端。

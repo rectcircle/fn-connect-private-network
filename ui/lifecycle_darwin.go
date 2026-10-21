@@ -65,3 +65,5 @@ func uiOpenLogs() error {
 	home, _ := os.UserHomeDir()
 	return exec.Command("/usr/bin/open", filepath.Join(home, "Library/Logs/FnCPN")).Run()
 }
+
+func (a *App) preparePlatformQuit(context.Context) error { return nil }
