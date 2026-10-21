@@ -49,9 +49,8 @@ jobs:
           sudo apt-get install -y --no-install-recommends xvfb xauth dbus fonts-dejavu-core libgl1-mesa-dri
           # Ubuntu's runner AppArmor policy can deny the Nix-store bwrap path.
           # Permit user namespaces on this disposable runner; keep WebKit sandboxing.
-          if sysctl kernel.apparmor_restrict_unprivileged_userns >/dev/null 2>&1; then
-            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
-          fi
+          mkdir -p dist/nix-smoke
+          sudo env GITHUB_ACTIONS=true python3 scripts/prepare-linux-sandbox.py | tee dist/nix-smoke/sandbox-policy.json
           ui_path=$(nix build --no-update-lock-file --no-link --print-out-paths .#checks.${{ matrix.system }}.ui)
           python3 scripts/linux-ui-smoke.py "$ui_path/bin/fncpn-ui" dist/nix-smoke "$(cat internal/version/VERSION)" "$(git rev-parse HEAD)"
       - uses: actions/upload-artifact@v4

@@ -191,6 +191,8 @@ jobs:
           FNCPN_COMPAT_IMAGE: ${{ matrix.image }}
         run: |
           mkdir -p 'dist/linux-compat/${{ matrix.target }}-${{ matrix.arch }}'
+          # Docker privileges do not bypass Ubuntu's host userns capability policy.
+          python3 scripts/prepare-linux-sandbox.py | tee 'dist/linux-compat/${{ matrix.target }}-${{ matrix.arch }}/sandbox-policy.json'
           python3 scripts/linux-compatibility.py '${{ matrix.target }}' '${{ matrix.arch }}' dist/linux 2>&1 | tee 'dist/linux-compat/${{ matrix.target }}-${{ matrix.arch }}/install.log'
       - uses: actions/upload-artifact@v4
         if: always()

@@ -12,6 +12,10 @@ spec = importlib.util.spec_from_file_location('compatibility', pathlib.Path(__fi
 compatibility = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(compatibility)
 
+spec_policy = importlib.util.spec_from_file_location('sandbox_policy', pathlib.Path(__file__).with_name('prepare-linux-sandbox.py'))
+sandbox_policy = importlib.util.module_from_spec(spec_policy)
+spec_policy.loader.exec_module(sandbox_policy)
+
 VERSIONS = '''Version definition section '.gnu.version_d' contains 1 entry:
   0x0010: Rev: 1 Flags: BASE Index: 1 Cnt: 1 Name: executable
 Version needs section '.gnu.version_r' contains 3 entries:
@@ -82,6 +86,20 @@ class CompatibilityTest(unittest.TestCase):
             command=run.call_args.args[0]
             self.assertEqual(command[:4],['runuser','-u','fncpn-smoke','--'])
             self.assertIn('--dev',command)
+
+    def test_runner_policy_preparation_is_guarded_and_verified(self):
+        with tempfile.TemporaryDirectory() as directory:
+            policy=pathlib.Path(directory)/'userns-policy'
+            policy.write_text('1\n')
+            with self.assertRaisesRegex(RuntimeError,'restricted to disposable'):
+                sandbox_policy.prepare(policy,github_actions='false')
+            self.assertEqual(policy.read_text(),'1\n')
+            report=sandbox_policy.prepare(policy,github_actions='true')
+            self.assertEqual(report['before'],'1')
+            self.assertEqual(report['after'],'0')
+            self.assertEqual(policy.read_text(),'0\n')
+            report=sandbox_policy.prepare(pathlib.Path(directory)/'absent',github_actions='true')
+            self.assertFalse(report['present'])
 
     def test_reinstall_uses_native_maintenance_transaction(self):
         with patch.object(compatibility, 'run') as run:

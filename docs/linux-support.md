@@ -217,8 +217,12 @@ Core 必须没有动态加载器和动态库依赖；UI 不得包含 RPATH/RUNPA
 
 测试不关闭 WebKit 沙箱。草稿专用的一次性兼容性容器使用 privileged 模式，以支持 Glycin/WebKit 的嵌套
 用户命名空间与 devpts 挂载；UI 仍以普通用户运行，启动前单独验证 bubblewrap
-环境并保存 `sandbox.log`。该模式不用于普通 PR 任务。Nix 的临时
-runner 允许其 Nix store 中的 bubblewrap 创建用户命名空间。Xvfb 使用软件渲染。
+环境并保存 `sandbox.log`。该模式不用于普通 PR 任务。容器与 Nix 任务都先调用
+`prepare-linux-sandbox.py`，在一次性 GitHub runner 上允许非特权用户命名空间中的
+能力操作，避免 Ubuntu 宿主机的 AppArmor 策略阻止 bubblewrap 初始化 loopback。
+准备脚本要求 GitHub Actions 环境及 root 身份，并记录策略调整前后的值到
+`sandbox-policy.json`；不会作为安装包的一部分，也不会在用户安装时执行。
+Nix 同样验证其 Nix store 中的 bubblewrap 环境。Xvfb 使用软件渲染。
 该测试不能替代 GNOME/KDE 托盘、Wayland、实际授权弹窗或不同发行版内核的验收。
 
 成功与失败均上传 `linux-compat-*` 报告，包含镜像标签、OS 信息、已安装包版本、
