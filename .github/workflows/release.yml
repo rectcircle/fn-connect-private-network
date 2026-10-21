@@ -107,6 +107,7 @@ jobs:
     uses: ./.github/workflows/check-nix.yml
     with:
       ref: ${{ inputs.tag || github.ref_name }}
+      build: true
   linux-build:
     if: ${{ !inputs.publish }}
     uses: ./.github/workflows/build-linux.yml

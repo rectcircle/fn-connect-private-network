@@ -31,6 +31,7 @@ type App struct {
 	domReady           bool
 	privilegedNotified bool
 	startupError       string
+	smokeResult        string
 }
 
 var desktopApp *App
@@ -42,6 +43,10 @@ func (a *App) startup(ctx context.Context) {
 	a.ctx, a.cancel = context.WithCancel(ctx)
 	desktopApp = a
 	nativeInit()
+	// Package smoke tests never start services or request privileges.
+	if a.smokeResult != "" {
+		return
+	}
 	go func() {
 		if err := a.startDaemon(); err != nil {
 			a.mu.Lock()
@@ -53,6 +58,9 @@ func (a *App) startup(ctx context.Context) {
 	}()
 }
 func (a *App) ready(context.Context) {
+	if a.smokeResult != "" {
+		return
+	}
 	for _, arg := range platformArguments() {
 		a.handleURL(arg)
 	}
@@ -61,6 +69,10 @@ func (a *App) ready(context.Context) {
 // Ready is called only after vanilla JS has registered its event listeners.
 // DOM-ready alone is too early for initial Linux URL scheme activation.
 func (a *App) Ready() {
+	if a.smokeResult != "" {
+		a.finishSmoke()
+		return
+	}
 	a.mu.Lock()
 	a.domReady = true
 	pending := a.pendingURL
@@ -97,6 +109,9 @@ func (a *App) startDaemon() error {
 var allowedMethods = map[string]bool{"diagnose": true, "status": true, "connect": true, "disconnect": true, "retry": true, "continue-remote": true, "authorization-begin": true, "authorization-cancel": true, "authorize-native": true, "detect-access-code": true}
 
 func (a *App) Call(method string, params map[string]any) Reply {
+	if a.smokeResult != "" {
+		return Reply{Error: model.NewError(model.ErrorUnavailable, "UI smoke test runs without client services", false)}
+	}
 	if !allowedMethods[method] {
 		return Reply{Error: model.NewError(model.ErrorInvalidArgument, "unsupported UI operation", false)}
 	}

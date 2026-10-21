@@ -79,6 +79,8 @@ class ReleaseInventoryTest(unittest.TestCase):
             (lambda m: m['artifacts'][0].update(sha256='0'*64), 'checksum'),
             (lambda m: m.update(_testEvidence='missing'), 'Missing Linux compatibility evidence'),
             (lambda m: m.update(_testEvidence='foreign'), 'compatibility evidence does not match'),
+            (lambda m: m.update(_testEvidence='failed'), 'compatibility evidence does not match'),
+            (lambda m: m.update(_testEvidence='no-ui'), 'compatibility evidence does not match'),
         ):
             with self.subTest(message=message), tempfile.TemporaryDirectory() as directory:
                 root = pathlib.Path(directory)
@@ -102,8 +104,10 @@ class ReleaseInventoryTest(unittest.TestCase):
                 (root/'linux-compat').mkdir()
                 for distro, profile in TARGETS.items():
                     for architecture in profile['architectures']:
-                        evidence={'target':distro,'architecture':architecture,'bundle':profile['format'],'productVersion':version,'commit':'commit','checks':['package-metadata','dependency-resolution','core-version','ui-dynamic-linking'],'artifacts':{package_name(component,version,distro,architecture):hashlib.sha256(b'fixture').hexdigest() for component in ('core','ui')}}
+                        evidence={'target':distro,'architecture':architecture,'bundle':profile['format'],'productVersion':version,'commit':'commit','passed':True,'checks':['package-metadata','dependency-resolution','core-version','ui-dynamic-linking','core-only-install','elf-abi','ui-frontend-handshake','package-reinstall','package-remove'],'artifacts':{package_name(component,version,distro,architecture):hashlib.sha256(b'fixture').hexdigest() for component in ('core','ui')}}
                         if mode == 'foreign': evidence['commit']='other'
+                        if mode == 'failed': evidence['passed']=False
+                        if mode == 'no-ui': evidence['checks'].remove('ui-frontend-handshake')
                         if mode != 'missing': (root/'linux-compat'/f'{distro}-{architecture}.json').write_text(json.dumps(evidence))
                 result=subprocess.run([sys.executable,str(SCRIPT),str(root),version,'commit','arm64'],capture_output=True,text=True)
                 if message:

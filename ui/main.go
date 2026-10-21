@@ -9,6 +9,8 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/options/mac"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 	"log"
+	"os"
+	"path/filepath"
 )
 
 //go:embed all:frontend/dist
@@ -16,6 +18,12 @@ var assets embed.FS
 
 func main() {
 	app := NewApp()
+	if len(os.Args) > 1 && os.Args[1] == "--smoke-test" {
+		if uiPlatform() != "linux" || len(os.Args) != 3 || !filepath.IsAbs(os.Args[2]) {
+			log.Fatal("usage: fncpn-ui --smoke-test /absolute/result.json (Linux only)")
+		}
+		app.smokeResult = os.Args[2]
+	}
 	var appMenu *menu.Menu
 	if uiPlatform() == "darwin" {
 		appMenu = menu.NewMenu()

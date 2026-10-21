@@ -87,3 +87,15 @@ func TestAdminURLMustBeLoopbackHTTP(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestSmokeDoesNotContactClientServices(t *testing.T) {
+	app := NewApp()
+	app.smokeResult = "/unused/smoke.json"
+	// No context/socket/daemon is configured; calls must return locally.
+	for _, method := range []string{"diagnose", "connect", "authorize-native"} {
+		reply := app.Call(method, nil)
+		if reply.Error == nil || reply.Error.Message != "UI smoke test runs without client services" {
+			t.Fatalf("smoke %s = %#v", method, reply)
+		}
+	}
+}

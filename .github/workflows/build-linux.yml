@@ -109,6 +109,7 @@ jobs:
           go vet ./...
           python3 scripts/install_linux_test.py
           python3 scripts/linux_support_test.py
+          python3 scripts/linux_compatibility_test.py
           python3 scripts/release_manifest_test.py
           python3 scripts/publish_release_test.py
           bash -n scripts/install-linux.sh scripts/build-linux-core.sh scripts/build-linux-ui.sh scripts/test-debian13.sh
@@ -135,6 +136,7 @@ jobs:
 
   compatibility:
     needs: [targets, build]
+    if: ${{ inputs.release }}
     name: Compatibility ${{ matrix.target }} ${{ matrix.arch }}
     strategy:
       fail-fast: false
@@ -143,6 +145,8 @@ jobs:
     runs-on: ${{ matrix.runner }}
     container:
       image: ${{ matrix.image }}
+      # Let WebKit create its own sandbox namespaces; do not disable its sandbox.
+      options: --shm-size=1g --security-opt seccomp=unconfined --security-opt apparmor=unconfined
     defaults:
       run:
         shell: /bin/bash --noprofile --norc -e -o pipefail {0}
@@ -182,8 +186,13 @@ jobs:
           name: linux-packages-${{ matrix.format }}-${{ matrix.arch }}
           path: dist/linux
       - name: Resolve dependencies and check the same shared binaries
-        run: python3 scripts/linux-compatibility.py '${{ matrix.target }}' '${{ matrix.arch }}' dist/linux
+        env:
+          FNCPN_COMPAT_IMAGE: ${{ matrix.image }}
+        run: |
+          mkdir -p 'dist/linux-compat/${{ matrix.target }}-${{ matrix.arch }}'
+          python3 scripts/linux-compatibility.py '${{ matrix.target }}' '${{ matrix.arch }}' dist/linux 2>&1 | tee 'dist/linux-compat/${{ matrix.target }}-${{ matrix.arch }}/install.log'
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: linux-compat-${{ matrix.target }}-${{ matrix.arch }}
           path: dist/linux-compat/

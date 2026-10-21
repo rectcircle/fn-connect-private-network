@@ -74,7 +74,8 @@ if tuple(map(int, version.split('.'))) >= (1, 1, 2):
             if (evidence.get('target') != distro or evidence.get('architecture') != architecture or
                 evidence.get('bundle') != profile['format'] or evidence.get('productVersion') != version or
                 evidence.get('commit') != revision or evidence.get('artifacts') != expected or
-                set(evidence.get('checks', [])) != {'package-metadata','dependency-resolution','core-version','ui-dynamic-linking'}):
+                evidence.get('passed') is not True or
+                set(evidence.get('checks', [])) != {'package-metadata','dependency-resolution','core-version','ui-dynamic-linking','core-only-install','elf-abi','ui-frontend-handshake','package-reinstall','package-remove'}):
                 raise SystemExit('Linux compatibility evidence does not match the release packages and commit')
 
 def tool(*command):
