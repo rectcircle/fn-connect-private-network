@@ -85,11 +85,8 @@ jobs:
           cache-dependency-path: |
             go.sum
             ui/go.sum
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22.14.0'
-          cache: npm
-          cache-dependency-path: ui/frontend/package-lock.json
+      - name: Install pinned official Node binary
+        run: scripts/install-linux-node.sh
       - name: Install pinned build tools
         run: |
           go install github.com/wailsapp/wails/v2/cmd/wails@v2.17.0
