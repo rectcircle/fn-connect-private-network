@@ -58,7 +58,7 @@ class CompatibilityTest(unittest.TestCase):
                 pathlib.Path(command[-1]).write_text(json.dumps({'version':'1.1.2','commit':'old','platform':'linux','frontendReady':True}))
             def wait(self, **kwargs):
                 return 0
-        with tempfile.TemporaryDirectory() as directory, patch.object(compatibility.subprocess, 'Popen', Process), patch.object(compatibility, 'sandbox_probe'):
+        with tempfile.TemporaryDirectory() as directory, patch.object(compatibility.subprocess, 'Popen', Process), patch.object(compatibility, 'sandbox_probe'), patch.object(compatibility, 'require_smoke_tools'):
             with self.assertRaisesRegex(ValueError, 'source/version mismatch'):
                 compatibility.smoke(pathlib.Path(directory), '1.1.2', 'new', as_user=False)
 
@@ -66,7 +66,7 @@ class CompatibilityTest(unittest.TestCase):
         class Process:
             def __init__(self, *args, **kwargs): pass
             def wait(self, **kwargs): return 0
-        with tempfile.TemporaryDirectory() as directory, patch.object(compatibility.subprocess, 'Popen', Process), patch.object(compatibility, 'sandbox_probe'):
+        with tempfile.TemporaryDirectory() as directory, patch.object(compatibility.subprocess, 'Popen', Process), patch.object(compatibility, 'sandbox_probe'), patch.object(compatibility, 'require_smoke_tools'):
             with self.assertRaisesRegex(RuntimeError, 'before frontend handshake'):
                 compatibility.smoke(pathlib.Path(directory), '1.1.2', 'new', as_user=False)
 
@@ -76,7 +76,13 @@ class CompatibilityTest(unittest.TestCase):
             command=run.call_args.args
             self.assertIn('xorg-x11-server',command)
             self.assertIn('xvfb-run',command)
+            self.assertIn('dbus-1-daemon',command)
             self.assertNotIn('xvfb',command)
+
+    def test_missing_dbus_wrapper_is_reported_as_environment_failure(self):
+        with patch.object(compatibility.shutil,'which',side_effect=lambda name: None if name=='dbus-run-session' else '/usr/bin/'+name):
+            with self.assertRaisesRegex(RuntimeError,'environment is missing commands: dbus-run-session'):
+                compatibility.require_smoke_tools(as_user=True)
 
     def test_unavailable_nested_sandbox_fails_before_ui_launch(self):
         with tempfile.TemporaryDirectory() as directory, patch.object(compatibility.shutil, 'which', return_value='/usr/bin/bwrap'), patch.object(compatibility.subprocess, 'run') as run:

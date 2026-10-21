@@ -47,11 +47,20 @@ def install_test_tools(profile):
         run('apt-get', 'install', '-y', '--no-install-recommends', 'binutils', 'xvfb', 'xauth', 'dbus', 'fonts-dejavu-core', 'passwd', 'libgl1-mesa-dri')
     elif profile['format'] == 'rpm':
         if profile['osID'].startswith('opensuse'):
-            run('zypper', '--non-interactive', 'install', '--no-recommends', 'binutils', 'xorg-x11-server', 'xvfb-run', 'xauth', 'dbus-1', 'dejavu-fonts', 'shadow', 'Mesa-dri')
+            run('zypper', '--non-interactive', 'install', '--no-recommends', 'binutils', 'xorg-x11-server', 'xvfb-run', 'xauth', 'dbus-1', 'dbus-1-daemon', 'dejavu-fonts', 'shadow', 'Mesa-dri')
         else:
             run('dnf', 'install', '-y', 'binutils', 'xorg-x11-server-Xvfb', 'xorg-x11-xauth', 'dbus-daemon', 'dejavu-sans-fonts', 'shadow-utils', 'mesa-dri-drivers')
     else:
         run('pacman', '-S', '--needed', '--noconfirm', 'binutils', 'xorg-server-xvfb', 'xorg-xauth', 'dbus', 'ttf-dejavu', 'shadow', 'mesa')
+
+
+def require_smoke_tools(as_user):
+    tools = ['dbus-run-session', 'dbus-daemon', 'xvfb-run', 'Xvfb', 'xauth']
+    if as_user:
+        tools.extend(['runuser', 'useradd'])
+    missing = [tool for tool in tools if not shutil.which(tool)]
+    if missing:
+        raise RuntimeError('UI test environment is missing commands: ' + ', '.join(missing))
 
 
 def sandbox_probe(out, as_user):
@@ -70,6 +79,7 @@ def sandbox_probe(out, as_user):
 
 
 def smoke(out, version, commit, binary='/usr/bin/fncpn-ui', as_user=True):
+    require_smoke_tools(as_user)
     if as_user:
         run('useradd', '--create-home', '--uid', '12345', 'fncpn-smoke')
     sandbox_probe(out, as_user)
