@@ -78,6 +78,7 @@ func TestClientCallHonorsContextAfterConnect(t *testing.T) {
 	defer stopServer()
 	started := make(chan struct{})
 	release := make(chan struct{})
+	defer close(release)
 	server := Server{
 		SocketPath: socketPath,
 		Mode:       0o600,
@@ -93,26 +94,39 @@ func TestClientCallHonorsContextAfterConnect(t *testing.T) {
 	}()
 	waitForSocket(t, socketPath)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	callDone := make(chan error, 1)
 	go func() {
 		callDone <- (Client{SocketPath: socketPath, Timeout: 5 * time.Second}).
 			Call(ctx, "status", nil, nil)
 	}()
-	<-started
+	// Do not start a short deadline before the handler is reached: on a busy
+	// runner the request can time out before being written, leaving started open.
+	select {
+	case <-started:
+	case err := <-callDone:
+		t.Fatalf("client returned before handler started: %v", err)
+	case <-time.After(3 * time.Second):
+		t.Fatal("handler did not receive the request")
+	}
+	cancel()
 	select {
 	case err := <-callDone:
-		if model.AsError(err).Code != model.ErrorTimeout {
+		if model.AsError(err).Code != model.ErrorCanceled {
 			t.Fatalf("call error = %v", err)
 		}
 	case <-time.After(500 * time.Millisecond):
-		t.Fatal("client call ignored context deadline")
+		t.Fatal("client call ignored context cancellation")
 	}
-	close(release)
 	stopServer()
-	if err := <-errs; err != nil {
-		t.Fatalf("serve: %v", err)
+	select {
+	case err := <-errs:
+		if err != nil {
+			t.Fatalf("serve: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("server did not stop")
 	}
 }
 
