@@ -1,7 +1,7 @@
 {
   ".url": {
     "fncpn.main": {
-      "title": "FnCPN",
+      "title": "CPN - 连接私网",
       "icon": "images/icon_256.png",
       "type": "iframe",
       "protocol": "",

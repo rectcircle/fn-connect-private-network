@@ -4,6 +4,16 @@
 格式遵循 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)，版本规则见
 [版本与兼容性](docs/versioning-and-compatibility.md)。
 
+## [1.1.3] - 2026-10-22
+
+### Changed
+
+- fnOS 应用展示名及桌面入口名称改为“CPN - 连接私网”；应用描述突出任意设备一键连接 NAS 所在私有网络的能力；应用标识符与其他客户端名称保持不变。
+
+### 升级与验证范围
+
+- 本次为 fnOS 展示元数据调整，不改变应用标识符、远程协议、本地 IPC 或数据格式，无需配套升级另一端。
+
 ## [1.1.2] - 2026-10-22
 
 ### Added
