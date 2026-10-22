@@ -1,5 +1,14 @@
 # FnCPN 接口契约
 
+## Android 进程内接口
+
+Android UI 通过 `Call(context, method, params, result)` 复用 client Service 的既有命令和模型，
+不开放网络监听器，也不赋予 UI 启停宿主的权限。系统 VpnService 持有宿主，窗口关闭不停止连接。
+Java/JNI 系统桥独立使用版本 1：请求 `{version:1,method,params}`，响应
+`{version:1,ok,result,error}`。必需版本与成功/失败语义均校验；Java 和 native library 随同一 APK
+成套升级，不允许任意方法反射、命令执行或路径访问。桥版本不参与 client/server 远程准入，
+也不替代桌面本地 IPC 版本。Android 编码和未验收范围见 [Android 支持](platform-support.md#android)。
+
 ## 远程 HTTP / WebSocket
 
 外部统一前缀为 `/app/fncpn`，应用内部路由如下。控制接口只监听应用私有 Unix Socket；私网探测与 DNS 服务另复用 LAN TCP 54790。
@@ -159,7 +168,7 @@ mDNS 无应答仅说明本次未发现，不是权威 NXDOMAIN：便捷入口和
 
 ### 本地应用与生命周期
 
-DNS 计划独立于隧道网络计划，LOCAL 无须创建 utun、安装 LAN 路由或建立 WireGuard。
+桌面 DNS 计划独立于隧道网络计划，LOCAL 无须创建隧道或安装远端 LAN 路由。Android 启用系统名称解析时保留 DNS 用 VPN/TUN，不运行 WireGuard，见 [平台差异](platform-support.md#android)。
 DIRECT/RELAY 切换不重建相同的 DNS 规则；切换 LOCAL 时按实际 LAN 路由校验答案并失效缓存。
 DNS 统一使用上述私网 HTTP 入口，不增加端口，也不依赖 FN Connect 网关、证书或会话刷新。
 LOCAL 经物理 LAN；DIRECT/RELAY 经已安装的 WireGuard LAN 路由到同一个 NAS LAN IP。
@@ -192,8 +201,10 @@ HTTP 不加密，不增加应用层鉴权和防重放；仅复用已有配置中
 
 ### 用户 CLI/UI 与 client daemon
 
-- 使用当前用户私有目录中的 Unix domain socket，父目录权限 `0700`，socket 权限 `0600`。
-- `fncpn client daemon` 从内核读取 peer UID，必须与 daemon UID 一致。
+本节区分平台端点与身份校验；后述 JSON 帧规则由桌面 IPC 共用，Android 进程内调用另见本文开头。
+
+- macOS/Linux 使用当前用户私有目录中的 Unix domain socket，父目录权限 `0700`，socket 权限 `0600`。
+- Unix 平台从内核读取 peer UID，必须与 daemon UID 一致；Windows 使用 `\\.\pipe\FnCPN.Client.v1.<session>`，校验用户 SID 与会话，另保留受授权的 LocalSystem 维护入口。
 - 协议使用 4-byte big-endian 长度前缀加 UTF-8 JSON，单帧最大 256 KiB。
 - 每个请求包含协议版本和唯一 ID；响应必须回显 ID。
 - 拒绝未知字段、未知方法和超限消息。
@@ -208,17 +219,17 @@ HTTP 不加密，不增加应用层鉴权和防重放；仅复用已有配置中
 
 ### client daemon 与 client privileged-daemon
 
-- 使用独立的 `/var/run/fncpn-client-privileged.sock`，与用户 IPC 分离。
+- 特权端点与用户 IPC 分离：macOS 使用 `/var/run/fncpn-client-privileged.sock`，Linux 使用 `/run/fncpn/<uid>/privileged.sock`，Windows 使用 `\\.\pipe\FnCPN.Service.v1`。
 - 方法只允许 `status`、`watch-lifecycle`、`apply`、`remove` 以及
   `get-client-secret`、`put-client-secret`、`delete-client-secret`。DNS 规则通过独立的 `apply-dns`、`renew-dns`、`remove-dns` 管理。
 - `apply` 接收完整结构化网络计划，privileged-daemon 独立复验并收敛地址、接口、
   路由和 endpoint；独立 `apply-dns` 计划包含 generation、suffix、address、port，与隧道独立收敛。
   owner 绑定 IPC peer identity，不能由请求冒充其他用户；generation 防止旧进程清理新规则。
-- privileged-daemon 只接受 root 或当前控制台用户进程。
+- macOS 接受 root 或当前控制台 UID；Linux 接受 root 或实例绑定的 UID；Windows 校验 LocalSystem 或当前活动本地控制台会话的用户身份。
 - 任何错误必须保留请求 ID；鉴权发生在解码前时允许空 ID 错误响应。
 - 凭据请求仅允许 WireGuard 私钥、fnOS 原生会话、管理页 Web 会话与 Cookie jar
   四种命名空间；用户 UID 取自操作系统
-  Unix Socket peer identity，请求不能指定 UID 或路径。FN ID 和凭据类型哈希后生成文件名。
+  Unix Socket peer identity，请求不能指定 UID 或路径。FN ID 和凭据类型哈希后生成文件名。此处为 Unix 凭据存取契约，Windows 使用 DPAPI，Android 使用 Keystore 加密存储，见 [平台支持](platform-support.md)。
 - root 保存不透明凭据字节，不参与 FN Connect 会话、Cookie 解析或 HTTP/WSS 请求。
 - 安装健康检查只依赖 IPC 就绪；自动连接在后台执行，不等待网络或用户授权后才监听 IPC。
 

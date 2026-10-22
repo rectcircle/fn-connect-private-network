@@ -1,0 +1,118 @@
+name: Android
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  GOTOOLCHAIN: local
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  check:
+    name: Mobile Go checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.27.1'
+          cache-dependency-path: |
+            go.sum
+            mobile/go.sum
+      - name: Shared client lifecycle tests
+        run: go test -race ./internal/client ./internal/clienthost
+      - name: Mobile tests and static checks
+        working-directory: mobile
+        run: |
+          go test -race -tags ci ./...
+          go vet -tags ci ./...
+      - name: Android packaging regression checks
+        run: python3 -m unittest discover -s scripts/android -p '*_test.py'
+
+  build:
+    name: Debug APK (arm64 and x86_64)
+    needs: check
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      ANDROID_NDK_VERSION: '28.2.13676358'
+      ANDROID_BUILD_TOOLS_VERSION: '35.0.0'
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.27.1'
+          cache-dependency-path: |
+            go.sum
+            mobile/go.sum
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@017a9effdb900e5b5b2fddfb590a105619dca3c3 # v4.4.2
+        with:
+          gradle-version: '8.13'
+          cache-read-only: ${{ github.event_name == 'pull_request' }}
+      - uses: android-actions/setup-android@v3
+        with:
+          cmdline-tools-version: '12266719'
+          log-accepted-android-sdk-licenses: false
+          packages: 'platform-tools platforms;android-36 build-tools;35.0.0 ndk;28.2.13676358'
+      - name: Select pinned NDK on runner
+        run: |
+          test -n "$ANDROID_HOME"
+          test -f "$ANDROID_HOME/ndk/$ANDROID_NDK_VERSION/source.properties"
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/$ANDROID_NDK_VERSION" >> "$GITHUB_ENV"
+      - name: Download pinned Go module dependencies
+        working-directory: mobile
+        run: go mod download
+      - name: Compile Java, JNI and both Go libraries; package Debug APK
+        working-directory: mobile/android
+        run: |
+          gradle --no-daemon --console=plain --stacktrace :app:assembleDebug \
+            "-PfncpnBuild=$GITHUB_RUN_NUMBER" 2>&1 | tee "$RUNNER_TEMP/android-build.log"
+      - name: Verify APK, JNI exports, versions and debug signature
+        run: |
+          python3 scripts/android/verify_apk.py \
+            mobile/android/app/build/outputs/apk/debug/app-debug.apk \
+            --build-number "$GITHUB_RUN_NUMBER" \
+            --output "$RUNNER_TEMP/android-artifacts" \
+            2>&1 | tee "$RUNNER_TEMP/android-verification.log"
+      - name: Upload installable Debug APK and verification manifest
+        uses: actions/upload-artifact@v4
+        with:
+          name: fncpn-android-debug-${{ github.run_number }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/android-artifacts/
+          if-no-files-found: error
+          retention-days: 14
+      - name: Upload logs and build reports
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: fncpn-android-logs-${{ github.run_number }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/android-build.log
+            ${{ runner.temp }}/android-verification.log
+            mobile/android/app/build/reports/
+            mobile/android/app/build/outputs/logs/
+            mobile/android/app/build/generated/fyne/assets/build.json
+          if-no-files-found: warn
+          retention-days: 14

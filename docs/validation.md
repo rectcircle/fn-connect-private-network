@@ -4,6 +4,24 @@
 产品要求见 [产品需求](product.md)，升级保证见 [版本契约](versioning-and-compatibility.md)。
 自动化通过、用户确认和带日志的实测分别记录；旧版证据不代表新版的所有专项通过。
 
+## Android 编码阶段（2026-10-22；未发布）
+
+- 官方 `fyne init` 生成独立移动 UI module；Java VpnService、JNI、单库构建、TUN/WireGuard、
+  Keystore、网络回调、DNS、管理 WebView 和诊断分享已编码。Go 核心和系统适配均不依赖 Fyne。
+- 根 module `go test ./...` 通过；`client` 与 `clienthost` 的竞态测试通过。
+- mobile module `go test -race -tags ci ./...`、`go vet -tags ci ./...` 和 macOS 桌面构建通过。
+  覆盖真实授权注册表续接 OTP、宿主取消/停止、两份 netstack 间 UDP/TCP DNS 查询、后缀隔离、
+  DNS 计划回滚、系统停止不重建 DNS 隧道、TUN fd 替换、桥版本拒绝和 socket 保护失败清理。
+- `androidvpn` 在 Android arm64 与 amd64 的 CGO-disabled Go 包交叉编译通过；
+  Android 完整包图可解析，未混入 Linux netlink/systemd DNS 实现。Python 与 Manifest/XML 语法检查通过。
+- 已接入分支推送/PR/手动触发的 Android Debug CI：runner 准备工具链，运行移动检查、双架构完整
+  构建和 APK 校验后上传安装包/校验清单，失败时保留日志。workflow 的 actionlint 静态检查及
+  6 项 APK 校验回归通过；尚未提交、推送或运行云端 CI，不将其记为 Android 构建通过。
+- 未安装或运行 Android Studio、SDK、NDK、JDK 或 Gradle。未验证 Java/JNI/C 编译、native library
+  链接、APK/AAB、签名、安装、Service 冷启动、锁屏、切网、系统 DNS/Private DNS、16 KB 页设备、
+  真机耗电/吞吐、原生 WebView 或历史正式 server 互通。这些必须在已配备工具链和真机的环境验收，
+  不能从纯 Go 测试推断通过。不据此宣称 Android 正式可用，不修改产品发布编号或发布资产。
+
 ## 1.1.2 正式发布验收（2026-10-22）
 
 - 最终发布 commit 为 `c3fd6b2e67243ff1cafde2d2ec3ab5e4c11d210d`，
@@ -323,3 +341,11 @@ chown 使用替身，未记为实际跨 UID 或 NAS 实机启用通过。实机�
 - 本地新增 18 项镜像回归测试、完整 `check-release.sh` 和工作流 actionlint 静态检查通过。回归覆盖部分上传恢复、内容冲突、已公开镜像不可覆盖、校验前不公开、授权检查失败不传 Secret、凭据不进入 workflow input/错误输出及 CLI 压缩包校验。
 - 异常保留：[主分支 Checks 38602543466](https://github.com/rectcircle/fn-connect-private-network/actions/runs/38602543466) 的 macOS job 显示 `check-release.sh` 步骤失败，但整体长期保持运行中，日志接口返回 404；取消及强制取消请求后仍未能获取失败日志。发布依据为同 commit 的 Release 校验成功、本地完整检查及独立草稿资产核验，不将该 Checks 记为通过，根因待排查。
 - 未覆盖：令牌自然到期后的跨机器刷新及轮换、长期无人值守、切换账号/重建目录、该版本全平台真实安装与历史正式版本互通专项。此次变更仅为分发流程，不改变协议、IPC 或持久化 schema；不据此扩大已有产品兼容验证范围。
+
+## 网络恢复验收边界
+
+从原网络恢复设计文档归并的待验收范围；本次文档整理未执行测试或新增实机验证，历史结论仍以对应版本记录为准。
+
+- 网络场景须覆盖 Wi-Fi/Ethernet 切换、睡眠唤醒、NAS 冷启动、弱网、全隧道 VPN 和多网卡路由，观察连接恢复、健康路径保留及暂停意图。
+- macOS 权限须覆盖首次弹窗、拒绝、延迟允许、跳过等待及在系统设置中修改权限；unsigned/ad-hoc 构建升级后须复测系统身份变化的影响。
+- 自动化覆盖不能替代上述系统验收；应用层预算不能证明所有环境下的实际连接耗时。测试入口见 [网络恢复检查](development.md#网络恢复检查)。

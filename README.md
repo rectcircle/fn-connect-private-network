@@ -6,7 +6,7 @@
 
 - Apple Silicon 或 Intel Mac，macOS 13 或更新版本。
 - Windows 客户端：Windows 10 22H2（build 19045）或更新的 ARM64/x64 系统，不支持 32 位或 Windows Server。Windows 10 和原生 x64 已由用户完成验收。
-- Linux 客户端：Debian 12/13、Ubuntu 22.04/24.04/26.04/26.10、Fedora 43/44、openSUSE Leap 16.0/Tumbleweed（amd64/arm64），以及官方 Arch Linux（amd64）；需要 systemd。NixOS 使用 [Flake 模块](docs/nix.md)，不支持 Alpine。
+- Linux 客户端：Debian 12/13、Ubuntu 22.04/24.04/26.04/26.10、Fedora 43/44、openSUSE Leap 16.0/Tumbleweed（amd64/arm64），以及官方 Arch Linux（amd64）；需要 systemd。NixOS 使用 [Flake 模块](docs/development.md#nix-flake-与-nixos)，不支持 Alpine。
 - 已启用 FN Connect 的 fnOS NAS，支持 x86_64 和 ARM64。
 - fnOS 用户账号。普通用户可以连接；安装软件和修改服务端网络设置需要管理员权限。
 
@@ -29,7 +29,7 @@ FnCPN 在自身的 fnOS HTTPS/WSS 连接中使用系统信任及内置、指纹�
 | Debian / Ubuntu | `fncpn-{core,ui}-<version>-linux-{amd64,arm64}.deb` |
 | Fedora / openSUSE | `fncpn-{core,ui}-<version>-linux-{amd64,arm64}.rpm` |
 | Arch Linux | `fncpn-{core,ui}-<version>-linux-amd64.pkg.tar.zst` |
-| Nix / NixOS | [Flake 源码构建与模块](docs/nix.md)，无独立 Release 包 |
+| Nix / NixOS | [Flake 源码构建与模块](docs/development.md#nix-flake-与-nixos)，无独立 Release 包 |
 
 ### Linux：自动安装
 
@@ -62,7 +62,7 @@ Linux 安装包从 **1.1.2** 开始提供；latest 获取最新公开正式版�
 脚本校验 Release 的 SHA256，再使用 apt、dnf、zypper 或 pacman 安装并解析运行依赖；
 必要时会请求 sudo，并补齐 curl、jq、校验工具及 CA 证书。Arch 会执行完整系统升级。
 RPM 自动安装先核对固定公钥并验证项目签名，全部通过后导入系统信任，保持包管理器签名检查。
-公钥指纹和手动安装步骤见 [RPM 签名](docs/rpm-signing.md)。
+公钥指纹和手动安装步骤见 [RPM 签名](docs/development.md#rpm-签名与密钥维护)。
 已有 UI 版本不匹配时，`--type core` 会要求改用 `--type all`；自动安装不支持降级。
 macOS、Windows、不支持的发行版/架构和无 systemd 的环境会直接报错。
 
@@ -76,7 +76,7 @@ fncpn-linux-setup
 `/etc/resolv.conf`；发行版安装 resolved 依赖时可能调整系统 resolver，须确认原有 DHCP DNS 仍正常。
 GNOME 顶栏图标需要 [AppIndicator 扩展](docs/troubleshooting.md#linux系统托盘--顶栏没有-fncpn-图标)。
 关闭窗口隐藏到托盘；“退出”会清理连接并停止用户 Core 服务，保留配置与连接意图。
-完整支持范围、手动安装和验证状态见 [Linux 支持](docs/linux-support.md)。
+完整支持范围、手动安装和验证状态见 [Linux 支持](docs/platform-support.md#linux)。
 
 ### Windows：安装
 

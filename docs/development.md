@@ -1,7 +1,13 @@
 # 开发、构建与发布
 
-开发需要 Go 1.27；macOS 构建需要 Swift/AppKit 工具链，Python 3 用于资源同步。
-包职责见 [架构](architecture.md)，正式发布须同时遵守 [版本契约](versioning-and-compatibility.md) 和 [验收](validation.md)。
+本页统一维护环境准备、各端开发与构建、检查、打包、发布签名及官网部署。命令默认从仓库根目录运行，另有注明除外。
+平台支持与选择依据见 [平台决策](platform-support.md)，实现边界见 [架构](architecture.md)。正式发布须遵守 [版本契约](versioning-and-compatibility.md)，实际验证结果和未验证项只在 [验证记录](validation.md) 维护。
+
+按任务查阅：[macOS / fnOS](#macos-与-fnos-构建安装包) · [Windows](#windows-开发与构建) · [Linux](#linux-构建与部署) · [NixOS](#nix-flake-与-nixos) · [Android](#android-开发与构建) · [测试](#测试) · [资源同步](#中英文资源) · [发布准备](#产品版本与正式发布准备) · [RPM 签名](#rpm-签名与密钥维护) · [发布与镜像](#github-发布与-homebrew) · [官网](#官网开发与部署)
+
+## 环境准备
+
+共享核心需要 Go 1.27，资源同步使用 Python 3；前端开发使用 Node/npm。macOS 构建需要 Xcode/Swift/AppKit 工具链；Linux UI 需要对应基线中的 GTK/WebKit 开发依赖；Windows 和 Android 的固定工具链见各自章节。
 
 ## 本地运行
 
@@ -15,15 +21,9 @@ go run ./cmd/fncpn version
 go install ./cmd/fncpn
 ```
 
-## 测试
+<a id="构建安装包"></a>
 
-```bash
-go test -race ./...
-go vet ./...
-node --test internal/server/web/index.test.cjs
-```
-
-## 构建安装包
+## macOS 与 fnOS 构建安装包
 
 ```bash
 ./scripts/build-all.sh
@@ -36,7 +36,7 @@ node --test internal/server/web/index.test.cjs
 可用 `DIST_DIR` 指定其他输出目录。打包中间文件使用系统临时目录。
 macOS 两种 UI 共用应用标识、固定安装路径和安装维护流程，默认发布仍使用原生 UI。
 只构建 App 可使用 `build-native-macos.sh` 或 `build-wails-macos.sh`，详见
-[Wails 客户端](../ui/README.md)。
+[Wails 构建](#macos-wails-ui)。
 
 FPK 构建要求通过 `FNPACK` 或 `PATH` 显式提供 `fnpack`，不依赖本地 PoC 文件。
 首次初始化默认使用 `10.253.203.0/24` 和 `54789/UDP`；冲突时
@@ -49,11 +49,364 @@ FPK 构建要求通过 `FNPACK` 或 `PATH` 显式提供 `fnpack`，不依赖本�
 
 ### 图标生成
 
-应用图标由 `scripts/generate-icons.swift` 使用 AppKit 程序绘制，macOS 构建时自动生成完整 Retina iconset 和 `AppIcon.icns`，fnOS 包根目录的 `ICON.PNG` / `ICON_256.PNG` 使用同源的 512 像素 PNG，已在 `0.1.52` 实机确认解决应用中心图标模糊问题（官方文档规定分别为 64 / 256，本项目采用实测有效的高清资源）；桌面入口单独保留 64 / 256 像素资源，固定引用 `images/icon_256.png`。macOS 上可运行 `swift scripts/generate-icons.swift packaging/assets` 重新生成；其他平台打包使用已提交的 PNG。
+macOS 打包自动生成图标；需要手动更新时运行 `swift scripts/generate-icons.swift packaging/assets`，生成资源随源码提交。其他平台使用已提交的 PNG。
 
-macOS 状态栏使用22 × 18 pt 模板图标，自动适配深浅色及菜单选中颜色。应用与状态栏图标都由 `scripts/generate-icons.swift` 中同一个 `connectionMark()` 绘制，使用一致的“内网边界、存储圆柱与接入路径”图形。应用图标采用 fnOS 默认图标风格的浅蓝底与亮蓝前景。所有状态保留内网边界和存储圆柱，以连接线最左侧的端点替换图形表达状态：圆点表示已连接，省略号表示连接中，叉号表示断开，感叹号表示异常或需要登录。局域网、IPv6 直连、中继共用已连接图标，具体连接方式由悬停提示和界面详情说明。生成脚本和生成的资源均保留在仓库中。
+### macOS Wails UI
 
-正式图标采用圆角矩形表示内网边界，内部采用项目自行绘制的存储圆柱，外部连接采用圆角水平 / 垂直折线，并通过边框预留的入口进入内网。绘图脚本与生成资源一同保留，重新生成时无需联网。
+依赖 Go（与根模块一致）、Node/npm、Xcode Command Line Tools、macOS 13+。
+
+```sh
+go install github.com/wailsapp/wails/v2/cmd/wails@v2.17.0
+# 从仓库根目录构建当前架构 App
+scripts/build-wails-macos.sh
+# 统一安装包入口：默认 native，显式选择 Wails
+scripts/build-macos-pkg.sh --ui wails
+# 等价的便捷入口
+scripts/build-wails-macos.sh --pkg
+# Intel 构建
+ARCH=x64 scripts/build-wails-macos.sh --pkg
+```
+
+App：`dist/macos-ui/wails/<架构>/FnCPN.app`。
+原生 App 可通过 `scripts/build-native-macos.sh` 构建，输出到
+`dist/macos-ui/native/<架构>/FnCPN.app`。两个构建器均支持 `--output /绝对路径/FnCPN.app`，
+输出必须不存在；默认开发输出允许重复构建。`ui/build/bin/` 是 Wails CLI 中间产物。
+安装包：`dist/wails-v2/fncpn-<产品版本>-macos-<架构>-unsigned.pkg`。
+产物使用本地 ad-hoc 签名，尚未公证。
+两种 UI 共用应用标识 `cn.rectcircle.fncpn`、URL scheme 和产品版本；PKG 都安装至
+`/Applications/FnCPN.app`，用于相互替换，不能作为两个独立产品并行安装。
+`build-macos-pkg.sh` 不带参数等价于 `--ui native`，默认输出目录仍为 `dist/`。
+Wails 默认 PKG 目录为 `dist/wails-v2/`；显式设置 `DIST_DIR` 可覆盖两者的输出目录。
+
+直接运行 App 需要当前用户可访问的特权服务已安装；它会启动同源码构建并随 App
+携带的普通用户 daemon。首次安装应使用完整 PKG。PKG 使用现有原生安装器，安装到
+`/Applications/FnCPN.app` 并配套更新 Core 与特权组件，使用相同用户数据及卸载入口。
+不要同时运行原生和 Wails 两个 UI：两者共享 socket、身份及连接意图。
+开发 App 发现已有 daemon 时只复用它，退出不终止别的 UI 启动的服务；若版本不匹配，
+现有 IPC client 会明确拒绝通信，不放宽产品版本或 IPC 校验。
+
+只开发前端或调试绑定时可在 `ui/` 运行 `wails dev`，先通过完整 App/安装器准备 daemon。
+
+## Windows 开发与构建
+
+### 开发环境
+
+在仓库根目录执行：
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/setup-windows.ps1
+```
+
+setup 检查并准备 Git、Python、Go >= 1.27、PowerShell 7、.NET 10 SDK、CMake >= 3.27、MSVC 2022 x64/ARM64 工具链、Windows SDK、WiX 7.0.0 UI/Util 扩展、Wintun 0.14.1，以及 WebView2 原生 SDK、共享 Runtime 和安装引导器。
+.NET SDK 仅用于 WiX/NuGet，客户端不依赖 .NET 桌面运行时。Node 和 GitHub CLI 分别通过 `-IncludeServerTools`、`-IncludeReleaseTools` 选择安装。
+
+默认 setup 编译双架构 UI、Go 和测试 MSI，并运行本机可执行架构的 CTest；`-SkipSmoke` 跳过编译，但仍下载 Go 依赖和还原 WebView2 SDK。x64 主机不运行 ARM64 程序，ARM64 主机上的 x64 执行属于仿真。
+setup 不安装 FnCPN、不创建网卡、不登录 GitHub、不自动重启。系统前置组件安装可能请求 UAC；`ExecutionPolicy Bypass` 仅作用于本次进程。
+
+| 内容 | 位置 |
+|---|---|
+| 新安装的 .NET SDK | `%LOCALAPPDATA%\Microsoft\dotnet` |
+| 新安装的 Go / PowerShell / GitHub CLI | `%LOCALAPPDATA%\Programs` |
+| WiX | `.dev/tools/wix` |
+| Wintun 与许可证 | `.dev/dependencies/wintun/0.14.1` |
+| WebView2 原生 NuGet SDK | `.dev/native-ui-nuget` |
+| WebView2 安装引导器 | `.dev/dependencies/webview2` |
+| 下载缓存、setup 日志与临时源码 | `.dev/downloads`、`.dev/logs`、`.dev/smoke` |
+| setup 编译验证产物 | `dist/smoke` |
+
+已安装的可用工具优先复用。下载校验哈希或官方签名；异常目录不会直接覆盖。
+通用工具目录加入用户 PATH，项目 `.dev` 不加入 PATH；设置 `DOTNET_ROOT`，不设置 `GOROOT` 或改变 `GOPATH`。已有终端/IDE 需重新打开以刷新持久环境。已有 fnm/nvm 的 Node 配置保留，不将临时目录写入用户 PATH。
+
+默认 Go 代理不可达时，setup 先验证 `goproxy.cn`，再验证 `goproxy.io`，通过 `go env -w` 保存可用代理；已有自定义 `GOPROXY` 保留。恢复默认使用 `go env -u GOPROXY`，显式环境变量需另行调整。代理不可达时停止，不关闭 checksum database 校验。
+
+### 构建和检查
+
+日常使用三个入口，内部辅助脚本位于 `scripts/windows/`，由这些入口统一调用。
+
+```powershell
+pwsh -NoProfile -File scripts/build-windows.ps1
+pwsh -NoProfile -File scripts/check-windows.ps1
+```
+
+build 默认按 ARM64、x64 构建，可指定 `-Architecture arm64` 或 `x64`，并通过 `-OutputRoot dist/<目录>` 选择输出位置。
+默认产物位于 `dist/windows-native/<架构>/`，包含未签名 MSI、解包 payload 和 `build-manifest.json`。清单记录产品版本、commit、dirty 状态、源码指纹、架构、构建时间及 MSI SHA256；构建拒绝覆盖输出目录中的未登记文件。
+
+check 验证版本/本地化生成资源、setup 回归、Go test/vet、安装维护协议历史/未来版本互通、原生 UI 与 MSI。它使用已有候选，不自动重建或安装；只检查源码用 `-SkipPackage`，单架构用 `-Architecture`，自定义产物目录用 `-PackageRoot`。
+
+原生 UI 源码位于 `platform/windows/`，独立编译示例：
+
+```powershell
+cmake -S platform/windows -B .dev/windows-ui-arm64 -G "Visual Studio 17 2022" -A ARM64 -DWEBVIEW2_SDK_ROOT="$PWD/.dev/native-ui-nuget/microsoft.web.webview2/1.0.4258.31"
+cmake --build .dev/windows-ui-arm64 --config Release
+ctest --test-dir .dev/windows-ui-arm64 -C Release --output-on-failure
+```
+
+首次执行先运行 setup。构建 x64 时替换构建目录并使用 `-A x64`。UI 的中英文资源位于 `platform/windows/messages.json`，执行 `python scripts/sync-native-localizations.py` 更新 `Localization.h`。
+维护协议测试需要完整 Git 历史（含 v1.0.7–v1.0.10 tag），
+在 `.dev/maintenance-compatibility/` 构建隔离进程并保存 commit/哈希清单；不会安装软件或操作用户 daemon。
+测试还把业务 IPC 改为 99、产品版本改为 9.0.0，验证新旧维护客户端双向退出和拒绝行为。
+
+自动测试使用隔离窗口和管道，不操作已安装 daemon 或用户连接，覆盖 IPC 分片、字段校验、导航边界、授权取消、过期结果、退出资源回收、DPI/布局和 MSI 元数据。
+
+### 安装验证与日志
+
+MSI 成套更新 UI、Go 核心和驱动依赖；缺少共享 WebView2 Runtime 时需要联网安装。正常升级与卸载保留身份、配置、DPAPI 凭据和日志；验证安装、升级、卸载时须检查数据保留及网络清理。
+
+显式清理发起卸载用户的数据（架构按实际包替换）：
+
+```powershell
+$version = (Get-Content internal/version/VERSION -Raw).Trim()
+msiexec.exe /x "./fncpn-$version-windows-arm64-unsigned.msi" PURGE_CURRENT_USER_DATA=1
+```
+
+仅清理该用户的 `%LOCALAPPDATA%\FnCPN`，不清理其他用户、Service recovery journal 或共享 Runtime。
+MSI 日志在安装用户 `%TEMP%\MSI*.LOG`，实际路径由 `MsiLogFileLocation` 记录；系统维护日志在 `%ProgramData%\FnCPN\Service\Logs\installer-*.log`。排查耗时可比较 Action 起止时间，进度条满格不代表事务完成。
+
+Windows CI 使用 `windows-2022` 与 `Visual Studio 17 2022`，调整工具链时同步 setup 与 CI。EXE/MSI 当前未签名；Wintun 和 WebView2 引导器保留官方签名。WiX 7 [OSMF 条款](https://docs.firegiant.com/wix/osmf/) 由构建命令 `-acceptEula wix7` 接受。公开发布统一按下文流程执行。
+
+## Linux 构建与部署
+
+平台范围与选择依据见 [平台支持](platform-support.md#linux)，安装脚本命令见 [README](../README.md#linux自动安装)。Core 可交叉构建；UI 必须在 [targets.json](../packaging/linux/targets.json) 指定的对应架构基线环境构建。
+
+```sh
+TARGET=deb ARCH=arm64 scripts/build-linux-core.sh
+# 在对应基线环境内构建 UI；TARGET 也可为 rpm 或 archlinux
+TARGET=deb ARCH=arm64 scripts/build-linux-ui.sh
+python3 scripts/check-linux-packages.py dist/linux/deb/arm64
+```
+
+输出在 `dist/linux/<format>/<arch>/`，包含 Core/UI 包、构建清单和校验和。先校验可信来源、SHA256 和包签名，再成套安装同版本组件：
+
+```sh
+sudo apt install ./fncpn-core-*.deb ./fncpn-ui-*.deb
+# Fedora；openSUSE 改用 zypper install，RPM 公钥验证见下文
+sudo dnf install ./fncpn-core-*.rpm ./fncpn-ui-*.rpm
+# Arch 先完整更新系统，再安装双包
+sudo pacman -Syu
+sudo pacman -U ./fncpn-core-*.pkg.tar.zst ./fncpn-ui-*.pkg.tar.zst
+# CLI 首次启用；UI 可通过图形管理员授权完成
+fncpn-linux-setup
+```
+
+无头环境只安装 Core。安装脚本不自动创建 NAS 连接或启用 UI 登录自启；Core/UI 需要成套升级，不自动降级。安装 resolved 依赖后须核对宿主原有 DHCP DNS 与 stub 集成。
+
+| 数据 | 默认路径 |
+| --- | --- |
+| 用户配置 | `${XDG_CONFIG_HOME:-~/.config}/fncpn/config.json` |
+| 用户状态与日志 | `${XDG_STATE_HOME:-~/.local/state}/fncpn/` |
+| 用户 IPC | `${XDG_RUNTIME_DIR:-/run/user/<uid>}/fncpn/client.sock` |
+| 特权 IPC | `/run/fncpn/<uid>/privileged.sock` |
+| 特权恢复日志 | `/var/lib/fncpn/client/<uid>/` |
+| 特权运行日志 | `/var/log/fncpn/client-privileged-<uid>.log` |
+
+XDG 覆盖值须为绝对路径。卸载保留身份、配置及连接意图，正常停止清理自有网络资源。
+
+## Nix Flake 与 NixOS
+
+Linux 目标为 `x86_64-linux`、`aarch64-linux`。Flake 提供 `core`、`ui`、`frontend` 包、
+`core`/`ui` app、overlay、开发 shell 和 `nixosModules.default`。
+默认包为无头 Core；UI 使用 Wails v2、原生 HTML/CSS/JavaScript。
+依赖由 `flake.lock` 锁定；Go vendor hash 和 npm lockfile 固定依赖内容。
+不额外发布 Nix Release 二进制包。首次构建通常在本地编译项目；有受信缓存时可复用缓存，
+目前不配置项目自己的二进制缓存。
+
+```sh
+# 仓库内（新文件须纳入 Git，Git Flake 不包含未跟踪文件）
+nix build .#core
+nix build .#ui
+nix develop
+nix flake check
+```
+
+单独 `nix run .#ui` 或安装包不会向宿主注册 root 服务、用户服务或 polkit 策略。
+NixOS 使用下方模块；其他 Linux 使用其原生安装包进行宿主集成。
+NixOS 模块不使用 deb/RPM 的命令式安装维护脚本，也不写 `/usr/bin`。
+
+### NixOS 配置
+
+把此仓库作为已提交、可访问的 Flake input（选择明确 tag 或 commit），然后：
+
+```nix
+{
+  imports = [ inputs.fncpn.nixosModules.default ];
+  users.users.alice = { isNormalUser = true; uid = 1000; };
+  services.fncpn = {
+    enable = true;
+    users = [ "alice" ];
+    ui.enable = true; # 无头机器设为 false
+    dns.enable = true;
+  };
+}
+```
+
+`users` 必须明确列出已有普通用户及稳定 UID（至少 1000）；模块只配置这些 UID 的特权实例。
+模块安装匹配版本的 Core/UI、polkit 策略和 systemd 用户服务，系统启动时启用各用户独立的
+root 实例，登录时启动用户 daemon。UI 自启仍由用户设置；注销后保留用户服务可自行配置 linger。
+UI 授权入口只启动已声明实例，不再执行 `systemctl enable`。
+
+默认启用 systemd-resolved。应用模块前应检查宿主 DNS 配置；分域 DNS 仍要求
+`/etc/resolv.conf` 使用 `127.0.0.53` stub。`dns.enable = false` 不更改宿主 resolver，
+未满足 stub 条件时明确显示 DNS 降级。模块不修改物理网络、转发或防火墙。
+
+数据路径与普通 Linux 包相同，详见 [Linux 构建与部署](#linux-构建与部署)。删除模块配置不会删除
+身份、配置和连接意图。NixOS generation 回滚程序并不回滚持久化数据，跨 schema 降级仍须按
+[版本契约](versioning-and-compatibility.md) 恢复配套备份，不能假定旧程序读取新数据。
+自定义 `package`/`ui.package` 时需使用同版本、同发布 commit 的成套组件。
+
+### 维护和验证
+
+`check-nix.yml` 在普通 push/PR 中只执行 Flake 与模块求值；草稿构建在两个原生 Linux
+架构执行 Core/UI 构建、模块检查和虚拟显示中的真实前端启动。
+这些检查不代替 NixOS 实机的 polkit、systemd、resolved、桌面和网络验收。
+Nix 开发依赖只进入 CI，不在 Debian 验证虚拟机安装 Nix。
+
+更新 Go 依赖或影响 UI vendoring 的根模块源码后，使用 `scripts/update-nix-go-hashes.sh` 重新生成
+`nix/go-hashes.json`。该脚本在临时副本执行 `go mod vendor` 并用 Nix 计算 NAR hash；
+不修改工作区依赖文件。更新 `flake.lock`、Go、Node 或图形依赖后须重新运行两个架构的检查。
+
+## Android 开发与构建
+
+Android 源码位于独立 `mobile` module；纯 Go 开发不需要 Android 工具链。当前完整 Android 构建与真机未验收，能力边界见 [平台决策](platform-support.md#android)。
+
+桌面开发可设置 `FNCPN_CLIENT_SOCKET`，复用已安装且运行的桌面 daemon；
+不会由本界面自动安装或启动服务。未设置时明确提示不可用，不显示模拟连接。
+
+```sh
+cd mobile
+go run .
+go test -tags ci ./...
+go test -race -tags ci ./...
+go vet -tags ci ./...
+GOOS=android GOARCH=arm64 CGO_ENABLED=0 go build ./internal/androidvpn
+```
+
+以上命令在 `mobile/` 执行；`ci` 使用无显示驱动。测试覆盖真实授权注册表的 OTP 续接、宿主生命周期、两份 netstack 之间
+的 DNS UDP/TCP 收发、后缀隔离、DNS 计划回滚、fd 替换和 socket 保护失败清理。
+纯 Go 交叉编译不能验证 Java、JNI/C、Android 链接和系统行为。
+
+### Android 构建与签名
+
+以下入口要求主机已经配备 Android 工具链；脚本不自动安装。
+
+- 固定 Go 1.27.1、Fyne 2.8.2、JDK 17、Gradle 8.13、AGP 8.13.2。
+- SDK platform 36、build tools 35.0.0；NDK 固定 `28.2.13676358`。
+- `ANDROID_HOME` / `ANDROID_NDK_HOME` 指向已有 SDK / NDK。
+- `scripts/android/prepare.py` 拒绝缺失或不匹配的 Go/NDK，不安装工具链，不运行 sdkmanager。
+- 未添加 Gradle wrapper，使用已有 Gradle，离线模式缺少插件缓存时直接失败。
+
+```sh
+cd mobile/android
+gradle --offline :app:assembleDebug
+```
+
+以上 Gradle 命令从仓库根目录进入 `mobile/android/`；后续 Gradle 和许可更新命令也在该目录执行。
+
+Gradle 从固定 Fyne module 复制原始 Java driver 到构建目录，不维护 Fyne 分叉或修改已打包 APK。
+构建输出 arm64-v8a、x86_64 的单库，并启用 16 KB 页对齐；记录产品版本、commit、工具链和 ABI。
+依赖许可见 `mobile/THIRD_PARTY_NOTICES.md`，随 APK 打包。
+可运行 `python3 ../../scripts/android/notices.py` 按 Android 包图更新许可，不需要 SDK/NDK。
+
+Android versionName 读取根 `internal/version/VERSION`，versionCode 通过 `-PfncpnBuild=递增整数` 指定。
+新增 Android 平台发布按 MINOR 规划；发布须完成版本与真机验收。
+正式签名只从 `FNCPN_KEYSTORE`、`FNCPN_STORE_PASSWORD`、`FNCPN_KEY_ALIAS`、
+`FNCPN_KEY_PASSWORD` 读取，不提交或打印凭据。通过版本与真机验收后可在干净源码树运行：
+
+```sh
+gradle --offline :app:bundleRelease -PfncpnBuild=递增整数
+```
+
+当前未执行 Java/JNI 编译、Android 打包、签名、安装或真机验收，不将代码存在视为这些检查通过。
+方案结论与待验收范围见 [Android 支持](platform-support.md#android)。
+`mobile/FyneApp.toml` 的生成版本 0.0.0 仅为开发占位，不作为正式发布版本，发布时统一注入产品版本。
+
+### Android CI（Debug 构建）
+
+[Android workflow](../.github/workflows/build-android.yml) 在任意分支推送、PR 和手动触发时运行。
+提交需要推送到 GitHub 才会触发；不用准备仓库 Secrets，也不要求本机安装 Android 工具链。
+
+流程先运行共享连接宿主和移动 module 的竞态测试、静态检查及 APK 校验脚本回归；
+通过后，在 Ubuntu runner 配置上文固定版本的 Go、JDK、Gradle、SDK 和 NDK，下载 Go/Gradle
+依赖并执行 `assembleDebug`。CI 首次构建允许在线下载依赖，不使用本地已有缓存场景的 `--offline`。
+SDK/NDK 的安装步骤只存在于 workflow；本机构建脚本仍拒绝自动安装。
+
+`scripts/android/verify_apk.py` 检查 Debug 包名、产品版本、run number 对应的 versionCode、
+源码 commit、两种 ABI 的 ELF、JNI/Fyne 入口、16 KB ELF/ZIP 对齐及 Debug 签名。
+只有校验通过才上传 `fncpn-android-debug-<run>-<attempt>`，内含 APK、SHA256SUMS 和 verification.json。
+`fncpn-android-logs-<run>-<attempt>` 保留构建/校验日志和 Gradle 报告，失败时也尝试上传；产物保留 14 天。
+
+该流程不使用正式签名、不创建 GitHub Release、不公开或覆盖正式产物；版本与 server 的准入契约不变。
+Debug 签名由 runner 生成，不保证不同 runner 构建的调试签名相同。构建成功也不等于已完成安装、
+Service 冷启动或真实网络验收；首轮云端运行结果仍须单独记录。
+
+## 测试
+
+```bash
+go test -race ./...
+go vet ./...
+node --test internal/server/web/index.test.cjs
+```
+
+
+### 网络恢复检查
+
+根 module 的常规测试覆盖恢复逻辑；修改协调器、选路或取消行为时，可在 macOS 定向执行：
+
+```sh
+go test -race ./internal/client ./internal/ipc ./internal/platform/darwin
+```
+
+重点检查重复通知与连续切网、手动请求合并、断开取消和迟到结果、无通知重试、保留健康连接、多网卡选路、阶段预算及跨进程取消。权限相关改动还需覆盖等待、允许、超时、跳过和暂停保护。具体参数由源码及确定性测试维护；系统实测范围见 [验证记录](validation.md#网络恢复验收边界)。
+
+### Wails UI 检查
+
+```sh
+(cd ui && MACOSX_DEPLOYMENT_TARGET=13.0 go test -race ./...)
+(cd ui/frontend && npm ci && npm test && npm run build)
+bash -n scripts/build-native-macos.sh scripts/build-wails-macos.sh scripts/build-macos-pkg.sh scripts/macos-app-common.sh
+```
+
+自动测试覆盖真实 IPC 编解码、多因子错误、组件版本不匹配、管理后台地址边界，以及
+与原生一致的状态/权限呈现。完整安装器同时执行根项目测试和已有包结构检查。
+真实 NAS 的用户名密码/访问码/OTP 登录、自启登录会话、网络切换恢复和实际升级/卸载，
+需要在对应环境继续实机验收；构建通过不替代这些结论。
+
+### 诊断与安全回归
+
+修改错误分类、日志、鉴权或恢复语义时，按以下测试定位覆盖范围；常规命令见本节开头，平台依赖测试应在对应环境执行。测试替身不能代替实际握手、NAS 转发或系统安装验收。
+
+- `internal/client/error_chain_test.go`：真实 Unix IPC → 服务端 HTTP → 客户端 →
+  第二次 IPC，验证原因、回滚失败和请求 ID 不丢失。
+- `internal/client/errors_test.go`：HTTP/WSS 200 `invalid token`、401、403、404、410、
+  429、5xx、HTML、敏感正文、坏 JSON、读取失败、发现业务码和最新中继事件。
+- `internal/client/gateway_recovery_test.go`：应用入口 404 的分类边界、结构化永久错误
+  优先；真实 HTTP/WebSocket 模拟断线、404/502 和恢复，验证配置监听自动恢复、
+  管理器不清理现有网络、不更换设备身份、中继恢复后数据报可往返。特权网络为
+  测试替身，不据此声称已验证实机 WireGuard 握手或 NAS 转发。
+- `internal/client/manager_logging_test.go`：网关 200 鉴权失败进入 `AUTH_REQUIRED`，
+  客户端状态和日志均保留真实 HTTP 状态与原因。
+- `internal/client/observability_test.go`、`internal/server/observability_test.go`：
+  授权和连接 INFO、请求上下文、跨重新授权/重启的设备幂等、同名不同密钥、
+  正常轮询和维护不刷日志，以及凭据不泄漏。
+- `internal/privileged/observability_test.go`、`internal/logging/context_test.go`：
+  身份文件创建/覆盖/删除事件与请求日志作用域；凭据读取和 Cookie 刷新不刷日志。
+- `internal/server/devices_test.go`：RX 超时、计数重置和未知状态保护、实时删除校验、
+  权限、失败回滚、并发删除、状态日志及同名记录隔离。
+- `internal/server/web/iframe.test.cjs`：跨源受限 iframe 中的真实 Chrome 回归，
+  验证确认/取消/Esc、确认期间重新上线、后台拒绝、删除失败保留行和窄屏布局。
+- `internal/client/relay_test.go`、`internal/server/relay_test.go`：中继建立、正常结束、
+  断线重拨失败与恢复的日志，不包含 URL 查询、Cookie 或报文内容。
+- `internal/client/native_session_test.go`、`internal/client/adminproxy_test.go`：
+  CLI/Web token 隔离、Web 登录失败不影响建链、本地 bootstrap nonce、路径限制和
+  浏览器 Cookie 不得覆盖代理注入凭据。
+- `internal/server/relay_test.go`：网关改写 Host、Origin 缺失/不同均可升级，
+  无网关身份仍拒绝，容量限制和二进制转发保留。
+- `internal/model/error_details_test.go`、`internal/logging/rotate_test.go`：
+  错误链、联合错误、脱敏、字段保留和系统错误分类。
+- 授权 Service、原生 AppKit 登录页与管理页测试验证错误展示、失败授权记录，
+  以及后台错误不会覆盖尚未提交的表单错误。
+- `internal/platform/linux/firewall_docker_linux_test.go`：在独立 Linux 网络命名空间中
+  验证真实转发、NAT、Docker 默认 DROP、iptables-nft 兼容性、规则更新和清理，
+  不修改宿主机现有网络规则。
 
 ## 中英文资源
 
@@ -86,6 +439,75 @@ Go CLI 默认构建也会嵌入这个版本，不再报告 `dev`。
 发布时应归档安装包、元数据、协议与数据样本，后续兼容验收使用这些历史基线。
 正式产物需完成安装与基础连接确认；已有验证及暂缓范围见 [验证记录](validation.md)。
 
+## RPM 签名与密钥维护
+
+FnCPN 的 Core/UI RPM 使用项目专用 OpenPGP v4 RSA-4096 密钥和 SHA256 签名。
+不需要购买证书或付费签名服务。Debian、Arch、macOS 和 Windows 包不使用此 RPM 签名。
+
+### 公钥与首次安装
+
+公钥：[RPM-GPG-KEY-fncpn](../packaging/linux/keys/RPM-GPG-KEY-fncpn)。完整指纹：
+
+```text
+B2AA E111 998B BE82 DECC 9F10 45BB E575 8B86 1A6A
+```
+
+自动安装脚本从所选版本 tag 读取公钥，先核对脚本固定的公钥 SHA256，再在只包含该
+公钥的临时 RPM 数据库中验证所有待安装包。全部通过后才将公钥导入系统，保持原生
+包管理器签名策略；Fedora 的本地包安装显式启用 `localpkg_gpgcheck=True`。
+旧的未签名草稿 RPM 不满足此条件，应改用签名后的草稿资产。
+
+手动安装时，从可信来源下载公钥，并核对完整指纹后执行：
+
+```sh
+# 有 GnuPG 的环境可先查看完整指纹，与上方记录比对
+# 不要仅比较短 key ID
+gpg --show-keys --with-fingerprint RPM-GPG-KEY-fncpn
+sudo rpmkeys --import RPM-GPG-KEY-fncpn
+rpmkeys --checksig --verbose ./fncpn-core-*.rpm ./fncpn-ui-*.rpm
+# 然后使用 dnf 或 zypper 成套安装同版本 Core/UI
+```
+
+必须同时有有效签名和有效内容摘要；只有 `digest: OK` 不能证明包已签名。
+公钥和 RPM 可公开分发，签名私钥与口令不进入仓库、日志或发布资产。
+
+### 草稿构建
+
+`release.yml` 将 `RPM_SIGNING_PRIVATE_KEY`、`RPM_SIGNING_PASSPHRASE` 两个 Actions
+Secrets 传递给 Linux 构建流程。仅 RPM 发布构建的签名步骤接收它们；普通 PR、其他格式
+和未开启发布模式的手动构建不会导入私钥。缺少 Secret、指纹不符或验签失败时直接失败。
+
+`rpm_signing.py` 使用独立临时 GnuPG 目录，通过 stdin 导入私钥，签名后关闭临时 agent
+并删除目录。口令只通过权限受限的临时文件传给 GnuPG，不放在命令行参数中。
+上传目录是 `dist/linux/`，不包含签名临时目录。
+
+流程顺序为：构建 Core/UI → 签名 RPM → 隔离公钥验签 → 生成构建清单和 SHA256 →
+在 Fedora/openSUSE 安装同一份签名包 → 统一发布清单。
+兼容性测试不再允许未签名本地 RPM，证据包含 `rpm-signature` 和公钥指纹；发布清单
+拒绝缺少签名证据或使用其他公钥的候选。发布后不得重新签名覆盖旧包。
+
+`rpm_signing_test.py` 覆盖摘要成功但未签名、签名/摘要失败、缺少 Secret，并在 RPM
+签名 CI 中使用实际包验证正常签名、移除签名、篡改内容和错误公钥。
+
+### 本地密钥与恢复
+
+维护者的密钥保留在默认 `~/.gnupg/`，私钥位于 `private-keys-v1.d/`，吊销证书位于
+`openpgp-revocs.d/`。现有维护环境的随机口令保存在 `~/.gnupg/fncpn-rpm-passphrase`，
+文件权限为 `0600`；不要将该目录或口令文件加入项目、同步日志或公开分享。
+用 `gpg --list-secret-keys --with-fingerprint` 查看密钥及到期时间。
+
+GitHub Secrets 是 CI 使用副本，网页/API 不提供原值下载。必要时可另外编写仅手动触发、
+经过审核的恢复 workflow，将 Secret 用维护者临时提供的公钥加密后输出密文；不能输出
+明文私钥。当前没有创建恢复 workflow，也没有将私钥备份到仓库或 Release。
+
+密钥续期或轮换前，更新公开公钥、指纹文件、安装脚本固定的公钥哈希和对应 Secrets，
+同步说明旧包的信任方式并重新验证。不要删除仍用于验收历史包的公钥。
+失去私钥和 Secret 副本后无法从公钥重建私钥；泄露时应使用吊销证书并更换密钥。
+
+参考：[RPM 签名](https://rpm.org/docs/4.20.x/man/rpmsign.8)、
+[RPM 公钥管理](https://rpm.org/docs/4.20.x/man/rpmkeys.8)、
+[GnuPG 密钥管理](https://gnupg.org/documentation/manuals/gnupg/OpenPGP-Key-Management.html)。
+
 ## GitHub 发布与 Homebrew
 
 流水线固定 Go 1.27.1、Xcode 16.4 / 对应 SDK、Node 22.14.0 和 fnpack 1.2.3（下载验证 SHA256），使用 macOS 15 Apple Silicon runner。临时目录按构建随机隔离。
@@ -100,12 +522,7 @@ Go CLI 默认构建也会嵌入这个版本，不再报告 `dev`。
 
 PKG Cask 安装使用系统 installer，卸载先运行项目脚本做网络清理，再清理 package receipt；默认保留用户配置与凭据。
 不配置自动 zap/purge，防止误删其他用户数据。Homebrew 统一标识符为 `fncpn`，只跟随稳定版。
-首次正式 `1.0.0` 归档协议及数据基线。
-
-首次正式发布：review 后提交并推送 `v1.0.0`，从该提交重建三种安装包；核对草稿的
-版本/build number、固定 App 路径、签名、许可证与 SHA256，完成安装及基础连接确认后公开。
-归档正式产物、commit、工具版本和脱敏的协议/数据样本，不归档真实私钥、凭据或 Cookie。
-发布前将 CHANGELOG 的准备条目整理为对应版本说明，公开后补记实际发布日期并更新 README 的公开状态；后续修复递增 PATCH。
+历史正式协议及数据基线用于后续兼容验证，归档要求见 [版本契约](versioning-and-compatibility.md)。
 
 macOS、Windows、fnOS 安装包命名使用小写 `fncpn-<version>-<os>-<arch>[-unsigned].<extension>`，系统为 `macos`、`windows`、`fnos`，架构为 `arm64`、`x64`。fnOS manifest 内的 `x86`/`arm` 平台标识保持不变，仅对外文件名统一。`release-<version>.json` 与 `SHA256SUMS-<version>` 为发布清单和校验和，沿用现有名称。Linux 使用 `fncpn-{core,ui}-<version>-linux-{amd64,arm64}.{deb,rpm,pkg.tar.zst}`，
 Arch 仅 amd64；两个组件必须成套更新，Nix 使用 Flake 源码构建。
@@ -215,5 +632,49 @@ runner 只提取固定版本 CLI 的运行文件并校验压缩包 SHA256，不�
 [1.0.10 发布核验](validation.md#1010-构建与夸克镜像核验2026-10-15)。
 该次通过不代表凭据长期续期、不同账号或全部平台安装专项已验证。
 
-Linux 的通用安装包、构建基线和多发行版验证见 [Linux 支持](linux-support.md)；
-Nix Flake 源码构建与 NixOS 声明式部署见 [Nix 支持](nix.md)。
+## 官网开发与部署
+
+源码位于 `website/`，使用原生 HTML / CSS / JavaScript，无 npm 依赖或构建步骤。使用 Netlify + Cloudflare 部署；网站部署与产品 tag、Release、Homebrew 更新独立，不改变产品版本或通信契约。
+
+### 本地预览
+
+```sh
+python3 -m http.server 4174 --bind 127.0.0.1 --directory website
+```
+
+打开 <http://127.0.0.1:4174>，下载区可直接访问 <http://127.0.0.1:4174/#download>。
+平台识别的无依赖测试：`node --test website/download-platform.test.mjs`。
+
+### Netlify
+
+导入此仓库并选择生产分支，使用根目录 `netlify.toml`：
+
+| 设置 | 值 |
+| --- | --- |
+| Base directory | 留空，仓库根目录 |
+| Build command | 留空 |
+| Publish directory | `website` |
+
+配置包含 CSP、禁止嵌入、权限限制等响应头，资源每次再验证缓存。`website/404.html` 用于未知路径，不使用 SPA 通配回写。CSP 只允许本站资源，新增外部资源时需要同步检查配置。
+
+### 自定义域名与 Cloudflare
+
+生产域名为 `https://fncpn.rectcircle.cn`。首页 canonical、分享元数据、sitemap 和 robots.txt 已统一使用该地址。
+
+1. 取得 Netlify 的实际生产地址，在 Domain management 中绑定 `fncpn.rectcircle.cn`并设为主域名，不迁移到 Netlify DNS。
+2. 在现有 Cloudflare 区域添加 `fncpn` 子域名的 CNAME，目标使用实际 `<site>.netlify.app` 主机名，不包含协议或路径。检查同名记录用途，避免冲突。
+3. 初始使用 DNS only（灰云），完成 Netlify 验证及自定义域名 HTTPS 证书签发。
+4. 确认源站证书有效后开启 Proxied（橙云），SSL/TLS 使用 Full (strict)。如区域有其他站点，可针对该主机名配置规则。
+5. 上线后检查 HTTPS、资源加载、404 状态、下载链接、路径切换和命令复制。若代理影响域名验证或证书续期，暂时切回灰云完成验证。
+
+客户端官网菜单、服务端管理页、fnOS 应用描述、安装器元数据与 Homebrew 主页均使用此官网；发布版本以 GitHub 为发布源，中文下载区另提供夸克网盘永久分享；问题反馈使用 GitHub 对应入口。请在交付这些客户端/服务端更新前确认官网已可访问。
+
+### 维护
+
+- 下载区同时维护 Mac、Windows、Linux 和 Nix 入口；Linux 默认指向 latest 公开版，草稿需要 token，不能让网页自动选择草稿。GNOME 托盘、DNS 前提和包格式矩阵链接到对应文档。
+- 内容以根目录 README 和版本兼容文档为依据。平台支持、签名和验证范围变化时同步更新页面。
+- 下载链接进入 GitHub Releases；中文页面在 GitHub 或 Homebrew 访问较慢时另提供夸克网盘入口，用户按版本、平台及架构选包，避免网页硬编码产品版本导致过时。
+- 后续通过 Netlify Git 部署发布网页修改，无需创建产品版本 tag。
+- 本地预览通过不等于生产部署成功；推送后应确认 Netlify 部署与生产页面内容。本文不记录或推断当前 Cloudflare 配置。
+
+参考：[Netlify 配置](https://docs.netlify.com/build/configure-builds/file-based-configuration/)、[外部 DNS](https://docs.netlify.com/manage/domains/configure-domains/configure-external-dns/)、[HTTPS](https://docs.netlify.com/manage/domains/secure-domains-with-https/https-ssl/)、[Cloudflare Full (strict)](https://developers.cloudflare.com/ssl/origin-configuration/ssl-modes/full-strict/)。

@@ -53,7 +53,8 @@ func newFNOSTransport(base *http.Transport) *fnosTrustTransport {
 
 func newFNOSTransportWithRoot(base *http.Transport, root *x509.Certificate, rootErr error) *fnosTrustTransport {
 	if base == nil {
-		base = http.DefaultTransport.(*http.Transport)
+		base = http.DefaultTransport.(*http.Transport).Clone()
+		configurePlatformTransport(base)
 	}
 	transport := &fnosTrustTransport{system: base.Clone(), fnos: base.Clone()}
 	if rootErr != nil {

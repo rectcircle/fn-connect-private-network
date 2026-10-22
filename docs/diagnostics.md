@@ -21,6 +21,8 @@
 | `httpStatus` | 实际 HTTP/WSS Upgrade 状态；没有 HTTP 交互时省略 |
 | `remoteCode` | 外部服务业务码，例如 FN Connect `5000`、`3000037` |
 | `requestId` | 错误源的请求 ID，用于跨日志定位 |
+| `clientVersion` / `serverVersion` | 版本准入错误中的两端产品版本 |
+| `upgradeTarget` / `releaseURL` | 需要升级的一端及对应发布下载入口 |
 
 Go 的 `Cause` 保留本地 `errors.Is/As` 错误链，不序列化。跨进程由 `detail`
 传递可安全显示的原因，GUI、管理页和 CLI 不再只显示 `message`。
@@ -60,6 +62,8 @@ Go 的 `Cause` 保留本地 `errors.Is/As` 错误链，不序列化。跨进程�
 | `PROTOCOL_ERROR` | 非法 JSON、IPC 协议/响应 ID 错误、错误的 WSS Upgrade、探测证明不匹配 | 400 | 8 |
 | `RESOURCE_EXHAUSTED` | 中继连接容量、HTTP 429、磁盘/文件描述符耗尽 | 429 | 4 |
 | `DISCOVERY_FAILED` | FN Connect 返回非零业务码 | 外部响应可能仍为 200 | 4 |
+| `SERVER_UNAVAILABLE` | 版本入口返回 404，提示安装或启动 FnCPN，停止自动恢复 | 保留实际 404 | 1 |
+| `VERSION_INCOMPATIBLE` | 远程版本准入失败，提示升级指定一端 | 本地准入判定；保留实际响应状态 | 8 |
 
 外部响应中的 HTTP 状态保留原值。已知结构化错误保持它自己的分类；
 无结构化错误时，401 映射登录失效，403 映射权限拒绝，不能把二者混为一谈。
@@ -76,7 +80,9 @@ fnOS 停用应用时，网关可能撤下 `/app/fncpn/` 路由，返回非 FnCPN
 HTTP 404，而不只是 502/503。将它归为不可重试的 `NOT_FOUND` 会使 WSS 重拨退出、
 客户端清理隧道并停留在 ERROR；之后启用应用也不会自动恢复。
 
-因此，仅对请求路径位于 `/app/fncpn/` 下、且响应未携带可识别 FnCPN 错误结构的
+版本入口 `/app/fncpn/version` 的 404 是明确例外：返回 `SERVER_UNAVAILABLE` 并停止自动重连、配置监听和旧网络，保留身份与配置，用户安装或启动服务端后手动连接重新检查。不能据此断言应用已卸载，规则见 [版本契约](versioning-and-compatibility.md)。
+
+对其余请求路径位于 `/app/fncpn/` 下、且响应未携带可识别 FnCPN 错误结构的
 404，统一按 `UNAVAILABLE`、`retryable=true` 处理。HTTP 配置/长轮询与 WSS
 共用此规则；真实 HTTP 404、请求阶段、请求 ID 和安全原因仍保留，使用既有退避重试。
 空正文、HTML 和未知 JSON 也适用，但正文继续遵守脱敏与大小限制。
@@ -191,6 +197,9 @@ HTTP 生成 `X-Request-ID`；服务端日志的 `http_request_id` 标识当前 H
 | --- | --- |
 | macOS 用户 daemon | `~/Library/Logs/FnCPN/client.log` |
 | macOS root daemon | `/var/log/fncpn/client-privileged.log` |
+| Windows 用户 daemon | `%LOCALAPPDATA%\FnCPN\Logs\client.log` |
+| Windows 系统服务 | `%ProgramData%\FnCPN\Service\Logs\service.log` |
+| Linux 用户 / 特权服务 | 见 [Linux 数据与日志路径](development.md#linux-构建与部署) |
 | fnOS server daemon | `/var/apps/fncpn/var/logs/server/server.log` |
 | fnOS root daemon | `/var/apps/fncpn/var/logs/privileged/privileged.log` |
 
@@ -244,39 +253,7 @@ nftables 中一个 base chain 的 ACCEPT 不是最终放行，后续同 hook 的
 
 ## 回归依据
 
-- `internal/client/error_chain_test.go`：真实 Unix IPC → 服务端 HTTP → 客户端 →
-  第二次 IPC，验证原因、回滚失败和请求 ID 不丢失。
-- `internal/client/errors_test.go`：HTTP/WSS 200 `invalid token`、401、403、404、410、
-  429、5xx、HTML、敏感正文、坏 JSON、读取失败、发现业务码和最新中继事件。
-- `internal/client/gateway_recovery_test.go`：应用入口 404 的分类边界、结构化永久错误
-  优先；真实 HTTP/WebSocket 模拟断线、404/502 和恢复，验证配置监听自动恢复、
-  管理器不清理现有网络、不更换设备身份、中继恢复后数据报可往返。特权网络为
-  测试替身，不据此声称已验证实机 WireGuard 握手或 NAS 转发。
-- `internal/client/manager_logging_test.go`：网关 200 鉴权失败进入 `AUTH_REQUIRED`，
-  客户端状态和日志均保留真实 HTTP 状态与原因。
-- `internal/client/observability_test.go`、`internal/server/observability_test.go`：
-  授权和连接 INFO、请求上下文、跨重新授权/重启的设备幂等、同名不同密钥、
-  正常轮询和维护不刷日志，以及凭据不泄漏。
-- `internal/privileged/observability_test.go`、`internal/logging/context_test.go`：
-  身份文件创建/覆盖/删除事件与请求日志作用域；凭据读取和 Cookie 刷新不刷日志。
-- `internal/server/devices_test.go`：RX 超时、计数重置和未知状态保护、实时删除校验、
-  权限、失败回滚、并发删除、状态日志及同名记录隔离。
-- `internal/server/web/iframe.test.cjs`：跨源受限 iframe 中的真实 Chrome 回归，
-  验证确认/取消/Esc、确认期间重新上线、后台拒绝、删除失败保留行和窄屏布局。
-- `internal/client/relay_test.go`、`internal/server/relay_test.go`：中继建立、正常结束、
-  断线重拨失败与恢复的日志，不包含 URL 查询、Cookie 或报文内容。
-- `internal/client/native_session_test.go`、`internal/client/adminproxy_test.go`：
-  CLI/Web token 隔离、Web 登录失败不影响建链、本地 bootstrap nonce、路径限制和
-  浏览器 Cookie 不得覆盖代理注入凭据。
-- `internal/server/relay_test.go`：网关改写 Host、Origin 缺失/不同均可升级，
-  无网关身份仍拒绝，容量限制和二进制转发保留。
-- `internal/model/error_details_test.go`、`internal/logging/rotate_test.go`：
-  错误链、联合错误、脱敏、字段保留和系统错误分类。
-- 授权 Service、原生 AppKit 登录页与管理页测试验证错误展示、失败授权记录，
-  以及后台错误不会覆盖尚未提交的表单错误。
-- `internal/platform/linux/firewall_docker_linux_test.go`：在独立 Linux 网络命名空间中
-  验证真实转发、NAT、Docker 默认 DROP、iptables-nft 兼容性、规则更新和清理，
-  不修改宿主机现有网络规则。
+错误传播、脱敏、恢复和管理页交互的测试入口及覆盖范围见 [开发文档](development.md#诊断与安全回归)。实际实测结论见 [验证记录](validation.md)。
 
 ## Go runtime 崩溃日志
 

@@ -1,0 +1,76 @@
+plugins { id 'com.android.application' }
+
+def productVersion = file('../../../internal/version/VERSION').text.trim()
+def buildNumber = providers.gradleProperty('fncpnBuild').orElse('1').get().toInteger()
+def existingNdk = System.getenv('ANDROID_NDK_HOME')
+if (!existingNdk) throw new GradleException('Set ANDROID_NDK_HOME to the existing pinned NDK; automatic installation is disabled')
+if (gradle.gradleVersion != '8.13') throw new GradleException('Use the already installed Gradle 8.13')
+if (JavaVersion.current() != JavaVersion.VERSION_17) throw new GradleException('Use the already installed JDK 17')
+
+android {
+    namespace 'com.rectcircle.fncpn'
+    compileSdk 36
+    buildToolsVersion '35.0.0'
+    ndkVersion '28.2.13676358'
+    ndkPath existingNdk
+    defaultConfig {
+        applicationId 'com.rectcircle.fncpn'
+        minSdk 26
+        targetSdk 36
+        versionCode buildNumber
+        versionName productVersion
+        ndk { abiFilters 'arm64-v8a', 'x86_64' }
+    }
+    compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
+    sourceSets.main {
+        java.srcDir layout.buildDirectory.dir('generated/fyne/java')
+        jniLibs.srcDir layout.buildDirectory.dir('generated/go/jniLibs')
+        assets.srcDir layout.buildDirectory.dir('generated/fyne/assets')
+    }
+    buildTypes {
+        debug { applicationIdSuffix '.debug' }
+        release { minifyEnabled false }
+    }
+    packaging { jniLibs { useLegacyPackaging = false } }
+    // Signing comes from local environment; no keystore or password is committed.
+    if (System.getenv('FNCPN_KEYSTORE')) {
+        signingConfigs {
+            release {
+                storeFile file(System.getenv('FNCPN_KEYSTORE'))
+                storePassword System.getenv('FNCPN_STORE_PASSWORD')
+                keyAlias System.getenv('FNCPN_KEY_ALIAS')
+                keyPassword System.getenv('FNCPN_KEY_PASSWORD')
+            }
+        }
+        buildTypes.release.signingConfig signingConfigs.release
+    }
+}
+
+tasks.register('prepareGo', Exec) {
+    workingDir file('../../..')
+    commandLine 'python3', 'scripts/android/prepare.py'
+    doLast {
+        def path = layout.buildDirectory.file('generated/fyne/assets/build.json').get().asFile
+        def metadata = new groovy.json.JsonSlurper().parse(path)
+        metadata.gradle = gradle.gradleVersion
+        metadata.java = System.getProperty('java.version')
+        metadata.agp = '8.13.2'
+        metadata.sdk = 36
+        metadata.versionCode = buildNumber
+        path.text = groovy.json.JsonOutput.prettyPrint(groovy.json.JsonOutput.toJson(metadata)) + '\n'
+    }
+    // Go's content-addressed build cache handles incremental native builds.
+    // Run preparation on every Gradle invocation so source changes cannot be missed.
+}
+tasks.named('preBuild').configure { dependsOn 'prepareGo' }
+
+tasks.configureEach {
+    if (name == 'packageRelease' || name == 'bundleRelease') {
+        doFirst {
+            if (!providers.gradleProperty('fncpnBuild').isPresent()) throw new GradleException('Release requires an explicit increasing fncpnBuild')
+            if (!System.getenv('FNCPN_KEYSTORE')) throw new GradleException('Release requires an explicitly configured signing key')
+            def metadata = new groovy.json.JsonSlurper().parse(layout.buildDirectory.file('generated/fyne/assets/build.json').get().asFile)
+            if (metadata.dirty) throw new GradleException('Release requires a clean source tree')
+        }
+    }
+}

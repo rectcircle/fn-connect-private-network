@@ -7,5 +7,9 @@
 /tmp/
 /.trae/documents/
 /fncpn
+/mobile/android/.gradle/
+/mobile/android/**/build/
+/mobile/android/local.properties
+/mobile/mobile
 
 __pycache__/

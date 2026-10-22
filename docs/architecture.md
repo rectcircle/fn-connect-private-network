@@ -57,10 +57,16 @@ fnOS
 | 系统 DNS | loopback DNS + resolver 文件 | loopback DNS + NRPT | systemd-resolved 专属链路与受限 DNS bridge |
 
 Linux 不修改物理接口、转发或主机防火墙；安装、网络资源所有权与支持范围见
-[Linux 支持](linux-support.md)。NixOS 通过 [Flake 模块](nix.md) 声明服务。
+[Linux 支持](platform-support.md#linux)。NixOS 通过 [Flake 模块](development.md#nix-flake-与-nixos) 声明服务。
 
 新增平台应实现业务核心定义的窄接口，保持 UI、连接状态机和系统网络权限的职责边界。
 若目标系统要求不同的进程或系统扩展模型，由平台适配承接；支持范围以实际实现和验收为准。
+
+Android 编码实现位于 `mobile/`，尚未完成 Android 打包或真机验收。
+Fyne UI 单向依赖连接接口；Java VpnService 通过 JNI 持有 `internal/clienthost`，复用 Manager/Service。
+宿主和系统适配均不依赖 Fyne，所有组件链接进同一 Go native library，不启动桌面双 daemon。
+Android 使用系统 VPN/TUN、路由和 DNS，不使用 root、Linux netlink 或 systemd。
+LOCAL 开启名称解析时保留 DNS 用 TUN，不运行 WireGuard。见 [Android 支持](platform-support.md#android)。
 
 ### 职责边界
 
@@ -218,6 +224,40 @@ FnCPN 会按需
 `/var/log/fncpn/client-privileged.log`，fnOS daemon 写入
 `${TRIM_PKGVAR}/logs/` 下相互隔离的目录。
 
+## 网络检测与恢复
+
+### 统一调度，保留用户意图
+
+自动恢复、手动检测、配置更新、特权组件生命周期和鉴权恢复由同一协调器调度，网络变更与身份操作串行执行。这样可以避免多个触发源同时修改网络或争用凭据。重复请求合并，真实换网使旧任务失效并取消；只有当前网络代次的结果可以提交，防止迟到结果覆盖新连接。
+
+断开、退出登录或忘记身份先取消恢复任务，再清理网络。后台检测、权限恢复和迟到回调都不能重新开启用户已关闭的自动连接。
+
+### 根据物理网络重新评估
+
+系统通知作为重新观察的信号，合并重复事件，并用快照轮询补偿遗漏。网络身份依据物理接口、地址前缀和平台网络标识，排除自有虚拟接口及 IPv6 临时地址轮换，避免自身网络配置触发重连循环；快照读取失败不能当成网络已消失。
+
+多网卡环境按端点与物理网络的前缀关系选择探测接口，但网段匹配只决定走哪张网卡。进入 LOCAL 仍须通过 NAS 的 HMAC 身份证明及版本准入，不能凭地址可达就信任目标。
+
+### 先评估路径，再变更连接
+
+路径优先级为 LOCAL → IPv6 DIRECT → FN Connect RELAY。优先验证缓存的已认证端点，必要时并行刷新端点、发现信息和配置，使公网暂时不可达时仍可恢复局域网访问。
+
+网络身份、计划和健康状态未变时复用有效配置及现有连接。健康维护持续尝试更优路径，但升级探测失败不拆除健康的 DIRECT/RELAY；WSS 自身重连与完整隧道恢复分别处理，避免传输恢复期间反复重建网络。
+
+### 有界恢复与取消
+
+一次评估及其各阶段均有预算，DIRECT 为 RELAY 和清理预留时间，特权调用及握手继承剩余预算，避免单个阶段无限等待。具体超时值由源码与测试维护，不作为任意环境下的连接耗时承诺。
+
+取消须传播到特权进程；正常清理继承调用方取消状态，失败回滚使用独立短预算，以收拢已经应用的部分状态。失败按指数退避并由定时器重试，不依赖下一次系统通知；真实换网和手动检测可绕过旧网络的退避，取消失效任务不增加故障退避。
+
+### macOS 局域网权限
+
+启用 CGO 的 macOS daemon 通过 Network.framework 观察实际 NAS 端点。只有系统明确报告局域网权限被拒绝才显示权限等待，普通连接失败和 Bonjour 自发现均不能代替权限证据；TCP 可达也不能代替身份与版本校验。
+
+权限等待独立于普通 LOCAL 探测预算且有上限，用户可选择“继续远程连接”。该操作只跳过当前等待，不修改配置、自动连接意图或远程准入规则。允许权限后重新评估路径，已暂停的连接保持暂停；换网、端点变化、退出和取消均按生命周期释放或重建观察器。
+
+恢复相关测试入口见 [开发文档](development.md#网络恢复检查)，实际结果与待验收范围见 [验证记录](validation.md#网络恢复验收边界)。
+
 ## 局域网域名解析（Split DNS）
 
 1.1.0 DNS 为随连接自动生效的内建能力，无管理员启用步骤；完整契约见
@@ -263,8 +303,7 @@ FnCPN 会按需
 - 服务端允许已登录用户注册设备，仅管理员可清理离线记录；设备级授权和安全撤销进入 P1。
 - 客户端原生会话、Cookie jar、私钥和配置分层存储；client privileged-daemon
   只保存不透明凭据，不解析会话或 Cookie。
-- 用户态 IPC 校验同 UID；root IPC 校验 peer credential 和当前控制台用户。P0 仅允许
-  当前控制台用户持有系统 VPN，快速用户切换时 root 清理旧用户网络状态。
+- macOS 用户态 IPC 校验同 UID，root IPC 校验对端凭据与当前控制台用户，用户切换时清理旧网络；Windows 校验 SID、会话与活动本地控制台身份。Linux 特权实例按 UID 隔离，不套用控制台用户限制。具体端点及授权见 [本地 IPC](interfaces.md#本地进程通讯协议)。
 - client 和 server privileged-daemon 只执行白名单操作，不接受调用者提供的命令、环境变量或文件路径。
 - server daemon 以应用专用普通用户运行，HTTP/WSS 外部输入不能直接进入 root 进程。
 - 安装包不携带 `wireguard-go`、`wg` 或其他网络工具；macOS 仅调用系统自带的固定 `/sbin/ifconfig` 和 `/sbin/route`，fnOS 不调用外部网络命令。
