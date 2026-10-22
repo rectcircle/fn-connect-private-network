@@ -70,7 +70,7 @@ def check_badging(text, version, build_number):
         raise ValueError("APK package name or version does not match the source build")
     if not re.search(r"^application-debuggable(?:\s|$)", text, re.M):
         raise ValueError("Expected Debug APK, not a release artifact")
-    if not re.search(r"^sdkVersion:'26'", text, re.M) or not re.search(r"^targetSdkVersion:'36'", text, re.M):
+    if not re.search(r"^(?:minSdkVersion|sdkVersion):'26'$", text, re.M) or not re.search(r"^targetSdkVersion:'36'$", text, re.M):
         raise ValueError("APK SDK bounds do not match the configured Android target")
 
 

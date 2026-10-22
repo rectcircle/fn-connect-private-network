@@ -73,9 +73,14 @@ class APKVerificationTests(unittest.TestCase):
 
     def test_debug_package_and_sdk_bounds(self):
         text = "package: name='com.rectcircle.fncpn.debug' versionCode='42' versionName='1.2.0'\nsdkVersion:'26'\ntargetSdkVersion:'36'\napplication-debuggable\n"
-        verify_apk.check_badging(text, "1.2.0", 42)
+        for field in ("sdkVersion", "minSdkVersion"):
+            with self.subTest(field=field):
+                verify_apk.check_badging(text.replace("sdkVersion:", field + ":"), "1.2.0", 42)
         for bad in (text.replace(".debug", ""), text.replace("application-debuggable", ""),
-                    text.replace("sdkVersion:'26'", "sdkVersion:'23'")):
+                    text.replace("sdkVersion:'26'", "sdkVersion:'23'"),
+                    text.replace("sdkVersion:'26'", "minSdkVersion:'23'"),
+                    text.replace("targetSdkVersion:'36'", "targetSdkVersion:'35'"),
+                    text.replace("sdkVersion:'26'", "minSdkVersion:'260'")):
             with self.subTest(), self.assertRaises(ValueError):
                 verify_apk.check_badging(bad, "1.2.0", 42)
 
