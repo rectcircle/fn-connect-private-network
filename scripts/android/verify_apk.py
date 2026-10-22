@@ -118,6 +118,7 @@ def main():
     subprocess.run([str(tools / "apksigner"), "verify", "--verbose", str(args.apk)], check=True)
     subprocess.run([str(tools / "zipalign"), "-c", "-P", "16", "4", str(args.apk)], check=True)
     badging = subprocess.check_output([str(tools / "aapt2"), "dump", "badging", str(args.apk)], text=True)
+    print(badging, flush=True)
     check_badging(badging, version, args.build_number)
 
     def symbols(data):
