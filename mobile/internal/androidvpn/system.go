@@ -8,8 +8,11 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"net"
 	"net/netip"
+	"strconv"
 	"sync"
+	"time"
 
 	"github.com/rectcircle/fn-connect-private-network/internal/client"
 	"github.com/rectcircle/fn-connect-private-network/internal/model"
@@ -152,4 +155,21 @@ func DecodeReply(raw []byte, result any) error {
 		return nil
 	}
 	return json.Unmarshal(reply.Result, result)
+}
+
+// HasIPv6Route checks the selected physical network, including ULA uplinks
+// translated upstream. A successful UDP connect is only a routing precheck;
+// the shared manager still requires a real WireGuard handshake.
+func (n *Network) HasIPv6Route(ctx context.Context, address netip.Addr, port int) bool {
+	if !address.Is6() || address.Is4In6() || port < 1 || port > 65535 {
+		return false
+	}
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	conn, err := (&net.Dialer{Control: socketControl(n.System)}).DialContext(ctx, "udp6", net.JoinHostPort(address.String(), strconv.Itoa(port)))
+	if err != nil {
+		return false
+	}
+	conn.Close()
+	return true
 }

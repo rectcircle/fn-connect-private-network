@@ -207,7 +207,7 @@ html[lang="en"] .download-mirror{display:none}
  .download-title h2{font-size:30px;letter-spacing:-1px}
  .download-card{padding:22px 18px}
  .server-download-content{align-items:flex-start;flex-direction:column;gap:18px}
- .download-tabs{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:0;margin:0 -4px 22px}
+ .download-tabs{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:0;margin:0 -4px 22px}
  .download-tabs button{padding:12px 4px;font-size:12px;white-space:normal}
  .download-panel{min-height:0}
  .download-row{gap:12px;flex-wrap:wrap}

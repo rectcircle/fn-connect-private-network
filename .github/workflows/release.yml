@@ -119,9 +119,22 @@ jobs:
     with:
       ref: ${{ inputs.tag || github.ref }}
       release: true
+  android-build:
+    if: ${{ !inputs.publish }}
+    uses: ./.github/workflows/build-android.yml
+    permissions:
+      contents: read
+    with:
+      ref: ${{ inputs.tag || github.ref_name }}
+      release: true
+    secrets:
+      FNCPN_KEYSTORE_BASE64: ${{ secrets.FNCPN_KEYSTORE_BASE64 }}
+      FNCPN_STORE_PASSWORD: ${{ secrets.FNCPN_STORE_PASSWORD }}
+      FNCPN_KEY_ALIAS: ${{ secrets.FNCPN_KEY_ALIAS }}
+      FNCPN_KEY_PASSWORD: ${{ secrets.FNCPN_KEY_PASSWORD }}
   release:
     if: ${{ !inputs.publish }}
-    needs: [windows-build, linux-build, nix-check]
+    needs: [windows-build, linux-build, nix-check, android-build]
     runs-on: macos-15
     env:
       DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
@@ -168,6 +181,10 @@ jobs:
           pattern: linux-compat-*
           path: dist/linux-compat
           merge-multiple: true
+      - uses: actions/download-artifact@v4
+        with:
+          name: android-release-candidates-${{ inputs.tag || github.ref_name }}
+          path: dist/android
       - name: Build release draft
         if: ${{ !inputs.publish }}
         run: ./scripts/build-all.sh

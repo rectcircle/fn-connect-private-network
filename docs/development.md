@@ -49,7 +49,7 @@ FPK 构建要求通过 `FNPACK` 或 `PATH` 显式提供 `fnpack`，不依赖本�
 
 ### 图标生成
 
-macOS 打包自动生成图标；需要手动更新时运行 `swift scripts/generate-icons.swift packaging/assets`，生成资源随源码提交。其他平台使用已提交的 PNG。
+macOS 打包自动生成图标；需要手动更新时运行 `swift scripts/generate-icons.swift packaging/assets`，生成资源随源码提交。其他平台使用已提交的生成资源，构建时不依赖 Swift。
 
 ### macOS Wails UI
 
@@ -266,7 +266,7 @@ Nix 开发依赖只进入 CI，不在 Debian 验证虚拟机安装 Nix。
 
 ## Android 开发与构建
 
-Android 源码位于独立 `mobile` module；纯 Go 开发不需要 Android 工具链。当前完整 Android 构建与真机未验收，能力边界见 [平台决策](platform-support.md#android)。
+Android 源码位于独立 `mobile` module；纯 Go 开发不需要 Android 工具链。完整构建与专项真机结果见 [验证记录](validation.md)，能力边界见 [平台决策](platform-support.md#android)。
 
 桌面开发可设置 `FNCPN_CLIENT_SOCKET`，复用已安装且运行的桌面 daemon；
 不会由本界面自动安装或启动服务。未设置时明确提示不可用，不显示模拟连接。
@@ -274,9 +274,9 @@ Android 源码位于独立 `mobile` module；纯 Go 开发不需要 Android 工�
 ```sh
 cd mobile
 go run .
-go test -tags ci ./...
-go test -race -tags ci ./...
-go vet -tags ci ./...
+go test -tags ci,no_emoji ./...
+go test -race -tags ci,no_emoji ./...
+go vet -tags ci,no_emoji ./...
 GOOS=android GOARCH=arm64 CGO_ENABLED=0 go build ./internal/androidvpn
 ```
 
@@ -285,6 +285,30 @@ GOOS=android GOARCH=arm64 CGO_ENABLED=0 go build ./internal/androidvpn
 纯 Go 交叉编译不能验证 Java、JNI/C、Android 链接和系统行为。
 
 ### Android 构建与签名
+
+macOS 可以显式运行初始化脚本，复用已有匹配工具，仅安装缺失组件：
+
+```sh
+bash scripts/setup-android-macos.sh
+# 初始化完成后重新打开终端，或 source ~/.zshrc（Bash 使用 ~/.bashrc）
+```
+
+脚本参考 Windows 初始化入口：分阶段计时、日志保存在 `.dev/logs/`，校验后的下载缓存
+保存在 `.dev/downloads/`，中断后可重跑。Go 固定 1.27.1、Gradle 固定 8.13；
+缺失时安装到用户级 `~/.local/opt/`，不替换其他版本。已有 JDK 17、Python 3 优先复用，
+缺失时使用主机已有 Homebrew 安装；没有 Homebrew 时明确报错，不自动安装包管理器。
+SDK 使用 `ANDROID_HOME`（其次 `ANDROID_SDK_ROOT`），默认 `~/Library/Android/sdk`；
+SDK manager 复用已安装的匹配 SDK / NDK 包。不安装 Android Studio、模拟器或系统镜像，
+Java、Go、Gradle、Android 的环境变量和各自 PATH 条目直接写入 `~/.zshrc`（设置了
+`ZDOTDIR` 时写入对应目录）及 `~/.bashrc`，同时写入 Bash 实际使用的登录启动文件
+（依次选择已有 `.bash_profile`、`.bash_login`、`.profile`；均不存在时创建 `.bash_profile`）。
+每项依赖使用独立标记区块，重跑更新区块且不重复添加 PATH；保留其他配置，变更前在原目录备份，
+不生成单独的 env 文件。不修改系统代理或 Go 代理配置。建议预留 10–15 GB 磁盘空间。
+
+默认交互接受 SDK 许可证，下载 Go module 后执行双架构 Debug APK 构建验证。
+`--accept-licenses` 显式接受许可证并免交互；`--skip-smoke` 跳过 APK 构建验证，
+依然安装工具并下载 Go module。首次 Gradle 构建会联网下载 AGP 等依赖。
+初始化安装是显式操作，与下面只使用已有工具链的打包入口分开。
 
 以下入口要求主机已经配备 Android 工具链；脚本不自动安装。
 
@@ -302,27 +326,140 @@ gradle --offline :app:assembleDebug
 以上 Gradle 命令从仓库根目录进入 `mobile/android/`；后续 Gradle 和许可更新命令也在该目录执行。
 
 Gradle 从固定 Fyne module 复制原始 Java driver 到构建目录，不维护 Fyne 分叉或修改已打包 APK。
-构建输出 arm64-v8a、x86_64 的单库，并启用 16 KB 页对齐；记录产品版本、commit、工具链和 ABI。
+构建分别输出 `app-arm64-v8a-debug.apk`、`app-x86_64-debug.apk`，每个 APK 仅含对应架构的单库，
+不生成同时携带两套库的通用 APK。启用 16 KB 页对齐，记录产品版本、commit、工具链和 ABI。
 依赖许可见 `mobile/THIRD_PARTY_NOTICES.md`，随 APK 打包。
 可运行 `python3 ../../scripts/android/notices.py` 按 Android 包图更新许可，不需要 SDK/NDK。
 
 Android versionName 读取根 `internal/version/VERSION`，versionCode 通过 `-PfncpnBuild=递增整数` 指定。
-新增 Android 平台发布按 MINOR 规划；发布须完成版本与真机验收。
-正式签名只从 `FNCPN_KEYSTORE`、`FNCPN_STORE_PASSWORD`、`FNCPN_KEY_ALIAS`、
-`FNCPN_KEY_PASSWORD` 读取，不提交或打印凭据。通过版本与真机验收后可在干净源码树运行：
+新增平台复用既有协议、无新增 server 要求时按 PATCH 发布；发布须完成版本与真机验收。
+所有构建（含 Debug、开发版与 Release）均使用同一 FnCPN 正式证书，不再回退到 Debug keystore。
+CI 从 `FNCPN_KEYSTORE`、`FNCPN_STORE_PASSWORD`、`FNCPN_KEY_ALIAS`、`FNCPN_KEY_PASSWORD` 读取；
+本地默认读取下述仓库外凭据文件，可通过 `FNCPN_SIGNING_CREDENTIALS` 指定其他文件。
+环境变量优先；缺少签名配置时构建直接失败，不提交或打印凭据。
+FnCPN 正式签名使用应用独立 JKS：本地约定存放于 `~/.android/keystores/fncpn-release.jks`，
+alias 为 `fncpn-release`，证书主体 `CN=rectcircle,C=CN`，RSA 3072 位，有效期 10000 天。
+证书 SHA-256 指纹为
+`BB:AA:0F:80:8A:64:9A:CA:7B:F7:5A:49:20:2A:A9:2A:C5:73:F5:70:35:09:E8:A1:70:D4:EC:77:16:A9:35:79`。
+本地凭据位于同目录 `fncpn-release.credentials.json`，目录权限 0700、文件权限 0600；
+密钥库和密码须另外加密备份，不进入源码或日志。
+仓库 Actions Secrets 已配置 `FNCPN_KEYSTORE_BASE64`、`FNCPN_STORE_PASSWORD`、
+`FNCPN_KEY_ALIAS`、`FNCPN_KEY_PASSWORD`。正式签名 job 需将前者解码到 runner 临时文件，
+将该绝对路径传给 `FNCPN_KEYSTORE`，其余 Secret 作为同名环境变量传入，完成后删除临时密钥库。
+分支推送构建具有调试能力、使用正式证书签名的 APK；Release workflow 通过复用 Android workflow
+构建非 debuggable 的正式包，生产包名为 `com.rectcircle.fncpn`，两份 APK 合入发布清单。
+正式 versionCode 采用 tag commit 的 `git rev-list --count HEAD`，同一候选双 ABI 相同，后续发布单调增加。
+通过版本与真机验收后可在干净源码树运行：
 
 ```sh
 gradle --offline :app:bundleRelease -PfncpnBuild=递增整数
 ```
 
-当前未执行 Java/JNI 编译、Android 打包、签名、安装或真机验收，不将代码存在视为这些检查通过。
+完整构建与实机专项按 [验证记录](validation.md) 记录；通过构建不等于所有后台、切网和兼容性验收完成。
 方案结论与待验收范围见 [Android 支持](platform-support.md#android)。
 `mobile/FyneApp.toml` 的生成版本 0.0.0 仅为开发占位，不作为正式发布版本，发布时统一注入产品版本。
+
+### Android 界面与包体积
+
+移动端使用固定标题栏（菜单/返回、图标、FnCPN、产品版本）与主内容区。
+主页面内容左右留白 16 dp，连接按钮与诊断框沿同一边界对齐；诊断框内左右额外留白 16 dp。
+标题栏与内容区紧贴同一条细分割线，不额外插入布局间距；滚动区域不绘制边缘阴影。
+主界面沿用桌面端的身份、状态、连接信息、诊断详情顺序，只保留连接/断开连接、重新检测，
+诊断下方提供复制、打开日志、刷新。左侧抽屉菜单收纳重新登录、更换 NAS、管理后台、
+官网/捐赠、日志导出和退出；重新登录预填身份、更换 NAS 清空输入，均不在进入登录页时删除现有配置。
+未配置或授权失效自动进入登录页，后台状态更新不打断手动编辑。
+菜单和登录表单由 Fyne 实现；Go 页面栈保留主界面与滚动位置，登录进入/返回有平移动画，
+Android 仅通过 JNI 转发返回事件，先关闭键盘、再关闭抽屉或返回上一页；主页面返回仅将任务置于后台。
+MainActivity 使用 singleTask，通知入口复用已有 Activity，避免生成第二个 Fyne 原生窗口。
+进程重建后按保存的 autoConnect 恢复服务与连接；主动断开和菜单退出保留暂停意图。
+抽屉开关只平移已布局的面板并改变遮罩透明度，点击空白和返回键同样触发收起动画；
+滚动条仅在滚动期间显示，主页面底部保留 32 dp 留白。
+抽屉宽度为屏宽 78%（最大 320 dp），标题含应用图标，菜单项提供更大的触控区域与图文间距。
+登录页采用官网三行主文案与蓝色强调，身份标签保持中文，FN Connect ID/用户名输入向系统请求 ASCII 英文键盘，密码聚焦后滚动到表单底部；
+系统窗口使用 adjustResize 避让键盘。主页面身份使用中点分隔，DNS 可复制纯后缀（不含 ready 等状态文字）、NAS IP 可打开浏览器，
+诊断区使用小字号和边框；错误为红字，正常为默认文字色，主界面顶部不重复显示黄字错误。
+设备注册名称读取 Android 系统设备名，缺失时回退型号；已注册设备不自动改名。
+图标以 `scripts/generate-icons.swift` 为唯一绘制源，保留 macOS 的固定 1024 单位构图，
+不按图形包围盒重新居中或缩放。执行
+`swift scripts/generate-icons.swift packaging/assets --mobile-root mobile`
+同时生成 PNG/iconset、AppIcon.svg、Fyne SVG 和 Android VectorDrawable。
+Fyne 与 Android 标题栏使用完整彩色图标；Android adaptive foreground 将完整构图映射到
+108 单位画布中央的 72 单位区域，外围仅用于系统裁切，背景为 #E0EDFF。
+快捷磁贴使用同源单色图形与紧凑画布。生成资源提交源码，Android/Linux CI 不执行 Swift。
+生成器的 macOS 输出保持一致，不另画 Android 近似图形。
+快捷设置提供 FnCPN 磁贴，单击连接/断开、长按进入 App；需用户手动添加磁贴，首次 VPN 授权或未登录时先进入 App。
+磁贴采用面板可见时监听的模式，每次展开检查服务存活与就绪状态。退出监听时不缓存激活外观，
+避免应用被强制停止后系统仍显示旧状态；下次监听恢复真实状态。
+系统硬停止不会执行应用清理回调，面板正显示时的瞬时状态仍受 Android/厂商 SystemUI 控制。
+页面底色随主题刷新，不缓存 Android 主题初始化前的颜色。Fyne 2.8.2 移动驱动仍按约 60 Hz 调度，不承诺 120 Hz。
+渲染和逻辑边界：Fyne 控件与页面状态只由 UI goroutine 修改；网络/宿主命令在工作 goroutine，
+结果以一次 `fyne.Do` 事务更新。刷新请求合并在同一个在途读取中，诊断 JSON 在后台准备。
+菜单支持从主页面距左侧 32–112 dp 区域拖出（最左侧留给系统返回）、面板/遮罩横向拖动关闭；手势按方向锁定，
+菜单纵向拖动仍滚动内容；拖动时一比一跟手，松手支持 48 dp 短滑与近期快速甩动，
+其余按展开进度吸附。补间按剩余距离调整时长，使用减速曲线收尾。手势逻辑使用共用 Fyne 代码。
+菜单控件在启动时创建并提前布局，打开/关闭复用同一面板；挂载后按当前主题刷新，
+避免离屏缓存保留启动时的深色背景。按钮复用 Fyne 的布局与可访问性，在移动触摸按下时
+立即高亮，松手淡出，取消手势不执行动作。打开 NAS 浏览器在后台解析地址，
+不禁用整页按钮、不改动当前诊断，失败使用 toast。只读刷新不禁用整页按钮、不清空内容；相同文字/颜色不重复刷新，只有换行内容改变才重排父容器。
+首次状态加载显示轻量占位并直接落到目标页面，不播放登录到主页面的初始动画。
+TTC face 提取按完整表尺寸一次分配，避免首次加载大 CJK 字体时重复拷贝和 GC 压力。
+Android 自定义 Go 构建显式启用 `migrated_fynedo`（不能依赖设备读取源码目录的 FyneApp.toml）。
+生命周期事件先进入 UI 队列；动画 Tick 直接修改位置，不再次排队，不逐帧重排文字；滚动空闲隐藏共用一个计时器。
+连接字段采用单行省略，批量更新后刷新父容器，避免 DNS 长文本改变行高导致冷启动重叠。
+参照 [Fyne goroutine 指南](https://docs.fyne.io/started/goroutines/)。
+NAS 浏览器入口先在后台解析同一私有 IP 的 HTTP(S) 跳转（最多六跳、五秒超时），
+打开最终端口，避免从 80 端口重复经过浏览器缓存跳转；不共享浏览器 Cookie，也不禁用 TLS 校验。
+Go 核心和 Android 系统适配不依赖 Fyne；未来 iOS 可复用这些页面和导航逻辑，系统能力另行适配。
+显式退出必须先成功断开连接并保存暂停意图，然后停止 Android Service 并移除 App 任务。
+
+管理后台使用原生 `AppChrome` 标题栏及系统安全区域布局；管理登录失效或账号权限不足时，
+弹窗确认后转入 Fyne 登录页。官网/捐赠使用系统浏览器。
+打开日志通过只读 `DocumentsProvider` 以根目录 URI 并优先选择系统处理器，将日志目录交给系统文件管理器；不支持目录查看的设备
+回退到以该目录为初始位置的系统文件选择器。仅暴露固定日志文件，不暴露配置和凭证。
+复制诊断后显示系统 Toast。密码输入向系统请求 ASCII 密码键盘、英文语言提示和禁止个性化学习，
+最终键盘布局仍取决于用户安装的输入法；不修改 Fyne 上游驱动。
+Fyne 字体优先读取 Android 系统 `fonts.xml` 配置的中文无衬线/默认无衬线字体，
+将配置中的 TTC face 转为单 face 后交给 Fyne，避免随机回退到衬线或装饰字体；
+系统字体不可读时保留 Fyne 的回退机制，不把系统字体复制到 APK。
+
+Android 原生库使用 Fyne 官方 `no_emoji` build tag，不打包约 4 MiB 的内置彩色 Emoji 字体；
+缺字仍可走系统字体回退，不承诺彩色 Emoji 效果。使用 `-s -w` 移除不需要的原生符号/调试信息，
+保留运行时所需元数据和 JNI 导出。每个 APK 只包含一种 ABI，体积与专项结果见[验证记录](validation.md)。
+用于分发或比较体积时先执行 `gradle clean`，避免增量 APK 保留已废弃的大块 ZIP 空间；
+APK 校验会拒绝超过 1 MiB 的非条目空间，不仅检查条目清单与签名。
+
+### Android 本地真机调试与日志
+
+CI 和本地 Gradle 统一使用固定 FnCPN 正式证书，后续同包名可相互覆盖（versionCode 不得倒退）。
+历史使用旧 Debug 密钥的开发包不能直接覆盖；不要自动卸载或清除数据，需要先安排数据保留/重新登录。
+本地可运行 `gradle :app:assembleDebug :app:assembleDebugAndroidTest -PfncpnBuild=递增整数 -PfncpnDev`，
+安装独立包 `com.rectcircle.fncpn.dev`（桌面名称“FnCPN 开发版”），保留已安装的 CI 包与数据。
+普通 Debug 包名仍是 `com.rectcircle.fncpn.debug`，正式包名不变；三种包使用同一受保护的固定发布密钥。
+
+```sh
+adb install -r app/build/outputs/apk/debug/app-arm64-v8a-debug.apk
+adb install -r app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
+adb shell am instrument -w com.rectcircle.fncpn.dev.test/com.rectcircle.fncpn.SmokeInstrumentation
+adb exec-out run-as com.rectcircle.fncpn.dev cat files/logs/client.log > client.log
+adb exec-out run-as com.rectcircle.fncpn.dev cat files/logs/android.log > android.log
+```
+
+真机 instrumentation 使用本机 HTTP 页面检查管理 WebView 加载及系统栏/返回栏避让，不需要 NAS 账号。
+真实 NAS 直连和后台功能仍须另外验收。IPv6 前置检查使用受保护且绑定所选物理网络的 UDP6 socket，
+允许通过上游转换访问公网的 ULA 源地址；路由检查通过后仍须实际 WireGuard 握手。
+
+Go 日志 `files/logs/client.log` 每份 2 MiB、保留两份备份；Java 系统事件日志
+`files/logs/android.log` 每份约 512 KiB、保留一份备份，同时写入 `logcat -s FnCPN`。
+Java 日志不记录 RPC 参数、地址、凭据和异常消息。设置页可导出诊断与近期日志 ZIP，
+使用字段白名单排除身份、端点及自由错误文本；每份原始日志最多读取末尾 256 KiB。
+分享仅临时授予 ZIP 的读取权限，最多保留八份，缓存 24 小时后失效并在下次导出清理；不依赖 Release 的 `run-as`。
+原始 Go 文件供本机开发诊断，不能视作对外匿名报告。
 
 ### Android CI（Debug 构建）
 
 [Android workflow](../.github/workflows/build-android.yml) 在任意分支推送、PR 和手动触发时运行。
-提交需要推送到 GitHub 才会触发；不用准备仓库 Secrets，也不要求本机安装 Android 工具链。
+提交需要推送到 GitHub 才会触发，不要求本机安装 Android 工具链。
+推送和手动构建必须配置上述四项签名 Secrets；PR 只运行 Go/Python 检查，不执行持有正式私钥的构建。
 
 流程先运行共享连接宿主和移动 module 的竞态测试、静态检查及 APK 校验脚本回归；
 通过后，在 Ubuntu runner 配置上文固定版本的 Go、JDK、Gradle、SDK 和 NDK，下载 Go/Gradle
@@ -330,12 +467,12 @@ gradle --offline :app:bundleRelease -PfncpnBuild=递增整数
 SDK/NDK 的安装步骤只存在于 workflow；本机构建脚本仍拒绝自动安装。
 
 `scripts/android/verify_apk.py` 检查 Debug 包名、产品版本、run number 对应的 versionCode、
-源码 commit、两种 ABI 的 ELF、JNI/Fyne 入口、16 KB ELF/ZIP 对齐及 Debug 签名。
-只有校验通过才上传 `fncpn-android-debug-<run>-<attempt>`，内含 APK、SHA256SUMS 和 verification.json。
+源码 commit、每份 APK 的唯一目标 ABI、JNI/Fyne 入口、16 KB ELF/ZIP 对齐及固定 FnCPN 证书指纹。
+只有校验通过才上传 `fncpn-android-debug-<run>-<attempt>`，内含两份单架构 APK、SHA256SUMS 和每份 APK 的 `.verification.json`。
 `fncpn-android-logs-<run>-<attempt>` 保留构建/校验日志和 Gradle 报告，失败时也尝试上传；产物保留 14 天。
 
-该流程不使用正式签名、不创建 GitHub Release、不公开或覆盖正式产物；版本与 server 的准入契约不变。
-Debug 签名由 runner 生成，不保证不同 runner 构建的调试签名相同。构建成功也不等于已完成安装、
+普通分支流程使用正式证书签名，在 runner 临时目录还原密钥，任务结束清理；不创建 GitHub Release，
+不公开或覆盖正式产物，版本与 server 的准入契约不变。构建成功也不等于已完成安装、
 Service 冷启动或真实网络验收；首轮云端运行结果仍须单独记录。
 
 ## 测试
@@ -523,6 +660,10 @@ GitHub Secrets 是 CI 使用副本，网页/API 不提供原值下载。必要�
 PKG Cask 安装使用系统 installer，卸载先运行项目脚本做网络清理，再清理 package receipt；默认保留用户配置与凭据。
 不配置自动 zap/purge，防止误删其他用户数据。Homebrew 统一标识符为 `fncpn`，只跟随稳定版。
 历史正式协议及数据基线用于后续兼容验证，归档要求见 [版本契约](versioning-and-compatibility.md)。
+
+Android 从 1.1.4 起提供 `fncpn-<version>-android-{arm64-v8a,x86_64}.apk`，均使用固定项目证书签名。
+Release tag 同时启动 Android Release 构建，macOS 汇总 job 下载同 commit 的 APK 和验签证据，
+校验非调试包、签名指纹、版本、ABI 与 SHA256 后纳入统一清单；公开与夸克镜像同样要求双 ABI APK。
 
 macOS、Windows、fnOS 安装包命名使用小写 `fncpn-<version>-<os>-<arch>[-unsigned].<extension>`，系统为 `macos`、`windows`、`fnos`，架构为 `arm64`、`x64`。fnOS manifest 内的 `x86`/`arm` 平台标识保持不变，仅对外文件名统一。`release-<version>.json` 与 `SHA256SUMS-<version>` 为发布清单和校验和，沿用现有名称。Linux 使用 `fncpn-{core,ui}-<version>-linux-{amd64,arm64}.{deb,rpm,pkg.tar.zst}`，
 Arch 仅 amd64；两个组件必须成套更新，Nix 使用 Flake 源码构建。

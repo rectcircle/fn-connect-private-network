@@ -12,6 +12,7 @@ import tempfile
 import urllib.request
 import zipfile
 from linux_support import release_packages
+from android_release import packages as android_packages, validate_inventory as validate_android_inventory
 
 REPOSITORY = 'rectcircle/fn-connect-private-network'
 CLI_VERSION = '1.0.24-29460f9'
@@ -149,6 +150,8 @@ def inventory(directory, tag, release, commit):
                 for arch in ('arm64', 'x64')}
     if tuple(map(int, version.split('.'))) >= (1, 1, 2):
         required.update(name for _, _, _, name in release_packages(version))
+    required.update(android_packages(version))
+    validate_android_inventory(manifest, version)
     if len(artifacts) != len(required) or {a['file'] for a in artifacts} != required:
         raise ValueError('Release installers do not match the supported platform inventory')
     names = required | {manifest_name, sums_name}

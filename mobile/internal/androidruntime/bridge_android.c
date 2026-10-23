@@ -67,3 +67,5 @@ JNIEXPORT jstring JNICALL Java_com_rectcircle_fncpn_Bridge_command(JNIEnv *env,j
     char *m=utf8(env,method),*p=utf8(env,params);if(!m||!p){free(m);free(p);return NULL;}
     char *reply=fncpnCommand(m,p);free(m);free(p);jstring result=java_string(env,reply);free(reply);return result;
 }
+
+JNIEXPORT void JNICALL Java_com_rectcircle_fncpn_Bridge_back(JNIEnv *env,jclass clazz){ fncpnBack(); }

@@ -9,6 +9,7 @@ import re
 import subprocess
 import tempfile
 from linux_support import release_packages
+from android_release import validate_inventory as validate_android_inventory
 from rpm_signing import signing_identity
 
 
@@ -68,6 +69,7 @@ def publish(directory, repository, make_public=False):
             raise SystemExit('Release inventory is missing required Linux Core/UI assets')
         if manifest.get('build', {}).get('rpmSigning') != signing_identity():
             raise SystemExit('Release inventory is missing matching RPM signing evidence')
+    validate_android_inventory(manifest, version)
     commit = run('git', 'rev-parse', 'HEAD')
     if manifest['version'] != version or manifest['commit'] != commit:
         raise SystemExit('Release inventory does not match checkout')

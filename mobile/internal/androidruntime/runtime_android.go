@@ -14,7 +14,6 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
-	"net/netip"
 	"os"
 	"path/filepath"
 	"sync"
@@ -26,6 +25,7 @@ import (
 	"github.com/rectcircle/fn-connect-private-network/internal/logging"
 	"github.com/rectcircle/fn-connect-private-network/internal/model"
 	"github.com/rectcircle/fn-connect-private-network/mobile/internal/androidvpn"
+	"github.com/rectcircle/fn-connect-private-network/mobile/internal/support"
 	"golang.org/x/sys/unix"
 )
 
@@ -79,7 +79,7 @@ func fncpnStart(directory *C.char) *C.char {
 			client.SetAndroidHostResolver(nil)
 		}
 	}()
-	logger := slog.New(slog.NewJSONHandler(writer, nil)).With("platform", "android")
+	logger := slog.New(slog.NewJSONHandler(writer, &slog.HandlerOptions{ReplaceAttr: logging.RedactAttr})).With("platform", "android")
 	network := &androidvpn.Network{System: sys}
 	client.SetAndroidSocketProtector(network.Protect)
 	client.SetAndroidHostResolver(network.Resolve)
@@ -93,6 +93,10 @@ func fncpnStart(directory *C.char) *C.char {
 		}
 		return os.NewFile(uintptr(fd), "android-vpn"), nil
 	}}
+	var deviceName string
+	if err := sys.Call("device.name", nil, &deviceName); err != nil || deviceName == "" {
+		deviceName = "Android device"
+	}
 	store := client.NewConfigStore(filepath.Join(C.GoString(directory), "client.json"), androidvpn.Secrets{System: sys})
 	manager, err := client.NewManager(client.ManagerOptions{Store: store, Discoverer: client.DiscoveryClient{}, Logger: logger,
 		Remote: func(id string, cookies []client.Cookie, onCookies func([]client.Cookie) error) (client.RemoteService, error) {
@@ -102,11 +106,8 @@ func fncpnStart(directory *C.char) *C.char {
 			}
 			return client.NewRemoteClient(url, cookies, nil, onCookies)
 		},
-		Privileged: engine, Bridge: &client.RelayBridge{Logger: logger}, Probe: network, Monitor: network, DeviceName: "Android",
-		IPv6RouteChecker: func(context.Context, netip.Addr, int) bool {
-			s, err := network.Snapshot()
-			return err == nil && s.HasPublicIPv6
-		},
+		Privileged: engine, Bridge: &client.RelayBridge{Logger: logger}, Probe: network, Monitor: network, DeviceName: deviceName,
+		IPv6RouteChecker: network.HasIPv6Route,
 	})
 	if err != nil {
 		return C.CString(err.Error())
@@ -170,7 +171,7 @@ func fncpnStop(revoked C.int) {
 	}
 	if err := host.Close(ctx); err != nil {
 		if writer != nil {
-			slog.New(slog.NewJSONHandler(writer, nil)).Error("Android service cleanup failed", "error", model.SafeText(err.Error()))
+			slog.New(slog.NewJSONHandler(writer, &slog.HandlerOptions{ReplaceAttr: logging.RedactAttr})).Error("Android service cleanup failed", "error", model.SafeText(err.Error()))
 		}
 	}
 	if writer != nil {
@@ -196,7 +197,9 @@ func fncpnNetworkChanged() {
 //export fncpnCommand
 func fncpnCommand(method, params *C.char) *C.char {
 	var result json.RawMessage
-	err := Call(context.Background(), C.GoString(method), json.RawMessage(C.GoString(params)), &result)
+	name := C.GoString(method)
+	payload := json.RawMessage(C.GoString(params))
+	err := Call(context.Background(), name, payload, &result)
 	reply := map[string]any{"version": 1, "ok": err == nil, "result": result}
 	if err != nil {
 		reply["error"] = model.PublicError(err)
@@ -209,7 +212,7 @@ func fncpnCommand(method, params *C.char) *C.char {
 // state remains owned by that Service even when Fyne has no active window.
 func Call(ctx context.Context, method string, params, result any) error {
 	switch method {
-	case client.MethodConnect, client.MethodRetry, client.MethodAuthorizationBegin:
+	case client.MethodConnect, client.MethodDisconnect, client.MethodRetry, client.MethodAuthorizationBegin:
 		if err := (system{}).Call("service.ensure", nil, nil); err != nil {
 			return err
 		}
@@ -224,6 +227,38 @@ func Call(ctx context.Context, method string, params, result any) error {
 		return errors.New("Android service is stopping; retry after cleanup")
 	}
 	if host == nil {
+		if method == client.MethodStatus {
+			var saved struct {
+				Configured  bool `json:"configured"`
+				AutoConnect bool `json:"autoConnect"`
+			}
+			if err := (system{}).Call("settings.status", nil, &saved); err != nil {
+				return err
+			}
+			if saved.Configured && saved.AutoConnect {
+				if err := (system{}).Call("service.ensure", nil, nil); err != nil {
+					return err
+				}
+				state.Lock()
+				restored := state.host
+				state.Unlock()
+				if restored != nil {
+					return restored.Call(ctx, method, params, result)
+				}
+			}
+			status := model.ClientStatus{State: model.ClientUnconfigured}
+			if saved.Configured {
+				status.State = model.ClientPaused
+			}
+			if result == nil {
+				return nil
+			}
+			data, err := json.Marshal(status)
+			if err != nil {
+				return err
+			}
+			return json.Unmarshal(data, result)
+		}
 		if method == client.MethodForget {
 			return (system{}).Call("settings.forget", nil, nil)
 		}
@@ -247,3 +282,33 @@ func OpenAdmin(url string) error {
 func Share(text string) error {
 	return (system{}).Call("ui.share", map[string]string{"text": text}, nil)
 }
+
+// ExportSupport is an explicit UI action; only allowlisted diagnostics leave
+// app-private storage. It works even if the connection host has stopped.
+func ExportSupport(report string) error {
+	var logs map[string]string
+	if err := (system{}).Call("support.read", nil, &logs); err != nil {
+		return err
+	}
+	data, err := support.Report([]byte(report), logs)
+	if err != nil {
+		return err
+	}
+	return (system{}).Call("ui.export", map[string]string{"text": string(data)}, nil)
+}
+
+func OpenLogs() error { return (system{}).Call("ui.logs", nil, nil) }
+func OpenBrowser(url string) error {
+	return (system{}).Call("ui.browser", map[string]string{"url": url}, nil)
+}
+func Exit() error { return (system{}).Call("ui.exit", nil, nil) }
+
+//export fncpnBack
+func fncpnBack() { dispatchBack() }
+
+func Toast(text string) error {
+	return (system{}).Call("ui.toast", map[string]string{"text": text}, nil)
+}
+
+func Background() error        { return (system{}).Call("ui.background", nil, nil) }
+func OpenNAS(url string) error { return (system{}).Call("ui.nas", map[string]string{"url": url}, nil) }

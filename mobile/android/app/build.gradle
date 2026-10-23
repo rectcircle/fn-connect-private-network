@@ -7,6 +7,18 @@ if (!existingNdk) throw new GradleException('Set ANDROID_NDK_HOME to the existin
 if (gradle.gradleVersion != '8.13') throw new GradleException('Use the already installed Gradle 8.13')
 if (JavaVersion.current() != JavaVersion.VERSION_17) throw new GradleException('Use the already installed JDK 17')
 
+// Local builds load the private file outside the checkout. CI supplies env vars.
+// Never fall back to AGP's generated debug keystore.
+def credentialFile = new File(System.getenv('FNCPN_SIGNING_CREDENTIALS') ?: "${System.getProperty('user.home')}/.android/keystores/fncpn-release.credentials.json")
+def localSigning = credentialFile.isFile() ? new groovy.json.JsonSlurper().parse(credentialFile) : [:]
+def signingPath = System.getenv('FNCPN_KEYSTORE') ?: localSigning.keystore
+def signingStorePassword = System.getenv('FNCPN_STORE_PASSWORD') ?: localSigning.store_password
+def signingAlias = System.getenv('FNCPN_KEY_ALIAS') ?: localSigning.alias
+def signingKeyPassword = System.getenv('FNCPN_KEY_PASSWORD') ?: localSigning.key_password
+if (!signingPath || !signingStorePassword || !signingAlias || !signingKeyPassword || !new File(signingPath.toString()).isFile()) {
+    throw new GradleException('FnCPN signing key is required for every build; configure signing credentials outside the repository')
+}
+
 android {
     namespace 'com.rectcircle.fncpn'
     compileSdk 36
@@ -15,11 +27,12 @@ android {
     ndkPath existingNdk
     defaultConfig {
         applicationId 'com.rectcircle.fncpn'
+        manifestPlaceholders = [appLabel: 'FnCPN']
+        testInstrumentationRunner 'com.rectcircle.fncpn.SmokeInstrumentation'
         minSdk 26
         targetSdk 36
         versionCode buildNumber
         versionName productVersion
-        ndk { abiFilters 'arm64-v8a', 'x86_64' }
     }
     compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
     sourceSets.main {
@@ -28,22 +41,32 @@ android {
         assets.srcDir layout.buildDirectory.dir('generated/fyne/assets')
     }
     buildTypes {
-        debug { applicationIdSuffix '.debug' }
+        debug {
+            applicationIdSuffix providers.gradleProperty('fncpnDev').isPresent() ? '.dev' : '.debug'
+            if (providers.gradleProperty('fncpnDev').isPresent()) manifestPlaceholders = [appLabel: 'FnCPN 开发版']
+        }
         release { minifyEnabled false }
     }
-    packaging { jniLibs { useLegacyPackaging = false } }
-    // Signing comes from local environment; no keystore or password is committed.
-    if (System.getenv('FNCPN_KEYSTORE')) {
-        signingConfigs {
-            release {
-                storeFile file(System.getenv('FNCPN_KEYSTORE'))
-                storePassword System.getenv('FNCPN_STORE_PASSWORD')
-                keyAlias System.getenv('FNCPN_KEY_ALIAS')
-                keyPassword System.getenv('FNCPN_KEY_PASSWORD')
-            }
+    splits {
+        abi {
+            enable true
+            reset()
+            include 'arm64-v8a', 'x86_64'
+            universalApk false
         }
-        buildTypes.release.signingConfig signingConfigs.release
     }
+    packaging { jniLibs { useLegacyPackaging = false } }
+    signingConfigs {
+        release {
+            storeFile file(signingPath)
+            storePassword signingStorePassword
+            keyAlias signingAlias
+            keyPassword signingKeyPassword
+        }
+    }
+    buildTypes.debug.signingConfig signingConfigs.release
+    buildTypes.release.signingConfig signingConfigs.release
+
 }
 
 tasks.register('prepareGo', Exec) {
@@ -68,7 +91,7 @@ tasks.configureEach {
     if (name == 'packageRelease' || name == 'bundleRelease') {
         doFirst {
             if (!providers.gradleProperty('fncpnBuild').isPresent()) throw new GradleException('Release requires an explicit increasing fncpnBuild')
-            if (!System.getenv('FNCPN_KEYSTORE')) throw new GradleException('Release requires an explicitly configured signing key')
+            if (!signingPath) throw new GradleException('Release requires the configured FnCPN signing key')
             def metadata = new groovy.json.JsonSlurper().parse(layout.buildDirectory.file('generated/fyne/assets/build.json').get().asFile)
             if (metadata.dirty) throw new GradleException('Release requires a clean source tree')
         }

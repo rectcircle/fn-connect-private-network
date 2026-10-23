@@ -20,6 +20,15 @@ def fail(message):
     raise SystemExit(message)
 
 
+def copy_generated(source, destination):
+    # Go's module cache is read-only. Do not carry that mode into generated
+    # outputs, otherwise a second local build cannot overwrite the first one.
+    if destination.exists():
+        destination.unlink()
+    shutil.copyfile(source, destination)
+    destination.chmod(0o644)
+
+
 def main():
     ndk_value = os.environ.get("ANDROID_NDK_HOME")
     if not ndk_value:
@@ -47,11 +56,11 @@ def main():
     java = OUT / "fyne/java/org/golang/app"
     java.mkdir(parents=True, exist_ok=True)
     for source in (fyne / "internal/driver/mobile/app").glob("*.java"):
-        shutil.copy2(source, java / source.name)
+        copy_generated(source, java / source.name)
     assets = OUT / "fyne/assets"
     assets.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(fyne / "LICENSE", assets / "Fyne-LICENSE.txt")
-    shutil.copy2(MOBILE / "THIRD_PARTY_NOTICES.md", assets / "THIRD_PARTY_NOTICES.md")
+    copy_generated(fyne / "LICENSE", assets / "Fyne-LICENSE.txt")
+    copy_generated(MOBILE / "THIRD_PARTY_NOTICES.md", assets / "THIRD_PARTY_NOTICES.md")
     revision = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
     dirty = bool(subprocess.check_output(["git", "status", "--porcelain"], cwd=ROOT, text=True).strip())
     trace_revision = revision + ("-dirty" if dirty else "")
@@ -64,13 +73,13 @@ def main():
         output = OUT / "go/jniLibs" / abi / "libfncpn.so"
         output.parent.mkdir(parents=True, exist_ok=True)
         build_env = dict(env, GOOS="android", GOARCH=arch, CC=str(cc))
-        subprocess.run([go, "build", "-trimpath", "-buildmode=c-shared",
-                        "-ldflags", f"-X github.com/rectcircle/fn-connect-private-network/internal/version.Revision={trace_revision} -extldflags=-Wl,-z,max-page-size=16384",
+        subprocess.run([go, "build", "-trimpath", "-tags", "no_emoji,migrated_fynedo", "-buildmode=c-shared",
+                        "-ldflags", f"-s -w -X github.com/rectcircle/fn-connect-private-network/internal/version.Revision={trace_revision} -extldflags=-Wl,-z,max-page-size=16384",
                         "-o", str(output), "."], cwd=MOBILE, env=build_env, check=True)
     (assets / "build.json").write_text(json.dumps({
         "version": (ROOT / "internal/version/VERSION").read_text().strip(),
         "commit": revision, "dirty": dirty, "go": "1.27.1", "fyne": module["Version"],
-        "ndk": "28.2.13676358", "abis": list(abis)
+        "ndk": "28.2.13676358", "abis": list(abis), "goTags": ["no_emoji", "migrated_fynedo"], "stripped": True
     }, indent=2) + "\n")
 
 

@@ -13,8 +13,29 @@ func png(_ size: Int, width: Int? = nil, draw: (CGFloat) -> Void) -> Data {
     NSGraphicsContext.restoreGraphicsState()
     return rep.representation(using: .png, properties: [:])!
 }
+let iconSize: CGFloat = 1024
+let markOrigin: CGFloat = 88.8
+let markScale: CGFloat = 8.464
+func iconBackground() -> NSBezierPath {
+    NSBezierPath(roundedRect: NSRect(x: 52, y: 52, width: 920, height: 920), xRadius: 208, yRadius: 208)
+}
 let blue = NSColor(srgbRed: 0, green: 0.4, blue: 1, alpha: 1)
 let pale = NSColor(srgbRed: 224.0/255, green: 237.0/255, blue: 1, alpha: 1)
+// Capture the same filled path outlines for Android instead of redrawing the logo.
+var captureMark = false
+var markOutlines: [CGPath] = []
+var storageOutlines: [CGPath] = []
+func outline(_ path: NSBezierPath) -> CGPath {
+    path.cgPath.copy(strokingWithWidth: path.lineWidth, lineCap: .round, lineJoin: .miter, miterLimit: 10)
+}
+func stroke(_ path: NSBezierPath) {
+    path.stroke()
+    if captureMark { markOutlines.append(outline(path)) }
+}
+func fill(_ path: NSBezierPath) {
+    path.fill()
+    if captureMark { markOutlines.append(path.cgPath) }
+}
 // Project-owned storage cylinder; no third-party logo artwork is used.
 func storageLogo(_ color: NSColor) -> NSImage {
     let image = NSImage(size: NSSize(width: 256, height: 256))
@@ -27,15 +48,16 @@ func storageLogo(_ color: NSColor) -> NSImage {
     body.line(to: NSPoint(x: 214, y: 190))
     body.lineWidth = 18
     body.lineCapStyle = .round
-    body.stroke()
+    stroke(body)
     let top = NSBezierPath(ovalIn: NSRect(x: 42, y: 158, width: 172, height: 64))
     top.lineWidth = 18
-    top.stroke()
+    stroke(top)
     let middle = NSBezierPath()
     middle.move(to: NSPoint(x: 42, y: 126))
     middle.curve(to: NSPoint(x: 214, y: 126), controlPoint1: NSPoint(x: 42, y: 80), controlPoint2: NSPoint(x: 214, y: 80))
     middle.lineWidth = 14
-    middle.stroke()
+    stroke(middle)
+    storageOutlines = [body, top, middle].map(outline)
     image.unlockFocus()
     return image
 }
@@ -54,7 +76,7 @@ func connectionMark(_ color: NSColor, drawEndpoint: Bool = true, strokeWidth: CG
     boundary.line(to: NSPoint(x: 36, y: 23))
     boundary.curve(to: NSPoint(x: 28, y: 31), controlPoint1: NSPoint(x: 31, y: 23), controlPoint2: NSPoint(x: 28, y: 26))
     boundary.line(to: NSPoint(x: 28, y: 38))
-    boundary.lineWidth = strokeWidth; boundary.lineCapStyle = .round; boundary.stroke()
+    boundary.lineWidth = strokeWidth; boundary.lineCapStyle = .round; stroke(boundary)
     // Short orthogonal route enters the middle of the left-side opening.
     let route = NSBezierPath()
     route.move(to: NSPoint(x: drawEndpoint ? 10 : 15, y: 35))
@@ -63,9 +85,9 @@ func connectionMark(_ color: NSColor, drawEndpoint: Bool = true, strokeWidth: CG
     route.line(to: NSPoint(x: 18, y: 45))
     route.curve(to: NSPoint(x: 23, y: 50), controlPoint1: NSPoint(x: 18, y: 48), controlPoint2: NSPoint(x: 20, y: 50))
     route.line(to: NSPoint(x: 37, y: 50))
-    route.lineWidth = strokeWidth; route.lineCapStyle = .round; route.stroke()
+    route.lineWidth = strokeWidth; route.lineCapStyle = .round; stroke(route)
     if drawEndpoint {
-        NSBezierPath(roundedRect: NSRect(x: 5, y: 30, width: 10, height: 10), xRadius: 3, yRadius: 3).fill()
+        fill(NSBezierPath(roundedRect: NSRect(x: 5, y: 30, width: 10, height: 10), xRadius: 3, yRadius: 3))
     }
     if strokeWidth > 5 {
         // Menu-bar artwork stays vector-based and shares the boundary stroke.
@@ -76,31 +98,91 @@ func connectionMark(_ color: NSColor, drawEndpoint: Bool = true, strokeWidth: CG
         cylinder.line(to: NSPoint(x: 71, y: 61))
         cylinder.lineWidth = strokeWidth
         cylinder.lineCapStyle = .round
-        cylinder.stroke()
+        stroke(cylinder)
         let top = NSBezierPath(ovalIn: NSRect(x: 43, y: 57, width: 28, height: 8))
         top.lineWidth = strokeWidth
-        top.stroke()
+        stroke(top)
         let middle = NSBezierPath()
         middle.move(to: NSPoint(x: 43, y: 49))
         middle.curve(to: NSPoint(x: 71, y: 49), controlPoint1: NSPoint(x: 43, y: 43), controlPoint2: NSPoint(x: 71, y: 43))
         middle.lineWidth = strokeWidth
-        middle.stroke()
+        stroke(middle)
     } else {
         let logo = color == blue ? blueLogo : blackLogo
         logo.draw(in: NSRect(x: 39, y: 33, width: 34, height: 34),
             from: NSRect(x: 24, y: 20, width: 208, height: 220), operation: .sourceOver, fraction: 1)
+        if captureMark {
+            var transform = CGAffineTransform(a: 34/208, b: 0, c: 0, d: 34/220, tx: 39-24*34/208, ty: 33-20*34/220)
+            markOutlines += storageOutlines.compactMap { $0.copy(using: &transform) }
+        }
     }
 }
 func appIcon(_ s: CGFloat) {
     let transform = NSAffineTransform()
-    transform.scale(by: s / 1024); transform.concat()
+    transform.scale(by: s / iconSize); transform.concat()
     // fnOS default icon palette: pale blue tile and vivid blue foreground.
     NSColor(srgbRed: 224.0/255, green: 237.0/255, blue: 1, alpha: 1).setFill()
-    NSBezierPath(roundedRect: NSRect(x: 52, y: 52, width: 920, height: 920), xRadius: 208, yRadius: 208).fill()
+    iconBackground().fill()
     let mark = NSAffineTransform()
-    mark.translateX(by: 88.8, yBy: 88.8); mark.scale(by: 8.464); mark.concat()
+    mark.translateX(by: markOrigin, yBy: markOrigin); mark.scale(by: markScale); mark.concat()
     blue.setStroke(); blue.setFill()
     connectionMark(blue)
+}
+func vectorData(_ path: CGPath) -> String {
+    var commands: [String] = []
+    func point(_ p: CGPoint) -> String { String(format: "%.5f,%.5f", locale: Locale(identifier: "en_US_POSIX"), Double(p.x), Double(p.y)) }
+    path.applyWithBlock { element in
+        let e = element.pointee
+        switch e.type {
+        case .moveToPoint: commands.append("M" + point(e.points[0]))
+        case .addLineToPoint: commands.append("L" + point(e.points[0]))
+        case .addQuadCurveToPoint: commands.append("Q" + point(e.points[0]) + " " + point(e.points[1]))
+        case .addCurveToPoint: commands.append("C" + point(e.points[0]) + " " + point(e.points[1]) + " " + point(e.points[2]))
+        case .closeSubpath: commands.append("Z")
+        @unknown default: break
+        }
+    }
+    return commands.joined(separator: " ")
+}
+// Export every platform from the same fixed 1024-unit composition as appIcon.
+// Do not normalize by path bounds: that changes the logo's size and placement.
+func brandPaths() -> [CGPath] {
+    markOutlines = []
+    _ = png(100) { _ in captureMark = true; connectionMark(blue); captureMark = false }
+    var transform = CGAffineTransform(a: markScale, b: 0, c: 0, d: -markScale, tx: markOrigin, ty: iconSize-markOrigin)
+    return markOutlines.map { $0.copy(using: &transform)! }
+}
+func svgIcon(_ paths: [CGPath]) -> String {
+    let data = paths.map { "<path fill=\"#0066FF\" d=\"\(vectorData($0))\"/>" }.joined(separator: "\n")
+    return """
+    <svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+      <path fill="#E0EDFF" d="\(vectorData(iconBackground().cgPath))"/>
+      \(data)
+    </svg>
+    """ + "\n"
+}
+func androidVector(_ paths: [CGPath], viewport: CGFloat, scale: CGFloat, offset: CGFloat, color: String) -> String {
+    var transform = CGAffineTransform(a: scale, b: 0, c: 0, d: scale, tx: offset, ty: offset)
+    let data = paths.map { "<path android:fillColor=\"\(color)\" android:pathData=\"\(vectorData($0.copy(using: &transform)!))\"/>" }.joined()
+    return "<vector xmlns:android=\"http://schemas.android.com/apk/res/android\" android:width=\"\(Int(viewport))dp\" android:height=\"\(Int(viewport))dp\" android:viewportWidth=\"\(Int(viewport))\" android:viewportHeight=\"\(Int(viewport))\">\(data)</vector>\n"
+}
+let paths = brandPaths()
+try svgIcon(paths).write(to: output.appendingPathComponent("AppIcon.svg"), atomically: true, encoding: .utf8)
+if let flag = CommandLine.arguments.firstIndex(of: "--mobile-root") {
+    let root = URL(fileURLWithPath: CommandLine.arguments[flag+1])
+    let res = root.appendingPathComponent("android/app/src/main/res")
+    let assets = root.appendingPathComponent("assets")
+    try FileManager.default.createDirectory(at: assets, withIntermediateDirectories: true)
+    try svgIcon(paths).write(to: assets.appendingPathComponent("appicon.svg"), atomically: true, encoding: .utf8)
+    // Android's visible nominal 72-unit area corresponds to the whole canonical
+    // canvas. The surrounding 18 units on each side are only for system masks.
+    try androidVector(paths, viewport: 108, scale: 72/1024, offset: 18, color: "#0066FF")
+        .write(to: res.appendingPathComponent("drawable/icon_foreground.xml"), atomically: true, encoding: .utf8)
+    // Compact monochrome canvas; fixed composition, without launcher padding.
+    try androidVector(paths, viewport: 24, scale: 28/1024, offset: -2, color: "#FFFFFFFF")
+        .write(to: res.appendingPathComponent("drawable/tile_icon.xml"), atomically: true, encoding: .utf8)
+    let nativeIcon = "<vector xmlns:android=\"http://schemas.android.com/apk/res/android\" android:width=\"32dp\" android:height=\"32dp\" android:viewportWidth=\"1024\" android:viewportHeight=\"1024\"><path android:fillColor=\"#E0EDFF\" android:pathData=\"\(vectorData(iconBackground().cgPath))\"/>\(paths.map { "<path android:fillColor=\"#0066FF\" android:pathData=\"\(vectorData($0))\"/>" }.joined())</vector>\n"
+    try nativeIcon.write(to: res.appendingPathComponent("drawable/app_icon.xml"), atomically: true, encoding: .utf8)
 }
 let states = ["offline", "connected", "working", "attention"]
 for state in states {

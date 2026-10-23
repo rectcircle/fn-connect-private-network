@@ -4,23 +4,33 @@
 产品要求见 [产品需求](product.md)，升级保证见 [版本契约](versioning-and-compatibility.md)。
 自动化通过、用户确认和带日志的实测分别记录；旧版证据不代表新版的所有专项通过。
 
-## Android 编码阶段（2026-10-22；未发布）
+## 1.1.4 Android 候选（2026-10-23；草稿准备，未公开）
 
-- 官方 `fyne init` 生成独立移动 UI module；Java VpnService、JNI、单库构建、TUN/WireGuard、
-  Keystore、网络回调、DNS、管理 WebView 和诊断分享已编码。Go 核心和系统适配均不依赖 Fyne。
-- 根 module `go test ./...` 通过；`client` 与 `clienthost` 的竞态测试通过。
-- mobile module `go test -race -tags ci ./...`、`go vet -tags ci ./...` 和 macOS 桌面构建通过。
-  覆盖真实授权注册表续接 OTP、宿主取消/停止、两份 netstack 间 UDP/TCP DNS 查询、后缀隔离、
-  DNS 计划回滚、系统停止不重建 DNS 隧道、TUN fd 替换、桥版本拒绝和 socket 保护失败清理。
-- `androidvpn` 在 Android arm64 与 amd64 的 CGO-disabled Go 包交叉编译通过；
-  Android 完整包图可解析，未混入 Linux netlink/systemd DNS 实现。Python 与 Manifest/XML 语法检查通过。
-- 已接入分支推送/PR/手动触发的 Android Debug CI：runner 准备工具链，运行移动检查、双架构完整
-  构建和 APK 校验后上传安装包/校验清单，失败时保留日志。workflow 的 actionlint 静态检查及
-  6 项 APK 校验回归通过；尚未提交、推送或运行云端 CI，不将其记为 Android 构建通过。
-- 未安装或运行 Android Studio、SDK、NDK、JDK 或 Gradle。未验证 Java/JNI/C 编译、native library
-  链接、APK/AAB、签名、安装、Service 冷启动、锁屏、切网、系统 DNS/Private DNS、16 KB 页设备、
-  真机耗电/吞吐、原生 WebView 或历史正式 server 互通。这些必须在已配备工具链和真机的环境验收，
-  不能从纯 Go 测试推断通过。不据此宣称 Android 正式可用，不修改产品发布编号或发布资产。
+- 使用官方 `fyne init` 生成的独立 UI module；Fyne UI 依赖共享 Go 核心，Android VpnService、
+  Keystore、TUN、网络事件、通知及 WebView 由薄 Java 层适配，单应用进程、单 Go runtime。
+- [早期 Android CI](https://github.com/rectcircle/fn-connect-private-network/actions/runs/39762676937)
+  在 `df0378a` 成功；后续改动已进行本地完整 Java/JNI/Go 构建，不能将早期 CI 当作当前候选成功证据。
+- PJZ110 真机先后安装开发 build 4–19，用户确认主要功能与交互基本可用；用户分别确认 IPv6
+  直连和临时禁用 IPv6 后的 FN Connect 中继可用。正常 IPv6 检测已恢复，无临时降级残留。
+- IPv6 使用受保护并绑定物理网络的 UDP6 路由预检，后续验证真实 WireGuard 握手；支持 ULA
+  上联，不要求手机拥有全局 IPv6 地址。真实外网长期测试与完整历史二进制矩阵仍待专项验收。
+- Chrome NAS 访问曾出现 ERR_TOO_MANY_RETRIES；CDP netlog 与系统 appops 显示 Chrome
+  的局域网权限被拒绝，用户调整权限后确认解决。未将该故障归因于服务器重定向循环。
+- 真实 WebView instrumentation 验证页面避让系统栏/应用栏，诊断 ContentProvider 可读且拒绝写入；
+  菜单、登录、系统字体、诊断复制、后台导航和冷启动布局已有 Go 回归。00:05 的旧版 v7
+  曾因触摸等待发生 ANR；通知入口随后改为单 Activity 复用，不能据此断言所有 ANR 已消除。
+- APK 每个 ABI 独立发布，使用 `no_emoji,migrated_fynedo`、符号裁剪及 16 KB ELF/ZIP 对齐。
+  开发包约 25.9/27.5 MiB；真实 16 KB 页设备、厂商省电、长期锁屏/切网、耗电/吞吐、
+  Private DNS/DoH、系统 VPN 撤销与完整正式包升级仍需最终候选专项验证。
+- Go 根模块与移动模块测试、竞态与 vet，构建/验签回归、workflow actionlint 已有本地通过记录；
+  macOS 原 PNG 重新生成后哈希不变，移动 SVG/Android 矢量同源，渲染对照保留图形细节。
+- build 20 双 ABI 与 instrumentation 包均匹配固定 FnCPN 正式签名；旧 Debug 密钥包被新校验器
+  拒绝，无密钥配置时 Gradle 直接失败。密钥仅在仓库外或 Actions Secrets 中，源码仅存公钥指纹。
+  手机保留旧 Debug 签名 build 19；正式包使用独立生产包名，需单独登录，未自动删除旧数据。
+- 1.1.4 新增 Android 平台不增加 server 要求，按用户确认采用 PATCH；版本准入仍为同 MAJOR
+  且 client.MINOR ≤ server.MINOR。此前公开的 1.1.3 不覆盖；当前各端以同 commit 构建 1.1.4。
+- 新 Release workflow 将 Android 正式签名、非 debuggable APK 纳入统一清单及镜像，绑定版本、
+  commit、versionCode、ABI 和证书指纹。本次仅触发草稿，不公开；云端结果与最终产物待后续审阅。
 
 ## 1.1.2 正式发布验收（2026-10-22）
 

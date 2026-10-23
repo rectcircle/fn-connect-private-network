@@ -1,12 +1,13 @@
 # FN Connect Private Network
 
-从 Mac、Windows 或 Linux 连接 fnOS NAS 和家庭局域网。FnCPN 自动选择局域网直达、IPv6 直连或 FN Connect 中继，无需手动配置密钥与路由。
+从 Mac、Windows、Linux 或 Android 连接 fnOS NAS 和家庭局域网。FnCPN 自动选择局域网直达、IPv6 直连或 FN Connect 中继，无需手动配置密钥与路由。
 
 ## 使用条件
 
 - Apple Silicon 或 Intel Mac，macOS 13 或更新版本。
 - Windows 客户端：Windows 10 22H2（build 19045）或更新的 ARM64/x64 系统，不支持 32 位或 Windows Server。Windows 10 和原生 x64 已由用户完成验收。
 - Linux 客户端：Debian 12/13、Ubuntu 22.04/24.04/26.04/26.10、Fedora 43/44、openSUSE Leap 16.0/Tumbleweed（amd64/arm64），以及官方 Arch Linux（amd64）；需要 systemd。NixOS 使用 [Flake 模块](docs/development.md#nix-flake-与-nixos)，不支持 Alpine。
+- Android 客户端：Android 8.0 / API 26 起，ARM64 与 x86_64；大多数手机选择 ARM64。
 - 已启用 FN Connect 的 fnOS NAS，支持 x86_64 和 ARM64。
 - fnOS 用户账号。普通用户可以连接；安装软件和修改服务端网络设置需要管理员权限。
 
@@ -25,11 +26,28 @@ FnCPN 在自身的 fnOS HTTPS/WSS 连接中使用系统信任及内置、指纹�
 | Apple Silicon Mac | `fncpn-<version>-macos-arm64-unsigned.pkg` |
 | Intel Mac | `fncpn-<version>-macos-x64-unsigned.pkg` |
 | Windows ARM64 | `fncpn-<version>-windows-arm64-unsigned.msi` |
+| Android ARM64 | `fncpn-<version>-android-arm64-v8a.apk` |
+| Android x86_64 | `fncpn-<version>-android-x86_64.apk` |
 | Windows x64 | `fncpn-<version>-windows-x64-unsigned.msi` |
 | Debian / Ubuntu | `fncpn-{core,ui}-<version>-linux-{amd64,arm64}.deb` |
 | Fedora / openSUSE | `fncpn-{core,ui}-<version>-linux-{amd64,arm64}.rpm` |
 | Arch Linux | `fncpn-{core,ui}-<version>-linux-amd64.pkg.tar.zst` |
 | Nix / NixOS | [Flake 源码构建与模块](docs/development.md#nix-flake-与-nixos)，无独立 Release 包 |
+
+### Android：安装
+
+Android APK 从 **1.1.4** 起提供；草稿构建完成后需登录有权限的 GitHub 账号下载，公开后可从 Releases 或官网下载区获取。
+
+1. 普通 ARM64 手机选择 `fncpn-<version>-android-arm64-v8a.apk`，x86_64 设备选择对应 APK。
+2. 允许浏览器或文件管理器“安装未知应用”，安装并打开 FnCPN。
+3. 使用 FN Connect ID 和 fnOS 账号登录，按需填写访问码/OTP；连接时允许系统 VPN 授权。
+4. 查看连接路径及 DNS 后缀，使用浏览器或其他 App 访问 NAS/已启用 LAN 网段。
+
+正式包使用固定项目证书签名，包名 `com.rectcircle.fncpn`；后续覆盖升级保留身份、配置与连接意图。
+旧开发包 `.dev`/`.debug` 与正式包独立，数据不会自动导入，正式包需要登录一次。
+Android 只允许一个当前 VPN，与其他 VPN 冲突；主页面返回进入后台，菜单“退出”会断开并暂停自动连接。
+系统强制停止后需手动打开 App；不承诺开机自启、始终开启/锁定模式或厂商省电限制下永久在线。
+诊断页可复制状态、通过系统文件管理器查看日志，菜单可导出经过过滤的诊断 ZIP。
 
 ### Linux：自动安装
 

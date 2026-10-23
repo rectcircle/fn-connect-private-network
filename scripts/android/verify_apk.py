@@ -7,6 +7,7 @@ import argparse
 import hashlib
 import json
 import os
+import platform
 from pathlib import Path
 import re
 import shutil
@@ -25,6 +26,7 @@ EXPORTS = {
     "Java_com_rectcircle_fncpn_Bridge_stop",
     "Java_com_rectcircle_fncpn_Bridge_networkChanged",
     "Java_com_rectcircle_fncpn_Bridge_command",
+    "Java_com_rectcircle_fncpn_Bridge_back",
 }
 
 
@@ -64,29 +66,33 @@ def check_exports(readelf_output):
         raise ValueError("Missing exported native entry points: " + ", ".join(sorted(missing)))
 
 
-def check_badging(text, version, build_number):
+def check_badging(text, version, build_number, package_name="com.rectcircle.fncpn.debug", release=False):
     package = re.search(r"^package: name='([^']+)' versionCode='([^']+)' versionName='([^']+)'", text, re.M)
-    if not package or package.groups() != ("com.rectcircle.fncpn.debug", str(build_number), version):
+    if not package or package.groups() != (package_name, str(build_number), version):
         raise ValueError("APK package name or version does not match the source build")
-    if not re.search(r"^application-debuggable(?:\s|$)", text, re.M):
-        raise ValueError("Expected Debug APK, not a release artifact")
+    if bool(re.search(r"^application-debuggable(?:\s|$)", text, re.M)) == release:
+        raise ValueError("APK debuggable flag does not match build type")
     if not re.search(r"^(?:minSdkVersion|sdkVersion):'26'$", text, re.M) or not re.search(r"^targetSdkVersion:'36'$", text, re.M):
         raise ValueError("APK SDK bounds do not match the configured Android target")
 
 
-def inspect_apk(apk, version, build_number, commit, readelf):
+def inspect_apk(apk, version, build_number, commit, readelf, abi=None, dirty=False):
     with zipfile.ZipFile(apk) as archive:
         names = archive.namelist()
+        # Incremental APK writers can leave an obsolete, unreferenced native
+        # library in the ZIP. Alignment/signature checks alone miss that bloat.
+        if archive.start_dir - sum(entry.compress_size for entry in archive.infolist()) > 1 << 20:
+            raise ValueError("APK contains excessive unused ZIP space; rebuild with Gradle clean")
         if len(names) != len(set(names)):
             raise ValueError("Duplicate APK entries")
         native = {name for name in names if name.startswith("lib/") and name.endswith(".so")}
-        expected = {f"lib/{abi}/libfncpn.so" for abi in MACHINES}
+        expected = {f"lib/{name}/libfncpn.so" for name in ([abi] if abi else MACHINES)}
         if native != expected:
             raise ValueError("Expected exactly one complete Go library for each supported ABI")
         if not any(re.fullmatch(r"classes(?:\d+)?\.dex", name) for name in names):
             raise ValueError("APK has no compiled Java classes")
         metadata = json.loads(archive.read("assets/build.json"))
-        if (metadata.get("version"), metadata.get("versionCode"), metadata.get("commit"), metadata.get("dirty")) != (version, build_number, commit, False):
+        if (metadata.get("version"), metadata.get("versionCode"), metadata.get("commit"), metadata.get("dirty")) != (version, build_number, commit, dirty):
             raise ValueError("APK build metadata does not match clean source/version/commit")
         if set(metadata.get("abis", [])) != set(MACHINES):
             raise ValueError("APK metadata has the wrong ABI set")
@@ -96,6 +102,8 @@ def inspect_apk(apk, version, build_number, commit, readelf):
             raise ValueError("APK is missing dependency licenses")
         hashes = {}
         for abi, machine in MACHINES.items():
+            if f"lib/{abi}/libfncpn.so" not in expected:
+                continue
             data = archive.read(f"lib/{abi}/libfncpn.so")
             check_elf(data, machine)
             check_exports(readelf(data))
@@ -103,23 +111,40 @@ def inspect_apk(apk, version, build_number, commit, readelf):
         return metadata, hashes
 
 
+def check_signer(output, expected):
+    fingerprints = re.findall(r"^Signer #\d+ certificate SHA-256 digest: ([0-9a-fA-F]+)$", output, re.M)
+    if len(fingerprints) != 1 or fingerprints[0].lower() != expected.strip().lower():
+        raise ValueError("APK must be signed with the pinned FnCPN application certificate")
+    return fingerprints[0].lower()
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("apk", type=Path)
+    parser.add_argument("--release", action="store_true", help="Verify production package, non-debuggable flag and release metadata")
+    parser.add_argument("--abi", choices=list(MACHINES))
+    parser.add_argument("--local-development", action="store_true", help="Verify local .dev package and current working-tree dirty state")
     parser.add_argument("--build-number", type=int, required=True)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
+    if args.release and not args.abi:
+        parser.error("Release requires a single --abi")
+    if args.release and args.local_development:
+        parser.error("Release cannot use local-development package")
     sdk = Path(os.environ["ANDROID_HOME"])
     ndk = Path(os.environ["ANDROID_NDK_HOME"])
     tools = sdk / "build-tools" / "35.0.0"
-    readelf = ndk / "toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf"
+    host = {"Darwin":"darwin-x86_64", "Linux":"linux-x86_64"}[platform.system()]
+    readelf = ndk / "toolchains/llvm/prebuilt" / host / "bin/llvm-readelf"
     version = (ROOT / "internal/version/VERSION").read_text().strip()
     commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
-    subprocess.run([str(tools / "apksigner"), "verify", "--verbose", str(args.apk)], check=True)
+    signing = subprocess.check_output([str(tools / "apksigner"), "verify", "--verbose", "--print-certs", str(args.apk)], text=True)
+    fingerprint = check_signer(signing, (ROOT / "mobile/android/signing-certificate.sha256").read_text())
+    print(signing, flush=True)
     subprocess.run([str(tools / "zipalign"), "-c", "-P", "16", "4", str(args.apk)], check=True)
     badging = subprocess.check_output([str(tools / "aapt2"), "dump", "badging", str(args.apk)], text=True)
     print(badging, flush=True)
-    check_badging(badging, version, args.build_number)
+    check_badging(badging, version, args.build_number, "com.rectcircle.fncpn" if args.release else ("com.rectcircle.fncpn.dev" if args.local_development else "com.rectcircle.fncpn.debug"), release=args.release)
 
     def symbols(data):
         with tempfile.TemporaryDirectory() as temporary:
@@ -127,16 +152,23 @@ def main():
             library.write_bytes(data)
             return subprocess.check_output([str(readelf), "--dyn-syms", "--wide", str(library)], text=True)
 
-    metadata, hashes = inspect_apk(args.apk, version, args.build_number, commit, symbols)
+    dirty = args.local_development and bool(subprocess.check_output(["git", "status", "--porcelain"], cwd=ROOT, text=True).strip())
+    metadata, hashes = inspect_apk(args.apk, version, args.build_number, commit, symbols, args.abi, dirty)
     args.output.mkdir(parents=True, exist_ok=True)
-    filename = f"fncpn-{version}-android-debug-{args.build_number}.apk"
+    suffix = f"-{args.abi}" if args.abi else ""
+    channel = "dev" if args.local_development else "debug"
+    filename = f"fncpn-{version}-android{suffix}.apk" if args.release else f"fncpn-{version}-android-{channel}-{args.build_number}{suffix}.apk"
     destination = args.output / filename
     shutil.copy2(args.apk, destination)
     digest = hashlib.sha256(destination.read_bytes()).hexdigest()
-    (args.output / "SHA256SUMS").write_text(f"{digest}  {filename}\n")
-    manifest = {"build": metadata, "apk": filename, "sha256": digest, "nativeSha256": hashes,
-                "checks": ["debug-signature", "package-version", "both-abis", "jni-exports", "16kb-alignment"]}
-    (args.output / "verification.json").write_text(json.dumps(manifest, indent=2) + "\n")
+    checksums = args.output / "SHA256SUMS"
+    previous = checksums.read_text().splitlines() if checksums.exists() else []
+    previous = [line for line in previous if not line.endswith("  " + filename)]
+    checksums.write_text("\n".join(previous + [f"{digest}  {filename}"]) + "\n")
+    manifest = {"variant": "release" if args.release else "debug", "build": metadata, "apk": filename, "sha256": digest, "nativeSha256": hashes,
+                "signingCertificateSha256": fingerprint,
+                "checks": ["pinned-signing-certificate", "package-version", "expected-abis", "jni-exports", "16kb-alignment"]}
+    (args.output / (filename + ".verification.json")).write_text(json.dumps(manifest, indent=2) + "\n")
     print(f"Verified {filename}: {digest}")
 
 

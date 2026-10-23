@@ -10,7 +10,7 @@
 | Windows | Windows 10 22H2（build 19045）起的 x64 / ARM64 客户端系统 | 分架构 MSI；不支持 Windows Server、32 位；Windows 10 与原生 x64 已有用户验收 |
 | Linux | 下表列明的 systemd 常规发行版 | Core/UI 双包；已有容器矩阵及 Debian 13 arm64 验证，其他发行版实机集成仍待验收 |
 | Nix / NixOS | x86_64-linux、aarch64-linux | Flake 源码构建、NixOS 模块；双架构构建和前端启动已验证，NixOS 实机集成待验收 |
-| Android | 当前配置 Android 8.0 / API 26 起，arm64-v8a、x86_64 | 已编码；Android 完整构建、安装包、冷启动及真机尚未验收，不作为已支持平台发布 |
+| Android | 当前配置 Android 8.0 / API 26 起，arm64-v8a、x86_64 | 1.1.4 候选；本地完整构建及单台手机验证通过，提供正式签名 APK，最终草稿仍待验收 |
 
 Linux 目标以 [targets.json](../packaging/linux/targets.json) 为唯一机器可读清单，以下保留 2026-10-21 核对结果，不自动承诺未来版本：
 
@@ -33,7 +33,7 @@ Linux 目标以 [targets.json](../packaging/linux/targets.json) 为唯一机器�
 
 桌面采用普通用户连接 daemon 与系统特权组件分离：前者管理身份和连接意图，后者配置网络。本地组件成套升级、校验调用方身份，只清理自身资源。详细安全与恢复机制见 [技术架构](architecture.md) 和 [网络恢复](architecture.md#网络检测与恢复)。
 
-所有平台遵守 [版本与兼容性](versioning-and-compatibility.md)：同发布统一版本、同 commit；远程准入仅为 MAJOR 相同且 client.MINOR ≤ server.MINOR，PATCH 不参与。本地 IPC 和数据 schema 独立版本化；升级保留正式身份、配置和连接意图，降级恢复配套备份。新增平台按 MINOR 规划，编码完成不等于发布验收完成。
+所有平台遵守 [版本与兼容性](versioning-and-compatibility.md)：同发布统一版本、同 commit；远程准入仅为 MAJOR 相同且 client.MINOR ≤ server.MINOR，PATCH 不参与。本地 IPC 和数据 schema 独立版本化；升级保留正式身份、配置和连接意图，降级恢复配套备份。新增平台复用已有协议且不增加 server 要求时允许 PATCH，编码完成不等于发布验收完成。
 
 ## macOS
 
@@ -81,7 +81,7 @@ DNS 仍受 resolved stub 条件约束。删除模块不会删除身份和配置�
 
 **结论：采用 Fyne UI、薄 Java VpnService 系统入口与共享 Go 连接核心；单应用进程、单 Go runtime，无需 root。** Java 负责 VPN 授权、前台通知、TUN、网络回调和 Keystore；连接业务留在 Go，避免复制桌面逻辑或引入桌面双 daemon 与特权 IPC。
 
-Service 持有唯一连接实例，UI 只提交命令和订阅状态。选择这一边界是为了让关闭 Activity 不结束连接，并允许系统直接重建 Service；后者的冷启动路径仍需实际 Android 构建验证。不承诺强制停止后恢复、开机自动连接或厂商省电限制下永久在线；Always-on/lockdown 未验收前不声明支持。
+Service 持有唯一连接实例，UI 只提交命令和订阅状态。选择这一边界是为了让关闭 Activity 不结束连接，并允许系统直接重建 Service；后者已有本地构建及恢复逻辑测试，系统回收后的长期恢复仍需专项验收。不承诺强制停止后恢复、开机自动连接或厂商省电限制下永久在线；Always-on/lockdown 未验收前不声明支持。
 
 数据面使用系统 VpnService TUN 与 wireguard-go，不依赖第三方 WireGuard App。控制连接、中继、直连与 DNS 上游须按用途保护并绑定底层网络，避免 VPN 回环；切网后重建旧网络上的连接。
 

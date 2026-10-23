@@ -3,6 +3,7 @@
 import hashlib, json, os, pathlib, sys, subprocess
 from linux_support import TARGETS, BUNDLES, package_name as linux_package_name
 from rpm_signing import signing_identity
+from android_release import candidates as android_candidates
 root, version, revision, arch = sys.argv[1:]
 root = pathlib.Path(root)
 target = root / f"release-{version}.json"
@@ -86,6 +87,14 @@ if tuple(map(int, version.split('.'))) >= (1, 1, 2):
                 set(evidence.get('checks', [])) != expected_checks):
                 raise SystemExit('Linux compatibility evidence does not match the release packages and commit')
 
+android_build = None
+if tuple(map(int, version.split('.'))) >= (1, 1, 4):
+    try:
+        android_artifacts, android_build = android_candidates(root, version, revision)
+    except (OSError, ValueError, KeyError) as error:
+        raise SystemExit(f'Invalid Android release candidates: {error}')
+    artifacts.extend(android_artifacts)
+
 def tool(*command):
     try:
         result = subprocess.run(command, capture_output=True, text=True)
@@ -108,6 +117,8 @@ if tuple(map(int, version.split('.'))) >= (1, 1, 2):
     metadata['build']['linuxTargets'] = list(TARGETS)
     metadata['build']['linuxBundles'] = list(BUNDLES)
     metadata['build']['nixSystems'] = ['x86_64-linux', 'aarch64-linux']
+if android_build is not None:
+    metadata['build']['android'] = android_build
 with target.open("x" if os.environ.get("RELEASE") == "1" else "w") as output:
     output.write(json.dumps(metadata, indent=2) + "\n")
 (root / f"SHA256SUMS-{version}").write_text("".join(f"{a['sha256']}  {a['file']}\n" for a in artifacts))

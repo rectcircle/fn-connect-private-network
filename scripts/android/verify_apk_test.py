@@ -31,8 +31,9 @@ def metadata():
 
 
 class APKVerificationTests(unittest.TestCase):
-    def apk(self, build=None, omit=None, bad_arch=False):
+    def apk(self, build=None, omit=None, bad_arch=False, padding=0):
         output = io.BytesIO()
+        output.write(b"x" * padding)
         with zipfile.ZipFile(output, "w") as archive:
             for abi, machine in verify_apk.MACHINES.items():
                 if abi != omit:
@@ -47,6 +48,18 @@ class APKVerificationTests(unittest.TestCase):
         build, hashes = verify_apk.inspect_apk(self.apk(), "1.2.0", 42, "abc123", lambda _: symbols())
         self.assertEqual(build["versionCode"], 42)
         self.assertEqual(set(hashes), {"arm64-v8a", "x86_64"})
+
+    def test_single_architecture_distribution(self):
+        for abi, other in (("arm64-v8a", "x86_64"), ("x86_64", "arm64-v8a")):
+            with self.subTest(abi=abi):
+                _, hashes = verify_apk.inspect_apk(self.apk(omit=other), "1.2.0", 42, "abc123", lambda _: symbols(), abi)
+                self.assertEqual(set(hashes), {abi})
+                with self.assertRaises(ValueError):
+                    verify_apk.inspect_apk(self.apk(), "1.2.0", 42, "abc123", lambda _: symbols(), abi)
+
+    def test_obsolete_zip_storage_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, "unused ZIP space"):
+            verify_apk.inspect_apk(self.apk(padding=2 << 20), "1.2.0", 42, "abc123", lambda _: symbols())
 
     def test_missing_or_mislabeled_library_rejected(self):
         for apk in (self.apk(omit="x86_64"), self.apk(bad_arch=True)):
@@ -87,3 +100,20 @@ class APKVerificationTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+class SigningIdentityTests(unittest.TestCase):
+    def test_only_pinned_single_signer_is_accepted(self):
+        expected = 'ab' * 32
+        output = 'Signer #1 certificate SHA-256 digest: ' + expected.upper() + '\n'
+        self.assertEqual(verify_apk.check_signer(output, expected), expected)
+        for invalid in ('', output.replace(expected.upper(), 'cd' * 32), output + output.replace('#1', '#2')):
+            with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                verify_apk.check_signer(invalid, expected)
+
+class ReleaseBadgingTests(unittest.TestCase):
+    def test_production_package_must_not_be_debuggable(self):
+        text = "package: name='com.rectcircle.fncpn' versionCode='100' versionName='1.1.4'\nsdkVersion:'26'\ntargetSdkVersion:'36'\n"
+        verify_apk.check_badging(text, '1.1.4', 100, 'com.rectcircle.fncpn', release=True)
+        for invalid in (text+'application-debuggable\n', text.replace("fncpn'", "fncpn.debug'")):
+            with self.assertRaises(ValueError):
+                verify_apk.check_badging(invalid, '1.1.4', 100, 'com.rectcircle.fncpn', release=True)

@@ -4,6 +4,22 @@
 格式遵循 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)，版本规则见
 [版本与兼容性](docs/versioning-and-compatibility.md)。
 
+## [1.1.4] - 2026-10-23
+
+### Added
+
+- Android 客户端：Android 8.0 起，提供 ARM64/x86_64 独立 APK；Fyne 移动 UI 依赖共享 Go 连接核心，系统 VPN/前台服务、网络回调、通知与 Keystore 通过薄 Java 层适配。
+- 支持 fnOS 账号登录、访问码/OTP、局域网直达、IPv6 直连、FN Connect 中继和 VPN 内 DNS；主界面提供连接状态、NAS 浏览器入口与诊断，菜单提供登录、NAS 切换、管理后台、官网和诊断导出。
+- Android 提供侧边栏手势、后台连接与按连接意图恢复、通知和快捷设置连接开关、系统字体、系统日志目录及只读脱敏诊断 ZIP 导出。
+- Android 本地及 CI 统一使用项目正式证书签名，发布草稿包含双架构 Release APK、签名指纹及哈希校验；官网提供 Android 安装下载入口。
+- macOS 图标生成器统一输出 PNG、SVG 与 Android 矢量资源，移动端复用同一品牌图形。
+
+### 升级与验证范围
+
+- 本次新增 Android 平台复用既有协议，不增加 server 接口或版本要求，按 PATCH 发布；1.1.4 客户端可连接已有 1.1.x server，PATCH 不参与准入判断。同发布各端保持同编号、同 commit。
+- Android 用户已确认 IPv6、FN Connect 中继和主要交互可用；开发包构建、签名和 16 KB 对齐校验通过。最终 Release APK、长时间锁屏/切网、更多厂商与真实 16 KB 页设备仍需草稿验收；不承诺 Always-on/lockdown、开机自启或强制停止后自动恢复。
+- 正式 APK 与旧 `.dev`/`.debug` 开发包并存，需要单独登录；正式包后续同签名覆盖升级保留应用数据。
+
 ## [1.1.3] - 2026-10-22
 
 ### Changed
