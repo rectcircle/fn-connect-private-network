@@ -50,70 +50,80 @@ class PublicationTest(unittest.TestCase):
                 (out / f'SHA256SUMS-{version}').write_text(''.join(f"{a['sha256']}  {a['file']}\n" for a in artifacts))
                 calls = []
                 tags = ([tagged] if tagged else (['a' * 40] if draft is False else []))
+                remote = {}
+                if publish:
+                    remote.update({name: source.read_bytes() for name, source in sources.items()})
+                    for name in (f'release-{version}.json', f'SHA256SUMS-{version}'):
+                        remote[name] = (out / name).read_bytes()
+                elif draft is True:
+                    remote[f'FnCPN-{version}-arm64-unsigned.msi'] = b'legacy'
+                downloaded = []
+                uploaded = []
+                publications = []
+                release = {'id': 1, 'target_commitish': candidate_target or 'a' * 40,
+                           'tag_name': 'v' + version, 'draft': draft, 'html_url': 'https://example.invalid/release'}
 
                 def run(*args):
                     calls.append(args)
-                    if args[:3] == ('gh', 'release', 'create'):
-                        notes_path = pathlib.Path(args[args.index('--notes-file') + 1])
-                        self.assertEqual(notes_path.read_text(), 'Current release changes.\n')
-                        self.assertIn('--draft', args)
-                        self.assertNotIn('--prerelease', args)
-                    if args[:3] == ('gh', 'release', 'edit'):
-                        if '--notes-file' in args:
-                            notes_path = pathlib.Path(args[args.index('--notes-file') + 1])
-                            self.assertEqual(notes_path.read_text(encoding='utf-8'), 'Current release changes.\n')
-                            self.assertNotIn('--draft=false', args)
-                        else:
-                            self.assertIn('--draft=false', args)
-                            self.assertIn('--latest', args)
-                            self.assertNotIn('--latest=false', args)
                     if args[:2] == ('git', 'status'):
                         return ''
                     if args[0] == 'git':
                         return 'a' * 40
-                    if args[:2] == ('gh', 'api'):
-                        endpoint = args[2]
-                        if 'matching-refs' in endpoint:
-                            return json.dumps([{'ref': 'refs/tags/v' + version, 'object': {'type': 'commit', 'sha': sha}} for sha in tags])
-                        if '--input' in args:
-                            payload = json.loads(pathlib.Path(args[args.index('--input') + 1]).read_text())
-                            if endpoint.endswith('/git/refs'):
-                                self.assertTrue(any(c[:3] == ('gh', 'release', 'download') for c in calls))
-                                self.assertFalse(corrupt)
-                                tags.append(payload['sha'])
-                            else:
-                                self.assertEqual(payload.get('target_commitish'), 'a' * 40)
-                            return json.dumps({'draft': True, 'assets': [], 'id': 1})
-                        return json.dumps([[] if draft is None else [{'id': 1, 'target_commitish': candidate_target or 'a' * 40, 'tag_name': 'v' + version, 'draft': draft, 'assets': [{'name': f'FnCPN-{version}-arm64-unsigned.msi'}]}]])
-                    if args[:3] == ('gh', 'release', 'view') and 'isDraft,assets' in args:
-                        return json.dumps({'isDraft': True, 'assets': []})
-                    if args[:3] == ('gh', 'release', 'download'):
-                        target = pathlib.Path(args[args.index('--dir') + 1])
-                        for name, source in sources.items():
-                            (target / name).write_bytes(source.read_bytes())
-                        for p in (out / f'release-{version}.json', out / f'SHA256SUMS-{version}'):
-                            (target / p.name).write_bytes(p.read_bytes())
-                        if corrupt:
-                            (target / f'fncpn-{version}-windows-arm64-unsigned.msi').write_bytes(b'corrupt')
-                    return 'https://example.invalid/release'
+                    self.assertEqual(args[:2], ('gh', 'api'))
+                    endpoint = next(a for a in args[2:] if a.startswith(('repos/', 'https://uploads.')))
+                    if 'matching-refs' in endpoint:
+                        return json.dumps([{'ref': 'refs/tags/v' + version, 'object': {'type': 'commit', 'sha': sha}} for sha in tags])
+                    if endpoint.startswith('https://uploads.'):
+                        from urllib.parse import parse_qs, urlsplit
+                        self.assertIn('/releases/1/assets?', endpoint)
+                        name = parse_qs(urlsplit(endpoint).query)['name'][0]
+                        source = pathlib.Path(args[args.index('--input') + 1])
+                        remote[name] = source.read_bytes()
+                        uploaded.append(name)
+                        return '{}'
+                    if endpoint.endswith('/releases/1/assets'):
+                        return json.dumps([[{'id': name, 'name': name} for name in remote]])
+                    if '--method' in args and args[args.index('--method') + 1] == 'DELETE':
+                        del remote[endpoint.split('/assets/')[1]]
+                        return ''
+                    if '--input' in args:
+                        payload = json.loads(pathlib.Path(args[args.index('--input') + 1]).read_text())
+                        if endpoint.endswith('/git/refs'):
+                            self.assertTrue(downloaded)
+                            self.assertFalse(corrupt)
+                            tags.append(payload['sha'])
+                        elif payload.get('draft') is False:
+                            self.assertEqual(payload['tag_name'], 'v' + version)
+                            self.assertEqual(tags, ['a' * 40])
+                            self.assertEqual(payload['make_latest'], 'true')
+                            publications.append(payload)
+                        else:
+                            self.assertEqual(payload['tag_name'], 'v' + version)
+                            self.assertEqual(payload.get('target_commitish'), 'a' * 40)
+                        return json.dumps(dict(release, draft=True))
+                    return json.dumps([[] if draft is None else [release]])
 
-                with patch.object(publisher, 'run', run):
+                def download(repository, asset, destination):
+                    self.assertEqual(repository, 'owner/repo')
+                    downloaded.append(asset['name'])
+                    content = remote[asset['name']]
+                    if corrupt and asset['name'] == f'fncpn-{version}-windows-arm64-unsigned.msi':
+                        content = b'corrupt'
+                    (pathlib.Path(destination) / asset['name']).write_bytes(content)
+
+                with patch.object(publisher, 'run', run), patch.object(publisher, 'download_asset', download):
                     if corrupt:
                         with self.assertRaises(SystemExit):
                             publisher.publish(out, 'owner/repo', publish)
                     else:
                         publisher.publish(out, 'owner/repo', publish)
-                deletions = [c for c in calls if c[:3] == ('gh', 'release', 'delete-asset')]
-                self.assertEqual(len(deletions), 1 if draft is True and not publish else 0)
-                uploads = [c for c in calls if c[:3] == ('gh', 'release', 'upload')]
-                if uploads:
-                    self.assertTrue(all(str(source.resolve()) in uploads[0] for source in sources.values()))
-                mutations = [c[2] for c in calls if c[:2] == ('gh', 'release') and c[2] in ('upload', 'edit', 'create')]
                 if not publish or corrupt:
                     self.assertEqual(tags, ['a' * 40] if draft is False else [])
                 elif draft is True:
                     self.assertEqual(tags, ['a' * 40])
-                return mutations
+                if uploaded:
+                    self.assertEqual(set(uploaded), set(sources) | {f'release-{version}.json', f'SHA256SUMS-{version}'})
+                return (['upload'] if uploaded else []) + (['edit'] if publications else [])
             finally:
                 os.chdir(previous)
 

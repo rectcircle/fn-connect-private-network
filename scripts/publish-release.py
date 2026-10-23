@@ -11,6 +11,7 @@ import tempfile
 from linux_support import release_packages
 from android_release import validate_inventory as validate_android_inventory
 from rpm_signing import signing_identity
+from release_assets import assets, download_asset, upload_asset, find_release
 
 
 def run(*args):
@@ -107,8 +108,7 @@ def publish(directory, repository, make_public=False):
         if hashlib.sha256(sources[artifact['file']].read_bytes()).hexdigest() != artifact['sha256']:
             raise SystemExit('Artifact checksum mismatch: ' + artifact['file'])
     # Distinguish not-found from auth/network errors before creating a release.
-    releases = json.loads(run('gh', 'api', '--paginate', '--slurp', f'repos/{repository}/releases'))
-    release = next((r for page in releases for r in page if r['tag_name'] == tag), None)
+    release = find_release(repository, tag, run)
     existing_release = release is not None
     if release is None and make_public:
         raise SystemExit("Publication requires an existing release draft")
@@ -127,20 +127,20 @@ def publish(directory, repository, make_public=False):
     if draft and not make_public:
         if existing_release:
             api_json(f"repos/{repository}/releases/{release['id']}", {
-                'target_commitish': commit, 'body': release_notes(version)})
-        run('gh', 'release', 'upload', tag, '--repo', repository, '--clobber',
-            *(str(sources.get(name, directory / name)) for name in names))
-        # A private draft may replace its legacy installer names. Public assets
-        # remain immutable; unrelated files still fail the exact inventory check.
+                'tag_name': tag, 'target_commitish': commit, 'body': release_notes(version)})
+        remote_assets = assets(repository, release['id'], run)
         legacy = {f'FnCPN-{version}-arm64-unsigned.pkg',
                   f'FnCPN-{version}-arm64-unsigned.msi', f'FnCPN-{version}-x64-unsigned.msi',
                   f'fncpn-{version}-arm.fpk', f'fncpn-{version}-x86.fpk'}
-        for asset in release.get('assets', []):
-            if asset['name'] in legacy and asset['name'] not in names:
-                run('gh', 'release', 'delete-asset', tag, asset['name'], '--repo', repository, '--yes')
+        for asset in remote_assets:
+            if asset['name'] in set(names) | legacy:
+                run('gh', 'api', f"repos/{repository}/releases/assets/{asset['id']}", '--method', 'DELETE')
+        for name in names:
+            upload_asset(repository, release['id'], name, sources.get(name, directory / name), run)
     # Never mutate a public release. Re-runs succeed only if every byte matches.
     with tempfile.TemporaryDirectory(prefix='fncpn-release-verify-') as temporary:
-        run('gh', 'release', 'download', tag, '--repo', repository, '--dir', temporary)
+        for asset in assets(repository, release['id'], run):
+            download_asset(repository, asset, temporary)
         downloaded = pathlib.Path(temporary)
         if {p.name for p in downloaded.iterdir()} != set(names):
             raise SystemExit('Unexpected or missing remote assets; release remains unpublished')
@@ -155,9 +155,8 @@ def publish(directory, repository, make_public=False):
             api_json(f'repos/{repository}/git/refs', {'ref': 'refs/tags/' + tag, 'sha': commit})
         if remote_tag(repository, tag) != commit:
             raise SystemExit('Publication tag does not match verified candidate')
-        run('gh', 'release', 'edit', tag, '--repo', repository, '--draft=false',
-            '--latest')
-    print(run('gh', 'release', 'view', tag, '--repo', repository, '--json', 'url', '--jq', '.url'))
+        release = api_json(f"repos/{repository}/releases/{release['id']}", {'tag_name': tag, 'draft': False, 'make_latest': 'true'})
+    print(release['html_url'])
 
 
 if __name__ == '__main__':

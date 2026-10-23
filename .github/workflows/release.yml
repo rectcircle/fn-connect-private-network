@@ -253,7 +253,7 @@ jobs:
         run: |
           python3 scripts/check-release-candidate.py
           mkdir -p "$DIST_DIR"
-          gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --dir "$DIST_DIR"
+          python3 scripts/download-release.py "$RELEASE_TAG" "$DIST_DIR" --repo "$GITHUB_REPOSITORY"
       - name: Verify existing assets and make release public
         run: python3 scripts/publish-release.py "$DIST_DIR" --publish
   mirror-quark:

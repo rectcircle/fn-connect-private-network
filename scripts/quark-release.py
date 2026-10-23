@@ -11,6 +11,7 @@ import subprocess
 import tempfile
 import urllib.request
 import zipfile
+from release_assets import find_release, download_release
 from linux_support import release_packages
 from android_release import packages as android_packages, validate_inventory as validate_android_inventory
 
@@ -270,8 +271,10 @@ def dispatch(tag, repo, mode, cli, auth_path):
     with tempfile.TemporaryDirectory(prefix='fncpn-quark-auth-check-') as temporary:
         Quark(cli, temporary).call('get-user-info')
     auth = minimal_auth(json.loads(auth_path.read_text()))
-    release = json.loads(gh('release', 'view', tag, '--repo', repo, '--json', 'isDraft,isPrerelease'))
-    if release['isPrerelease'] or (mode == 'mirror' and release['isDraft']):
+    release = find_release(repo, tag)
+    if release is None:
+        raise ValueError('Release not found')
+    if release['prerelease'] or (mode == 'mirror' and release['draft']):
         raise ValueError('Mirror retries require a public stable release')
     # stdin keeps authorization out of argv, shell history and workflow inputs.
     gh('secret', 'set', 'QUARK_AUTH', '--repo', repo, input=json.dumps(auth))
@@ -280,7 +283,7 @@ def dispatch(tag, repo, mode, cli, auth_path):
     if mode == 'publish':
         with tempfile.TemporaryDirectory(prefix='fncpn-candidate-') as temporary:
             name = f'release-{version_from_tag(tag)}.json'
-            gh('release', 'download', tag, '--repo', repo, '--pattern', name, '--dir', temporary)
+            download_release(repo, tag, temporary, name=name)
             candidate = json.loads((Path(temporary) / name).read_text())
         commit = candidate['commit']
         if candidate['version'] != version_from_tag(tag) or not re.fullmatch(r'[0-9a-f]{40}', commit):

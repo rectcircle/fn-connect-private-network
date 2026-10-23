@@ -206,13 +206,13 @@ class AuthorizationTest(unittest.TestCase):
         calls=[]
         def gh(*args, **kwargs):
             calls.append((args,kwargs))
-            if args[:2] == ('release', 'download'):
-                (Path(args[args.index('--dir') + 1]) / 'release-1.0.10.json').write_text(json.dumps({'version': '1.0.10', 'commit': 'a' * 40}))
-            return json.dumps({'isDraft':True,'isPrerelease':False}) if args[:2]==('release','view') else ''
+            return ''
+        def download(repo, tag, directory, name=None):
+            (Path(directory) / name).write_text(json.dumps({'version': '1.0.10', 'commit': 'a' * 40}))
         with tempfile.TemporaryDirectory() as temp:
             root=Path(temp);entry=root/'scripts/quark-drive.cjs';entry.parent.mkdir();entry.touch()
             config=root/'codex/config.json';mirror.write_auth(config,auth())
-            with patch.object(mirror,'gh',gh),patch.object(mirror,'checked',return_value=mirror.CLI_VERSION),patch.object(mirror.Quark,'call',return_value={}):
+            with patch.object(mirror,'gh',gh),patch.object(mirror,'find_release',return_value={'draft':True,'prerelease':False}),patch.object(mirror,'download_release',download),patch.object(mirror,'checked',return_value=mirror.CLI_VERSION),patch.object(mirror.Quark,'call',return_value={}):
                 mirror.dispatch('v1.0.10','owner/repo','publish',entry,config)
         secret = next(c for c in calls if c[0][:2] == ('secret', 'set'))
         self.assertEqual(secret[0][:3],('secret','set','QUARK_AUTH'))

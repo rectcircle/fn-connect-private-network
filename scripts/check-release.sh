@@ -12,6 +12,7 @@ python3 scripts/android_release_test.py
 python3 -m unittest discover -s scripts/android -p '*_test.py'
 python3 scripts/release_manifest_test.py
 python3 scripts/release_candidate_test.py
+python3 scripts/release_assets_test.py
 python3 scripts/publish_release_test.py
 python3 scripts/quark_release_test.py
 python3 scripts/update_cask_test.py

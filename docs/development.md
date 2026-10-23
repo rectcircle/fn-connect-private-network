@@ -694,7 +694,7 @@ GitHub Secrets 是 CI 使用副本，网页/API 不提供原值下载。必要�
 2. 推送候选 commit 后运行 `gh workflow run release.yml --ref main -f version=1.1.4 -f commit="$(git rev-parse HEAD)"`（替换版本号）。流水线固定完整 SHA 检查、构建并上传草稿，不创建 tag、不自动公开。
 3. 草稿出错可修复、提交新 commit 后按新 SHA 重建及替换；版本 tag 在草稿期间必须不存在。Review 使用 `https://github.com/rectcircle/fn-connect-private-network/compare/v<上一正式版本>...<候选完整SHA>`。公开后兼容修复应升 PATCH。
 4. 候选验收后，推荐运行 `python3 scripts/quark-release.py dispatch v1.0.10`（替换为待发布版本），先检查本地夸克授权并通过 `gh secret set` 同步 Secret，再触发公开发布。仅需 GitHub 发布时仍可运行 `gh workflow run release.yml --ref main -f version=1.0.10 -f commit=<草稿清单中的完整SHA> -f publish=true`，但必须预先准备夸克 Secret，否则后续镜像 job 会失败。独立的 publish job 下载原草稿产物复核并公开，不依赖构建 job，不安装编译工具、不重建或重新上传资产；也可使用本地已验收的原始产物运行 `python3 scripts/publish-release.py dist --publish`，避免将另一批未经确认的构建视为已验收。
-5. Release 说明从 CHANGELOG 对应版本条目提取；尚未登记版本时使用 Unreleased，公开前应完成版本条目。发布脚本下载远端所有资产逐字节复核后，在候选 commit 创建版本 tag，再公开；如创建 tag 后公开失败，重试仅允许复用相同 commit 的 tag；已公开版本只允许校验一致的幂等重试，不覆盖。
+5. 草稿及其资产均按 Release ID 操作，更新草稿时显式保留 `tag_name`，支持尚无 Git tag 的草稿；下载入口使用 `python3 scripts/download-release.py v<版本> dist`。Release 说明从 CHANGELOG 对应版本条目提取；尚未登记版本时使用 Unreleased，公开前应完成版本条目。发布脚本下载远端所有资产逐字节复核后，在候选 commit 创建版本 tag，再公开；如创建 tag 后公开失败，重试仅允许复用相同 commit 的 tag；已公开版本只允许校验一致的幂等重试，不覆盖。
 6. `python3 scripts/update-cask.py <version>` 仅从公开稳定版发布清单生成 `Casks/fncpn.rb`；脚本拒绝非数字版本、草稿和 GitHub prerelease；公开任务自动提交并推送 Cask 更新。提交并推送生成文件。
 
 PKG Cask 安装使用系统 installer，卸载先运行项目脚本做网络清理，再清理 package receipt；默认保留用户配置与凭据。
