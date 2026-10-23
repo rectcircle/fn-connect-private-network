@@ -1,4 +1,4 @@
-package com.rectcircle.fncpn;
+package cn.rectcircle.fncpn;
 
 import android.content.Context;
 import android.util.Log;

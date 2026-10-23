@@ -1,4 +1,4 @@
-package com.rectcircle.fncpn;
+package cn.rectcircle.fncpn;
 
 import android.app.Notification;
 import android.app.NotificationChannel;

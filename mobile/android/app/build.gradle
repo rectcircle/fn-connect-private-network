@@ -20,15 +20,15 @@ if (!signingPath || !signingStorePassword || !signingAlias || !signingKeyPasswor
 }
 
 android {
-    namespace 'com.rectcircle.fncpn'
+    namespace 'cn.rectcircle.fncpn'
     compileSdk 36
     buildToolsVersion '35.0.0'
     ndkVersion '28.2.13676358'
     ndkPath existingNdk
     defaultConfig {
-        applicationId 'com.rectcircle.fncpn'
+        applicationId 'cn.rectcircle.fncpn'
         manifestPlaceholders = [appLabel: 'FnCPN']
-        testInstrumentationRunner 'com.rectcircle.fncpn.SmokeInstrumentation'
+        testInstrumentationRunner 'cn.rectcircle.fncpn.SmokeInstrumentation'
         minSdk 26
         targetSdk 36
         versionCode buildNumber

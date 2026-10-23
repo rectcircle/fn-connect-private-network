@@ -1,4 +1,4 @@
-package com.rectcircle.fncpn;
+package cn.rectcircle.fncpn;
 
 import android.app.Activity;
 import android.app.Instrumentation;
@@ -36,7 +36,7 @@ public final class SmokeInstrumentation extends Instrumentation {
                     socket.getOutputStream().write(body);socket.getOutputStream().flush();
                 } catch(Exception ignored) {}
             });http.start();
-            Intent intent=new Intent().setClassName(getTargetContext().getPackageName(),"com.rectcircle.fncpn.AdminActivity")
+            Intent intent=new Intent().setClassName(getTargetContext().getPackageName(),"cn.rectcircle.fncpn.AdminActivity")
                 .putExtra("url","http://127.0.0.1:"+server.getLocalPort()+"/").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
             activity=startActivitySync(intent);
             waitForIdleSync();

@@ -1,4 +1,4 @@
-package com.rectcircle.fncpn;
+package cn.rectcircle.fncpn;
 
 import android.content.ContentProvider;
 import android.content.ContentValues;

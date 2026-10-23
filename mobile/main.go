@@ -16,7 +16,7 @@ var translationsFS embed.FS
 var appIcon []byte
 
 func main() {
-	a := app.NewWithID("com.rectcircle.fncpn")
+	a := app.NewWithID("cn.rectcircle.fncpn")
 	a.SetIcon(fyne.NewStaticResource("appicon.svg", appIcon))
 	a.Settings().SetTheme(clientTheme{theme.DefaultTheme()})
 	w := a.NewWindow("FnCPN")

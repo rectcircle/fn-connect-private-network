@@ -74,7 +74,7 @@ class APKVerificationTests(unittest.TestCase):
                 verify_apk.inspect_apk(self.apk(build), "1.2.0", 42, "abc123", lambda _: symbols())
 
     def test_missing_or_undefined_jni_export_rejected(self):
-        for output in (symbols().replace("Java_com_rectcircle_fncpn_Bridge_start", "other_symbol"),
+        for output in (symbols().replace("Java_cn_rectcircle_fncpn_Bridge_start", "other_symbol"),
                        symbols().replace("DEFAULT 1", "DEFAULT UND")):
             with self.subTest(), self.assertRaises(ValueError):
                 verify_apk.inspect_apk(self.apk(), "1.2.0", 42, "abc123", lambda _: output)
@@ -85,7 +85,7 @@ class APKVerificationTests(unittest.TestCase):
                 verify_apk.check_elf(data, 183)
 
     def test_debug_package_and_sdk_bounds(self):
-        text = "package: name='com.rectcircle.fncpn.debug' versionCode='42' versionName='1.2.0'\nsdkVersion:'26'\ntargetSdkVersion:'36'\napplication-debuggable\n"
+        text = "package: name='cn.rectcircle.fncpn.debug' versionCode='42' versionName='1.2.0'\nsdkVersion:'26'\ntargetSdkVersion:'36'\napplication-debuggable\n"
         for field in ("sdkVersion", "minSdkVersion"):
             with self.subTest(field=field):
                 verify_apk.check_badging(text.replace("sdkVersion:", field + ":"), "1.2.0", 42)
@@ -112,8 +112,8 @@ class SigningIdentityTests(unittest.TestCase):
 
 class ReleaseBadgingTests(unittest.TestCase):
     def test_production_package_must_not_be_debuggable(self):
-        text = "package: name='com.rectcircle.fncpn' versionCode='100' versionName='1.1.4'\nsdkVersion:'26'\ntargetSdkVersion:'36'\n"
-        verify_apk.check_badging(text, '1.1.4', 100, 'com.rectcircle.fncpn', release=True)
+        text = "package: name='cn.rectcircle.fncpn' versionCode='100' versionName='1.1.4'\nsdkVersion:'26'\ntargetSdkVersion:'36'\n"
+        verify_apk.check_badging(text, '1.1.4', 100, 'cn.rectcircle.fncpn', release=True)
         for invalid in (text+'application-debuggable\n', text.replace("fncpn'", "fncpn.debug'")):
             with self.assertRaises(ValueError):
-                verify_apk.check_badging(invalid, '1.1.4', 100, 'com.rectcircle.fncpn', release=True)
+                verify_apk.check_badging(invalid, '1.1.4', 100, 'cn.rectcircle.fncpn', release=True)

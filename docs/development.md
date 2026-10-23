@@ -347,7 +347,7 @@ alias 为 `fncpn-release`，证书主体 `CN=rectcircle,C=CN`，RSA 3072 位，�
 `FNCPN_KEY_ALIAS`、`FNCPN_KEY_PASSWORD`。正式签名 job 需将前者解码到 runner 临时文件，
 将该绝对路径传给 `FNCPN_KEYSTORE`，其余 Secret 作为同名环境变量传入，完成后删除临时密钥库。
 分支推送构建具有调试能力、使用正式证书签名的 APK；Release workflow 通过复用 Android workflow
-构建非 debuggable 的正式包，生产包名为 `com.rectcircle.fncpn`，两份 APK 合入发布清单。
+构建非 debuggable 的正式包，生产包名为 `cn.rectcircle.fncpn`，两份 APK 合入发布清单。
 正式 versionCode 采用 tag commit 的 `git rev-list --count HEAD`，同一候选双 ABI 相同，后续发布单调增加。
 通过版本与真机验收后可在干净源码树运行：
 
@@ -433,15 +433,15 @@ APK 校验会拒绝超过 1 MiB 的非条目空间，不仅检查条目清单与
 CI 和本地 Gradle 统一使用固定 FnCPN 正式证书，后续同包名可相互覆盖（versionCode 不得倒退）。
 历史使用旧 Debug 密钥的开发包不能直接覆盖；不要自动卸载或清除数据，需要先安排数据保留/重新登录。
 本地可运行 `gradle :app:assembleDebug :app:assembleDebugAndroidTest -PfncpnBuild=递增整数 -PfncpnDev`，
-安装独立包 `com.rectcircle.fncpn.dev`（桌面名称“FnCPN 开发版”），保留已安装的 CI 包与数据。
-普通 Debug 包名仍是 `com.rectcircle.fncpn.debug`，正式包名不变；三种包使用同一受保护的固定发布密钥。
+安装独立包 `cn.rectcircle.fncpn.dev`（桌面名称“FnCPN 开发版”），保留已安装的 CI 包与数据。
+普通 Debug 包名仍是 `cn.rectcircle.fncpn.debug`，正式包名不变；三种包使用同一受保护的固定发布密钥。
 
 ```sh
 adb install -r app/build/outputs/apk/debug/app-arm64-v8a-debug.apk
 adb install -r app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
-adb shell am instrument -w com.rectcircle.fncpn.dev.test/com.rectcircle.fncpn.SmokeInstrumentation
-adb exec-out run-as com.rectcircle.fncpn.dev cat files/logs/client.log > client.log
-adb exec-out run-as com.rectcircle.fncpn.dev cat files/logs/android.log > android.log
+adb shell am instrument -w cn.rectcircle.fncpn.dev.test/cn.rectcircle.fncpn.SmokeInstrumentation
+adb exec-out run-as cn.rectcircle.fncpn.dev cat files/logs/client.log > client.log
+adb exec-out run-as cn.rectcircle.fncpn.dev cat files/logs/android.log > android.log
 ```
 
 真机 instrumentation 使用本机 HTTP 页面检查管理 WebView 加载及系统栏/返回栏避让，不需要 NAS 账号。

@@ -56,16 +56,16 @@ char *fncpn_android_rpc(const char *request) {
     (*env)->DeleteLocalRef(env,input);if(reply)(*env)->DeleteLocalRef(env,reply);
     if(detach)(*vm)->DetachCurrentThread(vm);return out;
 }
-JNIEXPORT void JNICALL Java_com_rectcircle_fncpn_Bridge_prepare(JNIEnv *env,jclass clazz){remember(env,clazz);}
-JNIEXPORT jstring JNICALL Java_com_rectcircle_fncpn_Bridge_start(JNIEnv *env,jclass clazz,jobject owner,jstring directory){
+JNIEXPORT void JNICALL Java_cn_rectcircle_fncpn_Bridge_prepare(JNIEnv *env,jclass clazz){remember(env,clazz);}
+JNIEXPORT jstring JNICALL Java_cn_rectcircle_fncpn_Bridge_start(JNIEnv *env,jclass clazz,jobject owner,jstring directory){
     remember(env,clazz);char *path=utf8(env,directory);if(!path)return (*env)->NewStringUTF(env,"Invalid app directory");
     char *error=fncpnStart(path);free(path);jstring result=java_string(env,error);free(error);return result;
 }
-JNIEXPORT void JNICALL Java_com_rectcircle_fncpn_Bridge_stop(JNIEnv *env,jclass clazz,jboolean revoked){fncpnStop(revoked?1:0);}
-JNIEXPORT void JNICALL Java_com_rectcircle_fncpn_Bridge_networkChanged(JNIEnv *env,jclass clazz){fncpnNetworkChanged();}
-JNIEXPORT jstring JNICALL Java_com_rectcircle_fncpn_Bridge_command(JNIEnv *env,jclass clazz,jstring method,jstring params){
+JNIEXPORT void JNICALL Java_cn_rectcircle_fncpn_Bridge_stop(JNIEnv *env,jclass clazz,jboolean revoked){fncpnStop(revoked?1:0);}
+JNIEXPORT void JNICALL Java_cn_rectcircle_fncpn_Bridge_networkChanged(JNIEnv *env,jclass clazz){fncpnNetworkChanged();}
+JNIEXPORT jstring JNICALL Java_cn_rectcircle_fncpn_Bridge_command(JNIEnv *env,jclass clazz,jstring method,jstring params){
     char *m=utf8(env,method),*p=utf8(env,params);if(!m||!p){free(m);free(p);return NULL;}
     char *reply=fncpnCommand(m,p);free(m);free(p);jstring result=java_string(env,reply);free(reply);return result;
 }
 
-JNIEXPORT void JNICALL Java_com_rectcircle_fncpn_Bridge_back(JNIEnv *env,jclass clazz){ fncpnBack(); }
+JNIEXPORT void JNICALL Java_cn_rectcircle_fncpn_Bridge_back(JNIEnv *env,jclass clazz){ fncpnBack(); }

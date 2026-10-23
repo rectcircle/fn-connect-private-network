@@ -21,12 +21,12 @@ MACHINES = {"arm64-v8a": 183, "x86_64": 62}
 EXPORTS = {
     "ANativeActivity_onCreate",
     "JNI_OnLoad",
-    "Java_com_rectcircle_fncpn_Bridge_prepare",
-    "Java_com_rectcircle_fncpn_Bridge_start",
-    "Java_com_rectcircle_fncpn_Bridge_stop",
-    "Java_com_rectcircle_fncpn_Bridge_networkChanged",
-    "Java_com_rectcircle_fncpn_Bridge_command",
-    "Java_com_rectcircle_fncpn_Bridge_back",
+    "Java_cn_rectcircle_fncpn_Bridge_prepare",
+    "Java_cn_rectcircle_fncpn_Bridge_start",
+    "Java_cn_rectcircle_fncpn_Bridge_stop",
+    "Java_cn_rectcircle_fncpn_Bridge_networkChanged",
+    "Java_cn_rectcircle_fncpn_Bridge_command",
+    "Java_cn_rectcircle_fncpn_Bridge_back",
 }
 
 
@@ -66,7 +66,7 @@ def check_exports(readelf_output):
         raise ValueError("Missing exported native entry points: " + ", ".join(sorted(missing)))
 
 
-def check_badging(text, version, build_number, package_name="com.rectcircle.fncpn.debug", release=False):
+def check_badging(text, version, build_number, package_name="cn.rectcircle.fncpn.debug", release=False):
     package = re.search(r"^package: name='([^']+)' versionCode='([^']+)' versionName='([^']+)'", text, re.M)
     if not package or package.groups() != (package_name, str(build_number), version):
         raise ValueError("APK package name or version does not match the source build")
@@ -144,7 +144,7 @@ def main():
     subprocess.run([str(tools / "zipalign"), "-c", "-P", "16", "4", str(args.apk)], check=True)
     badging = subprocess.check_output([str(tools / "aapt2"), "dump", "badging", str(args.apk)], text=True)
     print(badging, flush=True)
-    check_badging(badging, version, args.build_number, "com.rectcircle.fncpn" if args.release else ("com.rectcircle.fncpn.dev" if args.local_development else "com.rectcircle.fncpn.debug"), release=args.release)
+    check_badging(badging, version, args.build_number, "cn.rectcircle.fncpn" if args.release else ("cn.rectcircle.fncpn.dev" if args.local_development else "cn.rectcircle.fncpn.debug"), release=args.release)
 
     def symbols(data):
         with tempfile.TemporaryDirectory() as temporary:

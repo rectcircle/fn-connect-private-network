@@ -1,4 +1,4 @@
-package com.rectcircle.fncpn;
+package cn.rectcircle.fncpn;
 
 import android.app.PendingIntent;
 import android.content.Context;
