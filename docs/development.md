@@ -281,14 +281,28 @@ UI 授权入口只启动已声明实例，不再执行 `systemctl enable`。
 
 ### 维护和验证
 
-`check-nix.yml` 在普通 push/PR 中只执行 Flake 与模块求值；草稿构建在两个原生 Linux
-架构执行 Core/UI 构建、模块检查和虚拟显示中的真实前端启动。
+`check-nix.yml` 在每次普通 push/PR 中执行 Flake 求值和两个原生 Linux 架构的 Core/UI
+`goModules` 固定哈希检查，随后强制重建依赖输出，防止已缓存的固定输出掩盖本地替换模块
+源码变化。草稿构建再执行完整 Core/UI、模块检查和虚拟显示中的真实前端启动。
+Release workflow 的 `nix-dependencies` 是所有平台构建的前置门槛，未通过时不启动各平台打包。
 这些检查不代替 NixOS 实机的 polkit、systemd、resolved、桌面和网络验收。
 Nix 开发依赖只进入 CI，不在 Debian 验证虚拟机安装 Nix。
 
-更新 Go 依赖或影响 UI vendoring 的根模块源码后，使用 `scripts/update-nix-go-hashes.sh` 重新生成
-`nix/go-hashes.json`。该脚本在临时副本执行 `go mod vendor` 并用 Nix 计算 NAR hash；
-不修改工作区依赖文件。更新 `flake.lock`、Go、Node 或图形依赖后须重新运行两个架构的检查。
+更新 Go 依赖、根模块源码或嵌入的版本文件都可能改变 UI vendor 哈希：UI 使用
+`replace => ..`，vendoring 会复制项目代码。不要只在 go.mod/go.sum 改动时更新。
+在有 Linux Nix builder 的环境（或配置了对应远程 builder）执行：
+
+```sh
+# 从 flake.lock 锁定的同一个 goModules derivation 计算并更新，再校验
+scripts/update-nix-go-hashes.sh --system x86_64-linux
+# 提交/创建发布 tag 前检查，不写文件
+scripts/update-nix-go-hashes.sh --check --system x86_64-linux
+```
+
+更新脚本不再使用宿主 Go 或另一套手写的源复制规则；临时替换目标 derivation 的期望哈希，
+只接受该依赖产物明确返回的实际哈希，拒绝网络等无关错误。两个哈希一起更新，真实构建校验
+失败会恢复原文件。`--check` 永不修改哈希或 flake.lock，失败必须修正并提交后才能通过 CI。
+CI 自身不自动接受新哈希或提交修改。更新 flake.lock、Go、Node 或图形依赖后仍须完整双架构验收。
 
 ## Android 开发与构建
 

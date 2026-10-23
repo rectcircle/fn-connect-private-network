@@ -38,6 +38,8 @@ jobs:
             experimental-features = nix-command flakes
       - name: Evaluate all outputs
         run: nix flake check --no-build --no-update-lock-file
+      - name: Verify locked Core and UI Go dependency hashes
+        run: scripts/update-nix-go-hashes.sh --check --system ${{ matrix.system }}
       - name: Build native packages and module check (draft only)
         if: inputs.build
         run: |

@@ -29,6 +29,11 @@
   手机保留旧 Debug 签名 build 19；正式包使用独立生产包名，需单独登录，未自动删除旧数据。
 - 1.1.4 新增 Android 平台不增加 server 要求，按用户确认采用 PATCH；版本准入仍为同 MAJOR
   且 client.MINOR ≤ server.MINOR。此前公开的 1.1.3 不覆盖；当前各端以同 commit 构建 1.1.4。
+- 首轮 1.1.4 构建的 Android、Windows、Linux 及 fnOS systemd 验证通过，Nix UI 固定输出
+  哈希因源码变化过期而阻断汇总。两个架构均给出相同实际哈希 cw+vtBt2…Ue4ag=，现已更新。
+  后续普通 CI 增加依赖实际构建/强制重建，Release 以同样检查作为打包前置条件；更新工具
+  直接复用锁定的 Nix derivation，已有编排回归。本机无 Nix，实际新检查由 Linux CI 执行，
+  不把本地 mock 回归视为双架构 Nix 构建通过。
 - 新 Release workflow 将 Android 正式签名、非 debuggable APK 纳入统一清单及镜像，绑定版本、
   commit、versionCode、ABI 和证书指纹。本次仅触发草稿，不公开；云端结果与最终产物待后续审阅。
 

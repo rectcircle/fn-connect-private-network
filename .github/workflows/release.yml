@@ -18,7 +18,16 @@ concurrency:
   group: release-${{ inputs.tag || github.ref_name }}
   cancel-in-progress: false
 jobs:
+  nix-dependencies:
+    if: ${{ !inputs.publish }}
+    uses: ./.github/workflows/check-nix.yml
+    permissions:
+      contents: read
+    with:
+      ref: ${{ inputs.tag || github.ref_name }}
+      build: false
   windows-build:
+    needs: nix-dependencies
     if: ${{ !inputs.publish }}
     # Match the native build generator (Visual Studio 17 2022).
     # windows-2025 now defaults to VS 2026.
@@ -103,12 +112,14 @@ jobs:
             dist/windows-native/x64/build-manifest.json
           if-no-files-found: error
   nix-check:
+    needs: nix-dependencies
     if: ${{ !inputs.publish }}
     uses: ./.github/workflows/check-nix.yml
     with:
       ref: ${{ inputs.tag || github.ref_name }}
       build: true
   fnos-check:
+    needs: nix-dependencies
     if: ${{ !inputs.publish }}
     uses: ./.github/workflows/check-fnos.yml
     permissions:
@@ -116,6 +127,7 @@ jobs:
     with:
       ref: ${{ inputs.tag || github.ref }}
   linux-build:
+    needs: nix-dependencies
     if: ${{ !inputs.publish }}
     uses: ./.github/workflows/build-linux.yml
     secrets:
@@ -127,6 +139,7 @@ jobs:
       ref: ${{ inputs.tag || github.ref }}
       release: true
   android-build:
+    needs: nix-dependencies
     if: ${{ !inputs.publish }}
     uses: ./.github/workflows/build-android.yml
     permissions:
