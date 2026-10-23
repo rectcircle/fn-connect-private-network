@@ -820,9 +820,15 @@ func runPrivilegedDaemonWithReady(
 		return fmt.Errorf("recover privileged network state: %w", err)
 	}
 	processLogger.Info("privileged network recovery completed")
+	socketMode := os.FileMode(0o666)
+	if role == "server" {
+		// The fnOS service runs with the application group; retain that group
+		// on every restart instead of relying on a one-time launcher chown.
+		socketMode = 0o660
+	}
 	serveErr := ipc.Server{
 		SocketPath:             *socket,
-		Mode:                   0o666,
+		Mode:                   socketMode,
 		PipeSecurityDescriptor: defaultPrivilegedPipeSecurityDescriptor(role),
 		Authorize:              privileged.AuthorizePeer(role, *allowedUID),
 		Handler:                service,

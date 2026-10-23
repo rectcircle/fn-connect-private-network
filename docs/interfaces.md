@@ -237,6 +237,7 @@ HTTP 不加密，不增加应用层鉴权和防重放；仅复用已有配置中
 
 - 使用 fnOS 应用私有目录中的 Unix domain socket，归属 `root:<app-group>`，权限 `0660`。
 - 普通 server daemon 是唯一允许连接该 socket 的非 root 身份。
+- fnOS systemd 网络服务使用 `root:fncpn`；socket 创建时即为 `0660`，崩溃重启后仍保留应用属组，不依赖启动脚本事后修复。
 - 方法只允许 `status`、`apply` 和 `remove`。
 - `apply` 携带完整期望状态，不发送增量系统命令或版本号。
 - privileged-daemon 独立校验 overlay、peer 地址、监听端口、转发网段和防火墙规则。

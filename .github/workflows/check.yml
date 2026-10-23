@@ -13,6 +13,8 @@ jobs:
       MACOSX_DEPLOYMENT_TARGET: "13.0"
     steps:
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
       - uses: actions/setup-go@v6
         with:
           go-version: "1.27.1"
@@ -26,6 +28,8 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
       - uses: actions/setup-go@v6
         with:
           go-version: '1.27.1'
@@ -43,6 +47,8 @@ jobs:
           npm --prefix ui/frontend ci
           npm --prefix ui/frontend test
           for script in packaging/linux/scripts/*; do sh -n "$script"; done
+  fnos:
+    uses: ./.github/workflows/check-fnos.yml
   nix:
     uses: ./.github/workflows/check-nix.yml
   windows:

@@ -108,6 +108,13 @@ jobs:
     with:
       ref: ${{ inputs.tag || github.ref_name }}
       build: true
+  fnos-check:
+    if: ${{ !inputs.publish }}
+    uses: ./.github/workflows/check-fnos.yml
+    permissions:
+      contents: read
+    with:
+      ref: ${{ inputs.tag || github.ref }}
   linux-build:
     if: ${{ !inputs.publish }}
     uses: ./.github/workflows/build-linux.yml
@@ -134,7 +141,7 @@ jobs:
       FNCPN_KEY_PASSWORD: ${{ secrets.FNCPN_KEY_PASSWORD }}
   release:
     if: ${{ !inputs.publish }}
-    needs: [windows-build, linux-build, nix-check, android-build]
+    needs: [windows-build, linux-build, nix-check, android-build, fnos-check]
     runs-on: macos-15
     env:
       DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer

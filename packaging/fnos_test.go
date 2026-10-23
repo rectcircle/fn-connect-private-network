@@ -169,7 +169,7 @@ func TestFnOSStartRepairsAllLogFamiliesBeforeLaunching(t *testing.T) {
 	}
 	output, err := runFnOSFunctions(t, directory, `
 id() { printf '978\n'; }
-process_matches() { return 1; }
+units_healthy() { return 1; }
 stop_app() { printf 'stopped\n' >> "$TEST_CALLS"; }
 prepare_runtime() { printf 'launch boundary\n' >> "$TEST_CALLS"; return 1; }
 start_app
@@ -205,7 +205,7 @@ func TestFnOSStartAbortsWhenLogPermissionsCannotBePrepared(t *testing.T) {
 	directory := t.TempDir()
 	output, err := runFnOSFunctions(t, directory, `
 id() { printf '978\n'; }
-process_matches() { return 1; }
+units_healthy() { return 1; }
 stop_app() { return 0; }
 prepare_runtime() { touch "$TRIM_PKGVAR/launched"; }
 start_app
@@ -235,7 +235,7 @@ func TestFnOSStartRejectsUnsafeRetainedLogsBeforeLaunching(t *testing.T) {
 			}
 			output, err := runFnOSFunctions(t, directory, `
 id() { printf '978\n'; }
-process_matches() { return 1; }
+units_healthy() { return 1; }
 stop_app() { return 0; }
 prepare_runtime() { touch "$TRIM_PKGVAR/launched"; }
 start_app
@@ -368,7 +368,7 @@ func TestFnOSLifecycleHooksUseSiblingMain(t *testing.T) {
 		{name: "install_callback", action: "initialize"},
 		{name: "upgrade_init", action: "stop"},
 		{name: "upgrade_callback", action: "start"},
-		{name: "uninstall_init", action: "stop"},
+		{name: "uninstall_init", action: "uninstall"},
 	} {
 		for _, status := range []string{"0", "23"} {
 			t.Run(hook.name+"/exit_"+status, func(t *testing.T) {

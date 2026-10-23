@@ -17,6 +17,9 @@ PRIVILEGED_LOG="${PRIVILEGED_LOG_DIR}/privileged.log"
 CONTROL_STATE="${TRIM_PKGETC}/control"
 PRIVILEGED_STATE="${TRIM_PKGETC}/privileged"
 APP_USER="fncpn"
+UNIT_DIR="/etc/systemd/system"
+SERVER_UNIT="fncpn-server.service"
+PRIVILEGED_UNIT="fncpn-server-privileged.service"
 
 log_error() {
     local message
@@ -48,6 +51,8 @@ process_matches() {
     actual_uid="$(awk '/^Uid:/{print $2}' "/proc/${pid}/status" 2>/dev/null)" || return 1
     [ "$actual_uid" = "$expected_uid" ] || return 1
     executable="$(readlink -f "/proc/${pid}/exe" 2>/dev/null)" || return 1
+    # An upgrade may have replaced the executable before the callback runs.
+    executable="${executable% (deleted)}"
     [ "$executable" = "$(readlink -f "$BINARY")" ] || return 1
     command_line="$({ tr '\0' ' ' < "/proc/${pid}/cmdline"; } 2>/dev/null)" || return 1
     case "$command_line" in
@@ -67,6 +72,7 @@ find_process() {
         actual_uid="$(awk '/^Uid:/{print $2}' "$status" 2>/dev/null)" || continue
         [ "$actual_uid" = "$expected_uid" ] || continue
         executable="$(readlink -f "/proc/${pid}/exe" 2>/dev/null)" || continue
+        executable="${executable% (deleted)}"
         [ "$executable" = "$(readlink -f "$BINARY")" ] || continue
         command_line="$({ tr '\0' ' ' < "/proc/${pid}/cmdline"; } 2>/dev/null)" || continue
         case "$command_line" in
@@ -169,8 +175,14 @@ prepare_state() {
 }
 
 initialize_app() {
-    prepare_logs || return 1
-    prepare_state || return 1
+    if ! prepare_state; then
+        log_error "application state permissions could not be prepared"
+        return 1
+    fi
+    if ! prepare_logs; then
+        log_error "application logs could not be prepared"
+        return 1
+    fi
     chown "root:$APP_USER" "$TRIM_PKGETC" "$TRIM_PKGVAR" "${TRIM_PKGVAR}/logs" || return 1
     chmod 0750 "$TRIM_PKGETC" "$TRIM_PKGVAR" "${TRIM_PKGVAR}/logs" || return 1
     chown root:root "$TRIM_APPDEST" "${TRIM_APPDEST}/server" "$BINARY" || return 1
@@ -179,7 +191,10 @@ initialize_app() {
     chmod 0700 "$CONTROL_STATE" "$SERVER_LOG_DIR" || return 1
     chown root:root "$PRIVILEGED_STATE" "$PRIVILEGED_LOG_DIR" || return 1
     chmod 0700 "$PRIVILEGED_STATE" "$PRIVILEGED_LOG_DIR" || return 1
-    prepare_runtime
+    if ! prepare_runtime; then
+        log_error "application runtime directories could not be prepared"
+        return 1
+    fi
 }
 
 prepare_runtime() {
@@ -190,68 +205,123 @@ prepare_runtime() {
     chmod 0750 "$APP_RUN_DIR"
 }
 
+# Quote systemd command arguments and scalar paths, including specifier escaping.
+# fnOS supplies absolute application paths. Newlines are not valid package paths.
+unit_quote() {
+    case "$1" in
+        *$'\n'*|*$'\r'*) log_error "invalid newline in application path"; return 1 ;;
+    esac
+    local value="$1"
+    value="${value//\\/\\\\}"
+    value="${value//\"/\\\"}"
+    value="${value//%/%%}"
+    if [ "${2:-path}" = exec ]; then value="${value//\$/\$\$}"; fi
+    printf '"%s"' "$value"
+}
+
+install_units() {
+    local app_uid binary privileged_socket app_socket control privileged server_log privileged_log
+    local run app_run server_logs privileged_logs
+    app_uid="$(id -u "$APP_USER")" || return 1
+    binary="$(unit_quote "$BINARY" exec)" || return 1
+    privileged_socket="$(unit_quote "$PRIVILEGED_SOCKET" exec)" || return 1
+    app_socket="$(unit_quote "$APP_SOCKET" exec)" || return 1
+    control="$(unit_quote "$CONTROL_STATE" exec)" || return 1
+    privileged="$(unit_quote "$PRIVILEGED_STATE" exec)" || return 1
+    server_log="$(unit_quote "$SERVER_LOG" exec)" || return 1
+    privileged_log="$(unit_quote "$PRIVILEGED_LOG" exec)" || return 1
+    run="$(unit_quote "$RUN_DIR")" || return 1
+    app_run="$(unit_quote "$APP_RUN_DIR")" || return 1
+    server_logs="$(unit_quote "$SERVER_LOG_DIR")" || return 1
+    privileged_logs="$(unit_quote "$PRIVILEGED_LOG_DIR")" || return 1
+    mkdir -p "$UNIT_DIR" || return 1
+    # Do not enable units: fnOS owns the application's startup intent.
+    cat > "$UNIT_DIR/$PRIVILEGED_UNIT" <<EOF || return 1
+[Unit]
+Description=FnCPN restricted network service
+Before=$SERVER_UNIT
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=root
+Group=$APP_USER
+ExecStart=$binary server privileged-daemon --socket $privileged_socket --state-dir $privileged --log-file $privileged_log --allow-uid $app_uid
+Restart=on-failure
+RestartSec=2
+TimeoutStopSec=30
+KillMode=control-group
+UMask=0077
+CapabilityBoundingSet=CAP_NET_ADMIN
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+RestrictSUIDSGID=true
+ReadWritePaths=$(unit_quote "$PRIVILEGED_STATE") $privileged_logs $run
+EOF
+    cat > "$UNIT_DIR/$SERVER_UNIT" <<EOF || return 1
+[Unit]
+Description=FnCPN application service
+Wants=$PRIVILEGED_UNIT
+After=$PRIVILEGED_UNIT
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=$APP_USER
+Group=$APP_USER
+ExecStart=$binary server daemon --socket $app_socket --state-dir $control --privileged-socket $privileged_socket --log-file $server_log
+Restart=on-failure
+RestartSec=2
+TimeoutStopSec=30
+KillMode=control-group
+UMask=0077
+CapabilityBoundingSet=
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+RestrictSUIDSGID=true
+ReadWritePaths=$(unit_quote "$CONTROL_STATE") $server_logs $app_run
+EOF
+    chmod 0644 "$UNIT_DIR/$PRIVILEGED_UNIT" "$UNIT_DIR/$SERVER_UNIT" || return 1
+    systemctl daemon-reload
+}
+
+units_healthy() {
+    systemctl is-active --quiet "$PRIVILEGED_UNIT" &&
+        systemctl is-active --quiet "$SERVER_UNIT" &&
+        wait_for_health server-privileged "$PRIVILEGED_SOCKET" &&
+        wait_for_health server "$APP_SOCKET"
+}
+
 start_app() {
-    local app_uid
-    app_uid="$(id -u "$APP_USER")"
-    if process_matches "$SERVER_PID_FILE" "$app_uid" daemon &&
-        process_matches "$PRIVILEGED_PID_FILE" 0 privileged-daemon &&
-        wait_for_health server "$APP_SOCKET" &&
-        wait_for_health server-privileged "$PRIVILEGED_SOCKET"; then
+    if units_healthy; then
         return 0
     fi
-    if ! stop_app; then
-        log_error "existing FnCPN processes could not be stopped"
-        return 1
-    fi
-    if ! prepare_state; then
-        log_error "application state permissions could not be prepared"
-        return 1
-    fi
-    if ! prepare_logs; then
-        log_error "application logs could not be prepared"
-        return 1
-    fi
-    if ! prepare_runtime; then
-        log_error "application runtime directories could not be prepared"
-        return 1
-    fi
-
-    "$BINARY" server privileged-daemon \
-        --socket "$PRIVILEGED_SOCKET" \
-        --state-dir "$PRIVILEGED_STATE" \
-        --log-file "$PRIVILEGED_LOG" \
-        --allow-uid "$app_uid" &
-    printf '%s\n' "$!" > "$PRIVILEGED_PID_FILE"
-    if ! wait_for_health server-privileged "$PRIVILEGED_SOCKET"; then
-        log_error "privileged daemon failed its healthcheck: ${HEALTH_ERROR}; log: ${PRIVILEGED_LOG}"
+    # Includes pre-1.1.4 PID-managed processes. Never prepare sockets/state
+    # or start a second engine until both old processes have exited.
+    stop_app || return 1
+    initialize_app || return 1
+    install_units || return 1
+    if ! systemctl start "$PRIVILEGED_UNIT" ||
+        ! wait_for_health server-privileged "$PRIVILEGED_SOCKET"; then
+        log_error "privileged service failed its healthcheck: ${HEALTH_ERROR:-start failed}"
         stop_app || true
         return 1
     fi
-    chown "root:$APP_USER" "$PRIVILEGED_SOCKET"
-    chmod 0660 "$PRIVILEGED_SOCKET"
     if ! su -s /bin/sh "$APP_USER" -c \
         "exec '$BINARY' internal-healthcheck --role server-privileged --socket '$PRIVILEGED_SOCKET'"; then
-        log_error "application user cannot reach the privileged daemon"
+        log_error "application user cannot reach the privileged service"
         stop_app || true
         return 1
     fi
-
-    su -s /bin/sh "$APP_USER" -c \
-        "exec '$BINARY' server daemon --socket '$APP_SOCKET' --state-dir '$CONTROL_STATE' --privileged-socket '$PRIVILEGED_SOCKET' --log-file '$SERVER_LOG'" &
-    server_launcher_pid="$!"
-    if ! wait_for_health server "$APP_SOCKET"; then
-        log_error "server daemon failed its healthcheck: ${HEALTH_ERROR}; log: ${SERVER_LOG}"
-        kill -TERM "$server_launcher_pid" 2>/dev/null || true
+    if ! systemctl start "$SERVER_UNIT" || ! units_healthy; then
+        log_error "application service failed its healthcheck: ${HEALTH_ERROR:-start failed}"
         stop_app || true
         return 1
     fi
-    server_pid="$(find_process "$app_uid" daemon)" || {
-        log_error "server daemon process identity could not be established"
-        kill -TERM "$server_launcher_pid" 2>/dev/null || true
-        stop_app || true
-        return 1
-    }
-    printf '%s\n' "$server_pid" > "$SERVER_PID_FILE"
 }
 
 stop_process() {
@@ -299,6 +369,13 @@ stop_process() {
 stop_app() {
     local app_uid
     app_uid="$(id -u "$APP_USER")"
+    # Stop supervised services first so Restart cannot race legacy cleanup.
+    local unit
+    for unit in "$SERVER_UNIT" "$PRIVILEGED_UNIT"; do
+        if [ -f "$UNIT_DIR/$unit" ]; then
+            systemctl stop "$unit" || return 1
+        fi
+    done
     stop_process "$SERVER_PID_FILE" "$app_uid" daemon || return 1
     stop_process "$PRIVILEGED_PID_FILE" 0 privileged-daemon || return 1
     if ! "$BINARY" internal-cleanup --role server --state-dir "$PRIVILEGED_STATE"; then
@@ -322,14 +399,18 @@ case "${1:-}" in
         stop_app
         ;;
     status)
-        APP_UID="$(id -u "$APP_USER")"
-        if process_matches "$SERVER_PID_FILE" "$APP_UID" daemon &&
-            process_matches "$PRIVILEGED_PID_FILE" 0 privileged-daemon &&
-            wait_for_health server "$APP_SOCKET" &&
-            wait_for_health server-privileged "$PRIVILEGED_SOCKET"; then
-            exit 0
-        fi
+        if units_healthy; then exit 0; fi
         exit 3
+        ;;
+    uninstall)
+        stop_app || exit 1
+        for unit in "$SERVER_UNIT" "$PRIVILEGED_UNIT"; do
+            if [ -f "$UNIT_DIR/$unit" ]; then
+                systemctl disable "$unit" || exit 1
+                rm -f "$UNIT_DIR/$unit"
+            fi
+        done
+        systemctl daemon-reload
         ;;
     *)
         log_error "unsupported command: ${1:-<empty>}"

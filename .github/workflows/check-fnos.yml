@@ -1,0 +1,25 @@
+name: Check fnOS service lifecycle
+on:
+  workflow_call:
+    inputs:
+      ref:
+        type: string
+        required: false
+        default: ''
+permissions:
+  contents: read
+jobs:
+  lifecycle:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+          fetch-depth: 0
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.27.1'
+      - name: Portable lifecycle and historical layout checks
+        run: python3 scripts/fnos_systemd_test.py
+      - name: Historical upgrade and real systemd capabilities in isolated network
+        run: sudo env "PATH=$PATH" GITHUB_ACTIONS=true bash scripts/test-fnos-systemd-linux.sh

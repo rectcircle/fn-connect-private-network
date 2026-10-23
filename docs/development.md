@@ -47,6 +47,32 @@ FPK 构建要求通过 `FNPACK` 或 `PATH` 显式提供 `fnpack`，不依赖本�
 - `fncpn-<version>-fnos-x64.fpk`：x86_64 fnOS 服务端。
 - `fncpn-<version>-fnos-arm64.fpk`：ARM64 fnOS 服务端。
 
+### fnOS 服务监管与旧版升级
+
+从 1.1.4 起，FPK 生命周期脚本生成 `fncpn-server.service` 和
+`fncpn-server-privileged.service`。前者以 `fncpn:fncpn` 运行且不授予 capabilities；
+后者以 `root:fncpn` 运行，仅保留 `CAP_NET_ADMIN`，负责内核 WireGuard、转发和 nftables。
+两者启用 `NoNewPrivileges`、`ProtectSystem=strict`、`ProtectHome`、`PrivateTmp`，
+仅开放各自状态、日志和运行目录的写入。安装目录与二进制仍归 root，业务用户不可写。
+这仍是含 root 网络组件的应用，不声明为完全非 root。
+
+应用中心负责启动意图：不 enable systemd 单元；显式停止先停止两个受监管服务，
+再检查旧 PID 进程并执行恢复 journal 清理。正常卸载停止并移除单元，不删除身份和配置。
+服务失败后由 systemd 重启；业务进程继续通过既有周期检查重新提交完整网络计划，
+不因网络服务短暂重启而重建身份。
+
+旧正式版直接升级沿用 `control`、`privileged` 数据目录、私钥及 IPC 路径。
+启动前停止旧 PID 管理的进程；即使安装器已经替换二进制，也按原路径、UID 和角色
+识别 `/proc/<pid>/exe` 的 ` (deleted)` 进程，确认退出后才启动新服务。
+PID 管理的识别与清理代码作为正式版本升级路径保留。远程协议、本地 IPC 版本与数据 schema 不变。
+
+`python3 scripts/fnos_systemd_test.py` 检查生命周期顺序、故障退出与历史 tag 的目录契约。
+`scripts/test-fnos-systemd-linux.sh` 只允许在隔离的 GitHub Actions Linux VM 以 root 运行：
+它在独立网络 namespace 中运行 v1.1.3 原始二进制和启动脚本，注册设备，再覆盖升级，
+校验配置/设备/密钥哈希、实际 UID/capabilities、IPC 权限、网络服务崩溃恢复及重复停止。
+该检查接入 Checks 与草稿发布前置门禁；不在用户 NAS 上运行。
+CI 检查不替代 fnOS x86/ARM 的真实 FPK 安装、升级、直连和中继验收。
+
 ### 图标生成
 
 macOS 打包自动生成图标；需要手动更新时运行 `swift scripts/generate-icons.swift packaging/assets`，生成资源随源码提交。其他平台使用已提交的生成资源，构建时不依赖 Swift。

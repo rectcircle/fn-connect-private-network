@@ -3,4 +3,4 @@
 set -eu
 
 CMD_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-"${CMD_DIR}/main" stop
+"${CMD_DIR}/main" uninstall

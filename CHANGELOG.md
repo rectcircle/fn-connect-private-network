@@ -14,6 +14,10 @@
 - Android 本地及 CI 统一使用项目正式证书签名，发布草稿包含双架构 Release APK、签名指纹及哈希校验；官网提供 Android 安装下载入口。
 - macOS 图标生成器统一输出 PNG、SVG 与 Android 矢量资源，移动端复用同一品牌图形。
 
+### Changed
+
+- fnOS 服务由 systemd 分别监管普通用户业务进程与受限 root 网络进程；网络进程仅保留 `CAP_NET_ADMIN`，加入文件系统隔离和故障自动重启。升级接管原有 PID 管理进程，保留配置、设备和私钥；应用启停仍由飞牛应用中心控制。
+
 ### 升级与验证范围
 
 - 本次新增 Android 平台复用既有协议，不增加 server 接口或版本要求，按 PATCH 发布；1.1.4 客户端可连接已有 1.1.x server，PATCH 不参与准入判断。同发布各端保持同编号、同 commit。
