@@ -691,10 +691,10 @@ GitHub Secrets 是 CI 使用副本，网页/API 不提供原值下载。必要�
 本地首发环境可能不同，发布清单记录实际工具版本；两端同一 commit 不等于构建字节可复现。
 
 1. 更新 `internal/version/VERSION`（纯数字 `MAJOR.MINOR.PATCH`）、同步模板、更新 CHANGELOG，提交代码。
-2. 创建并推送对应 tag。tag 流水线运行检查、构建并上传草稿，不自动公开。
-3. 草稿出错可修复、重建及替换；公开后兼容修复应升 PATCH。
-4. 候选验收后，推荐运行 `python3 scripts/quark-release.py dispatch v1.0.10`（替换为待发布版本），先检查本地夸克授权并通过 `gh secret set` 同步 Secret，再触发公开发布。仅需 GitHub 发布时仍可运行 `gh workflow run release.yml --ref main -f tag=v1.0.10 -f publish=true`，但必须预先准备夸克 Secret，否则后续镜像 job 会失败。独立的 publish job 下载原草稿产物复核并公开，不依赖构建 job，不安装编译工具、不重建或重新上传资产；也可使用本地已验收的原始产物运行 `python3 scripts/publish-release.py dist --publish`，避免将另一批未经确认的构建视为已验收。
-5. Release 说明从 CHANGELOG 对应版本条目提取；尚未登记版本时使用 Unreleased，公开前应完成版本条目。发布脚本下载远端所有资产逐字节复核后公开；已公开版本只允许校验一致的幂等重试，不覆盖。
+2. 推送候选 commit 后运行 `gh workflow run release.yml --ref main -f version=1.1.4 -f commit="$(git rev-parse HEAD)"`（替换版本号）。流水线固定完整 SHA 检查、构建并上传草稿，不创建 tag、不自动公开。
+3. 草稿出错可修复、提交新 commit 后按新 SHA 重建及替换；版本 tag 在草稿期间必须不存在。Review 使用 `https://github.com/rectcircle/fn-connect-private-network/compare/v<上一正式版本>...<候选完整SHA>`。公开后兼容修复应升 PATCH。
+4. 候选验收后，推荐运行 `python3 scripts/quark-release.py dispatch v1.0.10`（替换为待发布版本），先检查本地夸克授权并通过 `gh secret set` 同步 Secret，再触发公开发布。仅需 GitHub 发布时仍可运行 `gh workflow run release.yml --ref main -f version=1.0.10 -f commit=<草稿清单中的完整SHA> -f publish=true`，但必须预先准备夸克 Secret，否则后续镜像 job 会失败。独立的 publish job 下载原草稿产物复核并公开，不依赖构建 job，不安装编译工具、不重建或重新上传资产；也可使用本地已验收的原始产物运行 `python3 scripts/publish-release.py dist --publish`，避免将另一批未经确认的构建视为已验收。
+5. Release 说明从 CHANGELOG 对应版本条目提取；尚未登记版本时使用 Unreleased，公开前应完成版本条目。发布脚本下载远端所有资产逐字节复核后，在候选 commit 创建版本 tag，再公开；如创建 tag 后公开失败，重试仅允许复用相同 commit 的 tag；已公开版本只允许校验一致的幂等重试，不覆盖。
 6. `python3 scripts/update-cask.py <version>` 仅从公开稳定版发布清单生成 `Casks/fncpn.rb`；脚本拒绝非数字版本、草稿和 GitHub prerelease；公开任务自动提交并推送 Cask 更新。提交并推送生成文件。
 
 PKG Cask 安装使用系统 installer，卸载先运行项目脚本做网络清理，再清理 package receipt；默认保留用户配置与凭据。
@@ -702,7 +702,7 @@ PKG Cask 安装使用系统 installer，卸载先运行项目脚本做网络清�
 历史正式协议及数据基线用于后续兼容验证，归档要求见 [版本契约](versioning-and-compatibility.md)。
 
 Android 从 1.1.4 起提供 `fncpn-<version>-android-{arm64-v8a,x86_64}.apk`，均使用固定项目证书签名。
-Release tag 同时启动 Android Release 构建，macOS 汇总 job 下载同 commit 的 APK 和验签证据，
+候选构建同时启动 Android Release 构建，macOS 汇总 job 下载同 commit 的 APK 和验签证据，
 校验非调试包、签名指纹、版本、ABI 与 SHA256 后纳入统一清单；公开与夸克镜像同样要求双 ABI APK。
 
 macOS、Windows、fnOS 安装包命名使用小写 `fncpn-<version>-<os>-<arch>[-unsigned].<extension>`，系统为 `macos`、`windows`、`fnos`，架构为 `arm64`、`x64`。fnOS manifest 内的 `x86`/`arm` 平台标识保持不变，仅对外文件名统一。`release-<version>.json` 与 `SHA256SUMS-<version>` 为发布清单和校验和，沿用现有名称。Linux 使用 `fncpn-{core,ui}-<version>-linux-{amd64,arm64}.{deb,rpm,pkg.tar.zst}`，
@@ -762,7 +762,7 @@ CODEX_CI=1 node "$HOME/.local/share/quark-cli/1.0.24/quark-drive.cjs" get-user-i
 
 #### 发布与重试
 
-推送版本 tag 后先等待草稿构建和验收通过，再运行下方发布入口。
+提交候选完整 SHA 构建后先等待草稿构建和验收通过，再运行下方发布入口。
 完成后使用 `gh run watch <运行ID> --exit-status` 确认公开、Homebrew 更新和夸克镜像三个 job 均成功。
 
 本地发布入口（Python 3.11+、Node 16+、已登录的 `gh`）：

@@ -18,7 +18,5 @@ if [ "${RELEASE:-0}" = 1 ]; then
   if [ -n "$(git -C "$ROOT_DIR" status --porcelain)" ]; then
     echo "Release requires a clean checkout" >&2; exit 1
   fi
-  if [ "$(git -C "$ROOT_DIR" rev-parse "v${VERSION}^{commit}")" != "$REVISION" ]; then
-    echo "Release tag does not match product version and commit" >&2; exit 1
-  fi
+  (cd "$ROOT_DIR" && python3 scripts/check-release-candidate.py) || exit 1
 fi

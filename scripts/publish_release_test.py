@@ -16,7 +16,7 @@ spec.loader.exec_module(publisher)
 
 
 class PublicationTest(unittest.TestCase):
-    def exercise(self, draft, corrupt=False, publish=True, version="1.0.0", flattened=False, missing_architecture=None, include_linux=False):
+    def exercise(self, draft, corrupt=False, publish=True, version="1.0.0", flattened=False, missing_architecture=None, include_linux=False, candidate_target=None, tagged=None):
         with tempfile.TemporaryDirectory() as temporary:
             root = pathlib.Path(temporary)
             previous = pathlib.Path.cwd()
@@ -46,9 +46,10 @@ class PublicationTest(unittest.TestCase):
                         content=name.encode();source.write_bytes(content)
                         sources[name]=source
                         artifacts.append({'file':name,'path':source.relative_to(out).as_posix(),'sha256':hashlib.sha256(content).hexdigest()})
-                (out / f'release-{version}.json').write_text(json.dumps({'version': version, 'commit': 'commit', 'artifacts': artifacts, 'build': {'rpmSigning': signing_identity()} if include_linux else {}}))
+                (out / f'release-{version}.json').write_text(json.dumps({'version': version, 'commit': 'a' * 40, 'artifacts': artifacts, 'build': {'rpmSigning': signing_identity()} if include_linux else {}}))
                 (out / f'SHA256SUMS-{version}').write_text(''.join(f"{a['sha256']}  {a['file']}\n" for a in artifacts))
                 calls = []
+                tags = ([tagged] if tagged else (['a' * 40] if draft is False else []))
 
                 def run(*args):
                     calls.append(args)
@@ -69,11 +70,21 @@ class PublicationTest(unittest.TestCase):
                     if args[:2] == ('git', 'status'):
                         return ''
                     if args[0] == 'git':
-                        return 'commit'
-                    if args[:2] == ('gh', 'api') and '/git/ref/' in args[-1]:
-                        return json.dumps({'object': {'type': 'commit', 'sha': 'commit'}})
+                        return 'a' * 40
                     if args[:2] == ('gh', 'api'):
-                        return json.dumps([[] if draft is None else [{'tag_name': 'v' + version, 'draft': draft, 'assets': [{'name': f'FnCPN-{version}-arm64-unsigned.msi'}]}]])
+                        endpoint = args[2]
+                        if 'matching-refs' in endpoint:
+                            return json.dumps([{'ref': 'refs/tags/v' + version, 'object': {'type': 'commit', 'sha': sha}} for sha in tags])
+                        if '--input' in args:
+                            payload = json.loads(pathlib.Path(args[args.index('--input') + 1]).read_text())
+                            if endpoint.endswith('/git/refs'):
+                                self.assertTrue(any(c[:3] == ('gh', 'release', 'download') for c in calls))
+                                self.assertFalse(corrupt)
+                                tags.append(payload['sha'])
+                            else:
+                                self.assertEqual(payload.get('target_commitish'), 'a' * 40)
+                            return json.dumps({'draft': True, 'assets': [], 'id': 1})
+                        return json.dumps([[] if draft is None else [{'id': 1, 'target_commitish': candidate_target or 'a' * 40, 'tag_name': 'v' + version, 'draft': draft, 'assets': [{'name': f'FnCPN-{version}-arm64-unsigned.msi'}]}]])
                     if args[:3] == ('gh', 'release', 'view') and 'isDraft,assets' in args:
                         return json.dumps({'isDraft': True, 'assets': []})
                     if args[:3] == ('gh', 'release', 'download'):
@@ -98,9 +109,25 @@ class PublicationTest(unittest.TestCase):
                 if uploads:
                     self.assertTrue(all(str(source.resolve()) in uploads[0] for source in sources.values()))
                 mutations = [c[2] for c in calls if c[:2] == ('gh', 'release') and c[2] in ('upload', 'edit', 'create')]
+                if not publish or corrupt:
+                    self.assertEqual(tags, ['a' * 40] if draft is False else [])
+                elif draft is True:
+                    self.assertEqual(tags, ['a' * 40])
                 return mutations
             finally:
                 os.chdir(previous)
+
+    def test_draft_rejects_existing_tag(self):
+        with self.assertRaisesRegex(SystemExit, 'absent version tag'):
+            self.exercise(True, publish=False, tagged='a' * 40)
+
+    def test_publication_rejects_another_candidate(self):
+        with self.assertRaisesRegex(SystemExit, 'candidate commit'):
+            self.exercise(True, candidate_target='b' * 40)
+
+    def test_publication_rejects_conflicting_tag(self):
+        with self.assertRaisesRegex(SystemExit, 'tag does not match'):
+            self.exercise(True, tagged='b' * 40)
 
     def test_notes_select_requested_version_without_history(self):
         with patch.object(publisher.pathlib.Path, 'read_text', return_value='## [Unreleased]\nFuture.\n## [1.0.0] - 2026-10-09\nRelease changes.\n## [0.9.0]\nHistory.\n'):
@@ -112,7 +139,7 @@ class PublicationTest(unittest.TestCase):
                 publisher.release_notes('1.0.0')
 
     def test_first_release_is_created_as_draft(self):
-        self.assertEqual(self.exercise(None, publish=False), ['create', 'upload'])
+        self.assertEqual(self.exercise(None, publish=False), ['upload'])
 
     def test_publication_requires_existing_draft(self):
         with self.assertRaisesRegex(SystemExit, 'existing release draft'):
@@ -129,13 +156,13 @@ class PublicationTest(unittest.TestCase):
         self.assertEqual(self.exercise(False, corrupt=True), [])
 
     def test_default_keeps_draft(self):
-        self.assertEqual(self.exercise(True, publish=False), ['edit', 'upload'])
+        self.assertEqual(self.exercise(True, publish=False), ['upload'])
 
     def test_downloaded_release_assets_can_be_verified_from_flat_layout(self):
-        self.assertEqual(self.exercise(True, publish=False, flattened=True), ['edit', 'upload'])
+        self.assertEqual(self.exercise(True, publish=False, flattened=True), ['upload'])
 
     def test_complete_linux_release_stays_a_draft(self):
-        self.assertEqual(self.exercise(None,publish=False,version='1.1.2',include_linux=True),['create','upload'])
+        self.assertEqual(self.exercise(None,publish=False,version='1.1.2',include_linux=True),['upload'])
 
     def test_linux_release_requires_all_targets_and_components(self):
         with self.assertRaisesRegex(SystemExit, 'Linux'):
@@ -163,11 +190,11 @@ class PublicationTest(unittest.TestCase):
                     sha = hashlib.sha256(architecture.encode()).hexdigest()
                     path = '../outside.msi' if architecture == 'arm64' else f'windows/x64/{name}'
                     artifacts.append({'file': name, 'path': path, 'sha256': sha})
-                (out / 'release-1.0.0.json').write_text(json.dumps({'version': '1.0.0', 'commit': 'commit', 'artifacts': artifacts}))
+                (out / 'release-1.0.0.json').write_text(json.dumps({'version': '1.0.0', 'commit': 'a' * 40, 'artifacts': artifacts}))
                 def run(*args):
                     if args[:2] == ('git', 'status'):
                         return ''
-                    return 'commit'
+                    return 'a' * 40
                 with patch.object(publisher, 'run', run):
                     with self.assertRaisesRegex(SystemExit, 'Invalid release artifact path'):
                         publisher.publish(out, 'owner/repo')

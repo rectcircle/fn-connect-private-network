@@ -2,6 +2,10 @@ name: Build Linux
 on:
   workflow_call:
     inputs:
+      version:
+        description: Product version for release candidates
+        type: string
+        required: false
       ref:
         type: string
         required: false
@@ -17,13 +21,17 @@ on:
         required: false
   workflow_dispatch:
     inputs:
+      version:
+        description: Product version for release candidates
+        type: string
+        required: false
       ref:
-        description: Source branch or existing version tag
+        description: Source ref (full commit SHA for release candidates)
         type: string
         required: true
         default: main
       release:
-        description: Enforce matching clean release tag (artifacts only)
+        description: Enforce matching clean candidate commit (artifacts only)
         type: boolean
         default: false
 permissions:
@@ -60,6 +68,8 @@ jobs:
       DEBIAN_FRONTEND: noninteractive
       TARGET: ${{ matrix.target }}
       ARCH: ${{ matrix.arch }}
+      RELEASE_COMMIT: ${{ inputs.ref }}
+      RELEASE_VERSION: ${{ inputs.version }}
       RELEASE: ${{ inputs.release && '1' || '0' }}
       DEFER_LINUX_MANIFEST: '1'
     steps:

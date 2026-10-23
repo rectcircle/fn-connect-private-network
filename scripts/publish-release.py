@@ -17,6 +17,26 @@ def run(*args):
     return subprocess.check_output(args, text=True).strip()
 
 
+def api_json(endpoint, payload):
+    with tempfile.TemporaryDirectory(prefix='fncpn-release-request-') as temporary:
+        request = pathlib.Path(temporary) / 'request.json'
+        request.write_text(json.dumps(payload), encoding='utf-8')
+        return json.loads(run('gh', 'api', endpoint, '--method', 'PATCH' if '/releases/' in endpoint else 'POST',
+                              '--input', str(request)))
+
+
+def remote_tag(repository, tag):
+    # Listing distinguishes an absent ref from authentication/network failures.
+    refs = json.loads(run('gh', 'api', f'repos/{repository}/git/matching-refs/tags/{tag}'))
+    ref = next((r for r in refs if r['ref'] == 'refs/tags/' + tag), None)
+    if ref is None:
+        return None
+    obj = ref['object']
+    while obj['type'] == 'tag':
+        obj = json.loads(run('gh', 'api', f"repos/{repository}/git/tags/{obj['sha']}"))['object']
+    return obj['sha']
+
+
 def release_notes(version):
     """Use the version's changelog entry, or Unreleased while preparing a draft."""
     changelog = pathlib.Path('CHANGELOG.md').read_text(encoding='utf-8')
@@ -75,12 +95,10 @@ def publish(directory, repository, make_public=False):
         raise SystemExit('Release inventory does not match checkout')
     if run('git', 'status', '--porcelain'):
         raise SystemExit('Release requires a clean checkout')
-    if run('git', 'rev-parse', tag + '^{commit}') != commit:
-        raise SystemExit('Release tag does not match checkout')
-    remote = json.loads(run('gh', 'api', f'repos/{repository}/git/ref/tags/{tag}'))['object']
-    while remote['type'] == 'tag':
-        remote = json.loads(run('gh', 'api', f"repos/{repository}/git/tags/{remote['sha']}"))['object']
-    if remote['sha'] != commit:
+    if not re.fullmatch(r'[0-9a-f]{40}', commit):
+        raise SystemExit('Candidate must be a full commit SHA')
+    tagged_commit = remote_tag(repository, tag)
+    if tagged_commit is not None and tagged_commit != commit:
         raise SystemExit('Remote release tag does not match checkout')
     expected_sums = ''.join(f"{a['sha256']}  {a['file']}\n" for a in manifest['artifacts'])
     if (directory / sums_name).read_text() != expected_sums:
@@ -94,24 +112,22 @@ def publish(directory, repository, make_public=False):
     existing_release = release is not None
     if release is None and make_public:
         raise SystemExit("Publication requires an existing release draft")
+    if release is None or release['draft']:
+        if not make_public and tagged_commit is not None:
+            raise SystemExit('Draft builds require an absent version tag')
+        if make_public and release['target_commitish'] != commit:
+            raise SystemExit('Draft candidate commit does not match checkout')
+    elif tagged_commit != commit:
+        raise SystemExit('Public release requires its immutable version tag')
     if release is None:
-        with tempfile.TemporaryDirectory(prefix='fncpn-release-notes-') as temporary:
-            notes = pathlib.Path(temporary) / 'notes.md'
-            notes.write_text(release_notes(version), encoding='utf-8')
-            args = ['gh', 'release', 'create', tag, '--repo', repository, '--verify-tag', '--draft',
-                    '--title', f'FnCPN {version}', '--notes-file', str(notes)]
-            run(*args)
-        release = json.loads(run('gh', 'release', 'view', tag, '--repo', repository, '--json', 'isDraft,assets'))
-        draft = release['isDraft']
-    else:
-        draft = release['draft']
+        release = api_json(f'repos/{repository}/releases', {
+            'tag_name': tag, 'target_commitish': commit, 'draft': True,
+            'name': f'FnCPN {version}', 'body': release_notes(version)})
+    draft = release['draft']
     if draft and not make_public:
         if existing_release:
-            with tempfile.TemporaryDirectory(prefix='fncpn-release-notes-') as temporary:
-                notes = pathlib.Path(temporary) / 'notes.md'
-                notes.write_text(release_notes(version), encoding='utf-8')
-                run('gh', 'release', 'edit', tag, '--repo', repository,
-                    '--notes-file', str(notes))
+            api_json(f"repos/{repository}/releases/{release['id']}", {
+                'target_commitish': commit, 'body': release_notes(version)})
         run('gh', 'release', 'upload', tag, '--repo', repository, '--clobber',
             *(str(sources.get(name, directory / name)) for name in names))
         # A private draft may replace its legacy installer names. Public assets
@@ -133,6 +149,12 @@ def publish(directory, repository, make_public=False):
             if (downloaded / name).read_bytes() != expected_source.read_bytes():
                 raise SystemExit('Remote asset differs: ' + name)
     if draft and make_public:
+        # Create the public identity only after all original bytes were verified.
+        # A retry after tag creation may reuse the same ref, never move it.
+        if tagged_commit is None:
+            api_json(f'repos/{repository}/git/refs', {'ref': 'refs/tags/' + tag, 'sha': commit})
+        if remote_tag(repository, tag) != commit:
+            raise SystemExit('Publication tag does not match verified candidate')
         run('gh', 'release', 'edit', tag, '--repo', repository, '--draft=false',
             '--latest')
     print(run('gh', 'release', 'view', tag, '--repo', repository, '--json', 'url', '--jq', '.url'))

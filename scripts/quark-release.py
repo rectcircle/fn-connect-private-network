@@ -276,9 +276,18 @@ def dispatch(tag, repo, mode, cli, auth_path):
     # stdin keeps authorization out of argv, shell history and workflow inputs.
     gh('secret', 'set', 'QUARK_AUTH', '--repo', repo, input=json.dumps(auth))
     workflow = 'release.yml' if mode == 'publish' else 'mirror-quark.yml'
-    args = ['workflow', 'run', workflow, '--repo', repo, '--ref', 'main', '-f', f'tag={tag}']
+    args = ['workflow', 'run', workflow, '--repo', repo, '--ref', 'main']
     if mode == 'publish':
-        args += ['-f', 'publish=true']
+        with tempfile.TemporaryDirectory(prefix='fncpn-candidate-') as temporary:
+            name = f'release-{version_from_tag(tag)}.json'
+            gh('release', 'download', tag, '--repo', repo, '--pattern', name, '--dir', temporary)
+            candidate = json.loads((Path(temporary) / name).read_text())
+        commit = candidate['commit']
+        if candidate['version'] != version_from_tag(tag) or not re.fullmatch(r'[0-9a-f]{40}', commit):
+            raise ValueError('Invalid draft candidate identity')
+        args += ['-f', f'version={version_from_tag(tag)}', '-f', f'commit={commit}', '-f', 'publish=true']
+    else:
+        args += ['-f', f'tag={tag}']
     gh(*args)
     print(f'Dispatched {workflow} for {tag}; credentials were sent via QUARK_AUTH Secret.')
 

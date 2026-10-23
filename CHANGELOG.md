@@ -11,6 +11,7 @@
 - Android 客户端：Android 8.0 起，提供 ARM64/x86_64 独立 APK；Fyne 移动 UI 依赖共享 Go 连接核心，系统 VPN/前台服务、网络回调、通知与 Keystore 通过薄 Java 层适配。
 - 支持 fnOS 账号登录、访问码/OTP、局域网直达、IPv6 直连、FN Connect 中继和 VPN 内 DNS；主界面提供连接状态、NAS 浏览器入口与诊断，菜单提供登录、NAS 切换、管理后台、官网和诊断导出。
 - Android 提供侧边栏手势、后台连接与按连接意图恢复、通知和快捷设置连接开关、系统字体、系统日志目录及只读脱敏诊断 ZIP 导出。
+- 发布草稿按版本与固定 commit 构建，验收公开时才创建版本 tag；公开复用已核验产物，不重新构建。
 - Android 本地及 CI 统一使用项目正式证书签名，发布草稿包含双架构 Release APK、签名指纹及哈希校验；官网提供 Android 安装下载入口。
 - macOS 图标生成器统一输出 PNG、SVG 与 Android 矢量资源，移动端复用同一品牌图形。
 

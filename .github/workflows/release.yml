@@ -1,11 +1,13 @@
 name: Release
 on:
-  push:
-    tags: ["v*"]
   workflow_dispatch:
     inputs:
-      tag:
-        description: Existing version tag (vMAJOR.MINOR.PATCH)
+      version:
+        description: Product version (MAJOR.MINOR.PATCH)
+        required: true
+        type: string
+      commit:
+        description: Full candidate commit SHA (40 lowercase hex characters)
         required: true
         type: string
       publish:
@@ -15,16 +17,31 @@ on:
 permissions:
   contents: write
 concurrency:
-  group: release-${{ inputs.tag || github.ref_name }}
+  group: release-${{ inputs.version }}
   cancel-in-progress: false
 jobs:
+  candidate:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.commit }}
+          fetch-depth: 0
+      - name: Validate immutable candidate
+        env:
+          RELEASE_COMMIT: ${{ inputs.commit }}
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: python3 scripts/check-release-candidate.py
   nix-dependencies:
+    needs: candidate
     if: ${{ !inputs.publish }}
     uses: ./.github/workflows/check-nix.yml
     permissions:
       contents: read
     with:
-      ref: ${{ inputs.tag || github.ref_name }}
+      ref: ${{ inputs.commit }}
       build: false
   windows-build:
     needs: nix-dependencies
@@ -37,7 +54,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
         with:
-          ref: ${{ inputs.tag || github.ref }}
+          ref: ${{ inputs.commit }}
           fetch-depth: 0
       - uses: actions/setup-go@v6
         with:
@@ -45,16 +62,14 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: "10.0.x"
-      - name: Verify release tag, generated resources and Windows Go packages
+      - name: Verify release candidate, generated resources and Windows Go packages
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $tag = '${{ inputs.tag || github.ref_name }}'
+          $candidate = '${{ inputs.commit }}'
           $version = (Get-Content internal/version/VERSION -Raw).Trim()
-          if ($tag -ne "v$version") { throw 'Release tag does not match product version' }
-          $tagCommit = (& git rev-parse "$tag^{commit}").Trim()
-          if ($LASTEXITCODE -ne 0) { throw 'Release tag cannot be resolved' }
-          if ($tagCommit -ne (& git rev-parse HEAD).Trim()) { throw 'Release tag does not match checkout' }
+          if ($version -ne '${{ inputs.version }}') { throw 'Candidate version does not match checkout' }
+          if ($candidate -ne (& git rev-parse HEAD).Trim()) { throw 'Candidate commit does not match checkout' }
           if (& git status --porcelain) { throw 'Release requires a clean checkout' }
           python scripts/sync-version.py --check
           if ($LASTEXITCODE -ne 0) { throw 'Generated product versions are stale' }
@@ -104,7 +119,7 @@ jobs:
         run: ./scripts/build-windows.ps1
       - uses: actions/upload-artifact@v4
         with:
-          name: windows-release-candidates-${{ inputs.tag || github.ref_name }}
+          name: windows-release-candidates-${{ inputs.commit }}
           path: |
             dist/windows-native/arm64/fncpn-*-windows-arm64-unsigned.msi
             dist/windows-native/arm64/build-manifest.json
@@ -116,7 +131,7 @@ jobs:
     if: ${{ !inputs.publish }}
     uses: ./.github/workflows/check-nix.yml
     with:
-      ref: ${{ inputs.tag || github.ref_name }}
+      ref: ${{ inputs.commit }}
       build: true
   fnos-check:
     needs: nix-dependencies
@@ -125,7 +140,7 @@ jobs:
     permissions:
       contents: read
     with:
-      ref: ${{ inputs.tag || github.ref }}
+      ref: ${{ inputs.commit }}
   linux-build:
     needs: nix-dependencies
     if: ${{ !inputs.publish }}
@@ -136,7 +151,8 @@ jobs:
     permissions:
       contents: read
     with:
-      ref: ${{ inputs.tag || github.ref }}
+      ref: ${{ inputs.commit }}
+      version: ${{ inputs.version }}
       release: true
   android-build:
     needs: nix-dependencies
@@ -145,7 +161,8 @@ jobs:
     permissions:
       contents: read
     with:
-      ref: ${{ inputs.tag || github.ref_name }}
+      ref: ${{ inputs.commit }}
+      version: ${{ inputs.version }}
       release: true
     secrets:
       FNCPN_KEYSTORE_BASE64: ${{ secrets.FNCPN_KEYSTORE_BASE64 }}
@@ -163,11 +180,13 @@ jobs:
       RELEASE: "1"
       DIST_DIR: ${{ github.workspace }}/dist
       GH_TOKEN: ${{ github.token }}
-      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+      RELEASE_TAG: v${{ inputs.version }}
+      RELEASE_COMMIT: ${{ inputs.commit }}
+      RELEASE_VERSION: ${{ inputs.version }}
     steps:
       - uses: actions/checkout@v5
         with:
-          ref: ${{ inputs.tag || github.ref }}
+          ref: ${{ inputs.commit }}
           fetch-depth: 0
       - uses: actions/setup-go@v6
         with:
@@ -175,10 +194,10 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22.14.0"
-      - name: Verify tag and toolchain
+      - name: Verify candidate and toolchain
         run: |
           test "$(uname -m)" = arm64
-          test "$RELEASE_TAG" = "v$(cat internal/version/VERSION)"
+          python3 scripts/check-release-candidate.py
           test "$(xcodebuild -version | head -1)" = "Xcode 16.4"
           echo "FNPACK=$RUNNER_TEMP/fnpack" >> "$GITHUB_ENV"
           ./scripts/install-fnpack.sh "$RUNNER_TEMP/fnpack"
@@ -189,7 +208,7 @@ jobs:
       - uses: actions/download-artifact@v4
         if: ${{ !inputs.publish }}
         with:
-          name: windows-release-candidates-${{ inputs.tag || github.ref_name }}
+          name: windows-release-candidates-${{ inputs.commit }}
           path: dist/windows
       - uses: actions/download-artifact@v4
         with:
@@ -203,34 +222,36 @@ jobs:
           merge-multiple: true
       - uses: actions/download-artifact@v4
         with:
-          name: android-release-candidates-${{ inputs.tag || github.ref_name }}
+          name: android-release-candidates-${{ inputs.commit }}
           path: dist/android
       - name: Build release draft
         if: ${{ !inputs.publish }}
         run: ./scripts/build-all.sh
       - uses: actions/upload-artifact@v4
         with:
-          name: candidate-${{ inputs.tag || github.ref_name }}
+          name: candidate-${{ inputs.commit }}
           path: dist/
           if-no-files-found: error
       - name: Upload and verify release draft
         run: python3 scripts/publish-release.py "$DIST_DIR"
   publish:
+    needs: candidate
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.publish }}
     runs-on: ubuntu-latest
     env:
       GH_TOKEN: ${{ github.token }}
-      RELEASE_TAG: ${{ inputs.tag }}
+      RELEASE_TAG: v${{ inputs.version }}
+      RELEASE_COMMIT: ${{ inputs.commit }}
+      RELEASE_VERSION: ${{ inputs.version }}
       DIST_DIR: ${{ github.workspace }}/dist
     steps:
       - uses: actions/checkout@v5
         with:
-          ref: ${{ inputs.tag }}
+          ref: ${{ inputs.commit }}
           fetch-depth: 0
-      - name: Verify tag and download existing draft
+      - name: Verify candidate and download existing draft
         run: |
-          test "$RELEASE_TAG" = "v$(cat internal/version/VERSION)"
-          test "$(git rev-parse HEAD)" = "$(git rev-parse "$RELEASE_TAG^{commit}")"
+          python3 scripts/check-release-candidate.py
           mkdir -p "$DIST_DIR"
           gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --dir "$DIST_DIR"
       - name: Verify existing assets and make release public
@@ -242,7 +263,7 @@ jobs:
       contents: read
     uses: ./.github/workflows/mirror-quark.yml
     with:
-      tag: ${{ inputs.tag }}
+      tag: v${{ inputs.version }}
     secrets:
       QUARK_AUTH: ${{ secrets.QUARK_AUTH }}
   update-cask:
@@ -254,7 +275,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
         with:
-          ref: ${{ inputs.tag }}
+          ref: ${{ inputs.commit }}
       - name: Update public stable release cask
         run: |
           VERSION="$(cat internal/version/VERSION)"

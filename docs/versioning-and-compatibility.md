@@ -30,9 +30,9 @@ Android 客户端同样使用统一产品编号、同发布同 commit 和本文�
 每次正式发布应提供对应版本的 client 与 server 产物；用户可以分别安装、升级两端。
 同一次发布使用相同编号，不要求用户安装的两端编号相同。
 Git tag 使用 `vMAJOR.MINOR.PATCH`，产品版本只使用纯数字版本，不再创建 RC。
-推送版本 tag 构建 GitHub Release 草稿；草稿用于下载验证，不自动公开。
+草稿按产品版本和完整 commit SHA 手动构建，不创建版本 tag；草稿用于下载验证，不自动公开。
 未公开的草稿可修改 commit、重建、替换资产及重试失败上传；公开的版本及其产物不可覆盖。
-公开版本的兼容修复递增 PATCH。公开已有草稿只修改发布状态，不重建或上传产物。
+公开版本的兼容修复递增 PATCH。公开已有草稿先逐字节复核原始产物，再为该 commit 创建版本 tag 并公开；不重建或上传产物。
 macOS 的 `CFBundleShortVersionString`、PKG、CLI、fnOS manifest 和发布文件名使用同一产品版本。
 `CFBundleVersion` 使用递增构建号。build number、Git commit 用于构建追溯，不参与远程兼容性判定。
 历史 RC 版本字符串仍可识别，仅用于已有版本的诊断，不再作为发布通道。

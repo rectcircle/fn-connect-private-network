@@ -7,6 +7,10 @@ on:
   workflow_dispatch:
   workflow_call:
     inputs:
+      version:
+        description: Product version for release candidates
+        type: string
+        required: false
       ref:
         type: string
         required: true
@@ -110,11 +114,11 @@ jobs:
       - name: Select build variant and verify release source
         env:
           RELEASE_BUILD: ${{ inputs.release || false }}
-          REQUESTED_REF: ${{ inputs.ref || github.ref_name }}
+          RELEASE_VERSION: ${{ inputs.version }}
+          RELEASE_COMMIT: ${{ inputs.ref }}
         run: |
           if [[ "$RELEASE_BUILD" == true ]]; then
-            test "$REQUESTED_REF" = "v$(cat internal/version/VERSION)"
-            test "$(git rev-parse "$REQUESTED_REF^{commit}")" = "$(git rev-parse HEAD)"
+            python3 scripts/check-release-candidate.py
             test -z "$(git status --porcelain)"
             echo 'FNCPN_VARIANT=release' >> "$GITHUB_ENV"
             echo "FNCPN_BUILD=$(git rev-list --count HEAD)" >> "$GITHUB_ENV"
