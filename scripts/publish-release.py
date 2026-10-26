@@ -10,6 +10,7 @@ import subprocess
 import tempfile
 from linux_support import release_packages
 from android_release import validate_inventory as validate_android_inventory
+from ios_release import validate_inventory as validate_ios_inventory, verify_ipa
 from rpm_signing import signing_identity
 from release_assets import assets, download_asset, upload_asset, find_release
 
@@ -91,6 +92,10 @@ def publish(directory, repository, make_public=False):
         if manifest.get('build', {}).get('rpmSigning') != signing_identity():
             raise SystemExit('Release inventory is missing matching RPM signing evidence')
     validate_android_inventory(manifest, version)
+    validate_ios_inventory(manifest, version)
+    for name in sources:
+        if name.endswith(".ipa"):
+            verify_ipa(sources[name], version, manifest["build"]["ios"]["buildNumber"])
     commit = run('git', 'rev-parse', 'HEAD')
     if manifest['version'] != version or manifest['commit'] != commit:
         raise SystemExit('Release inventory does not match checkout')

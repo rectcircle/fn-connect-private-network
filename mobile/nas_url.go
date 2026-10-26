@@ -16,7 +16,7 @@ import (
 func resolveNASWebURL(ctx context.Context, address string) (string, error) {
 	ip, err := netip.ParseAddr(strings.TrimSpace(address))
 	if err != nil || !ip.IsPrivate() {
-		return "", errors.New("NAS IP 暂不可用")
+		return "", errors.New(tr("NAS IP 暂不可用"))
 	}
 	host := ip.String()
 	if ip.Is6() {
@@ -34,10 +34,10 @@ func resolveNASRedirects(ctx context.Context, origin string, transport http.Roun
 	}
 	client := &http.Client{Transport: transport, Timeout: 5 * time.Second, CheckRedirect: func(req *http.Request, via []*http.Request) error {
 		if len(via) >= 6 {
-			return errors.New("NAS 网页重定向循环")
+			return errors.New(tr("NAS 网页重定向循环"))
 		}
 		if req.URL.Hostname() != base.Hostname() || req.URL.User != nil || (req.URL.Scheme != "http" && req.URL.Scheme != "https") {
-			return errors.New("NAS 网页跳转到其他主机")
+			return errors.New(tr("NAS 网页跳转到其他主机"))
 		}
 		return nil
 	}}
@@ -68,11 +68,11 @@ func resolveNASRedirects(ctx context.Context, origin string, transport http.Roun
 func (v *clientView) copyDNSSuffix() {
 	suffix := strings.TrimSpace(v.current.DNS.Suffix)
 	if suffix == "" {
-		v.toast("DNS 后缀暂不可用")
+		v.toast(tr("DNS 后缀暂不可用"))
 		return
 	}
 	if v.window != nil {
 		v.window.Clipboard().SetContent(suffix)
-		v.toast("DNS 后缀已复制")
+		v.toast(tr("DNS 后缀已复制"))
 	}
 }

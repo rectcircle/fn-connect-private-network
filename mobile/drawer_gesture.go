@@ -22,13 +22,17 @@ func (d *navigationDrawer) drag(e *fyne.DragEvent) {
 		d.dragLastTime = time.Now()
 		d.dragVelocity = 0
 	}
+	direction := float32(1)
+	if d.layout.right {
+		direction = -1
+	}
 	now := time.Now()
 	if elapsed := now.Sub(d.dragLastTime).Seconds(); elapsed >= 0.002 {
-		speed := e.Dragged.DX / float32(elapsed)
+		speed := direction * e.Dragged.DX / float32(elapsed)
 		d.dragVelocity = 0.3*d.dragVelocity + 0.7*speed
 	}
 	d.dragLastTime = now
-	d.dragX += e.Dragged.DX
+	d.dragX += direction * e.Dragged.DX
 	d.dragY += e.Dragged.DY
 	if d.dragDirection == 0 {
 		if max(math.Abs(float64(d.dragX)), math.Abs(float64(d.dragY))) < 8 {
@@ -49,7 +53,7 @@ func (d *navigationDrawer) drag(e *fyne.DragEvent) {
 		return
 	}
 	if d.dragDirection == 1 {
-		d.position(d.layout.progress + e.Dragged.DX/drawerWidth(d.canvas.Size().Width))
+		d.position(d.layout.progress + direction*e.Dragged.DX/drawerWidth(d.canvas.Size().Width))
 	}
 }
 func (d *navigationDrawer) endDrag() {

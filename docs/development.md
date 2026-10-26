@@ -304,6 +304,79 @@ scripts/update-nix-go-hashes.sh --check --system x86_64-linux
 失败会恢复原文件。`--check` 永不修改哈希或 flake.lock，失败必须修正并提交后才能通过 CI。
 CI 自身不自动接受新哈希或提交修改。更新 flake.lock、Go、Node 或图形依赖后仍须完整双架构验收。
 
+## iOS 开发环境准备
+
+需要 macOS、Xcode 27.1、Go 1.27.1；iPhone/iPad 共用 `ios/FnCPN.xcodeproj`。
+初始化脚本检查工具链并准备匹配的模拟器 Runtime，支持重跑；日志保存在 `.dev/logs/`。
+
+```sh
+bash scripts/setup-ios-macos.sh
+# 仅准备编译环境，不下载 Runtime
+bash scripts/setup-ios-macos.sh --skip-runtime
+python3 -m unittest discover -s scripts/ios -p '*_test.py'
+```
+
+### iOS/iPadOS 开发构建与模拟器
+
+```sh
+bash scripts/build-ios.sh
+bash scripts/build-ios.sh --install <SIMULATOR_UDID>
+bash scripts/build-ios.sh --device
+```
+
+开发产物在 `.dev/ios/DerivedData/Build/Products/Debug-<SDK>/FnCPN.app`，包含
+`PacketTunnel.appex`。真机开发产物未签名，不可直接安装。
+修改工程结构应编辑 `scripts/ios/project.py`；生成器会覆盖 Xcode 工程。
+
+模拟器可登录并通过菜单的应用内网络调试执行 HTTP(S) GET 或 `dns:完整私网域名`，
+请求经过同一 Go 核心与用户态 netstack。配置、日志和 Keychain 独立于真机。
+Safari、其他 App 和系统 DNS 不经过应用内隧道，系统 VPN、锁屏和切网需要真机验证。
+
+### iOS 个人设备本地重签
+
+完整安装教程：[中文](ios-installation.zh-CN.md) / [English](ios-installation.en.md)。
+项目不持有签名私钥，不把签名材料放入源码、CI 或 Release 资产。
+
+### iOS Release IPA
+
+```sh
+# 干净 checkout，不签名、不安装、不上传
+bash scripts/package-ios.sh
+# 尚未提交的本地 review 构建；证据明确标为 dirty，不接受为发布候选
+bash scripts/package-ios.sh --allow-dirty --out .dev/ios/review-package
+```
+
+输出 `dist/ios/fncpn-<version>-ios-arm64-unsigned.ipa` 及 `build-manifest.json`。
+使用 Xcode 27.1、Release/device ARM64，检查 App/扩展版本、无签名/描述文件、设备 Mach-O、
+Packet Tunnel 声明和许可证。Go 链接器生成的临时 ad-hoc 签名也会移除。
+`ios/BUILD_NUMBER` 是独立、递增的 iOS 构建编号；发布新候选前按需递增，两 target 必须相同。
+
+`build-ios.yml` 使用 Xcode 27 runner，与桌面 Xcode 16.4 job 隔离；无须 Apple 证书 Secret。
+Release workflow 下载同一 commit 的 iOS 资产，再纳入统一 manifest、SHA256 和草稿核验。
+公开草稿前仍需对最终 IPA 重签、安装及连接验证。发布前检查表见 [验收](validation.md)。
+
+### 移动端构建覆盖
+
+Fyne 固定 2.8.2，覆盖仅写入 `.dev/` 本地副本，不修改 Go module 缓存；升级依赖时重新验证
+UIScene、键盘、Core Text 及渲染匹配点。iOS 普通文字使用 Core Text/Core Graphics，保留
+Fyne 符号字体，不内嵌完整 CJK 字库。Android 共用有界解析字体缓存及登录按钮触摸策略。
+
+```sh
+(cd mobile && go test -tags ci ./... && go test -race -tags ci ./... && go vet -tags ci ./...)
+python3 scripts/test_fyne_font_cache.py
+python3 scripts/test_fyne_keyboard_tap.py
+python3 scripts/ios_release_test.py
+```
+
+普通 iPhone/iPad 与 Android 共用登录、键盘导航、横屏左文案/右表单、Toast、后台 loading、
+同源导航和诊断 ZIP。iPhone Duo 的专用图标栏仅对 `iPhone19,4`、iOS 27.1 起启用，跟随
+相机侧切换位置；展开菜单不挤压正文，登录返回恢复进入前的展开状态。其他设备保持共享布局。
+Duo 展开姿态仅暴露整体避让框时，使用实测 `47⅚ pt` 中心距作为该型号回退，不外推到新机型。
+
+日志区分 client 与 privileged，App 通过 Provider 消息分页同步脱敏快照；打开日志使用系统
+文件选择与 Quick Look，导出共用 ZIP 结构。主应用 NAS IP 按钮交给默认浏览器，管理后台为
+独立临时网页会话；同源主页面留在窗口，用户点击的外部公共域名链接交给浏览器。
+
 ## Android 开发与构建
 
 Android 源码位于独立 `mobile` module；纯 Go 开发不需要 Android 工具链。完整构建与专项真机结果见 [验证记录](validation.md)，能力边界见 [平台决策](platform-support.md#android)。
@@ -401,72 +474,29 @@ gradle --offline :app:bundleRelease -PfncpnBuild=递增整数
 
 ### Android 界面与包体积
 
-移动端使用固定标题栏（菜单/返回、图标、FnCPN、产品版本）与主内容区。
-主页面内容左右留白 16 dp，连接按钮与诊断框沿同一边界对齐；诊断框内左右额外留白 16 dp。
-标题栏与内容区紧贴同一条细分割线，不额外插入布局间距；滚动区域不绘制边缘阴影。
-主界面沿用桌面端的身份、状态、连接信息、诊断详情顺序，只保留连接/断开连接、重新检测，
-诊断下方提供复制、打开日志、刷新。左侧抽屉菜单收纳重新登录、更换 NAS、管理后台、
-官网/捐赠、日志导出和退出；重新登录预填身份、更换 NAS 清空输入，均不在进入登录页时删除现有配置。
-未配置或授权失效自动进入登录页，后台状态更新不打断手动编辑。
-菜单和登录表单由 Fyne 实现；Go 页面栈保留主界面与滚动位置，登录进入/返回有平移动画，
-Android 仅通过 JNI 转发返回事件，先关闭键盘、再关闭抽屉或返回上一页；主页面返回仅将任务置于后台。
-MainActivity 使用 singleTask，通知入口复用已有 Activity，避免生成第二个 Fyne 原生窗口。
-进程重建后按保存的 autoConnect 恢复服务与连接；主动断开和菜单退出保留暂停意图。
-抽屉开关只平移已布局的面板并改变遮罩透明度，点击空白和返回键同样触发收起动画；
-滚动条仅在滚动期间显示，主页面底部保留 32 dp 留白。
-抽屉宽度为屏宽 78%（最大 320 dp），标题含应用图标，菜单项提供更大的触控区域与图文间距。
-登录页采用官网三行主文案与蓝色强调，身份标签保持中文，FN Connect ID/用户名输入向系统请求 ASCII 英文键盘，密码聚焦后滚动到表单底部；
-系统窗口使用 adjustResize 避让键盘。主页面身份使用中点分隔，DNS 可复制纯后缀（不含 ready 等状态文字）、NAS IP 可打开浏览器，
-诊断区使用小字号和边框；错误为红字，正常为默认文字色，主界面顶部不重复显示黄字错误。
-设备注册名称读取 Android 系统设备名，缺失时回退型号；已注册设备不自动改名。
-图标以 `scripts/generate-icons.swift` 为唯一绘制源，保留 macOS 的固定 1024 单位构图，
-不按图形包围盒重新居中或缩放。执行
-`swift scripts/generate-icons.swift packaging/assets --mobile-root mobile`
-同时生成 PNG/iconset、AppIcon.svg、Fyne SVG 和 Android VectorDrawable。
-Fyne 与 Android 标题栏使用完整彩色图标；Android adaptive foreground 将完整构图映射到
-108 单位画布中央的 72 单位区域，外围仅用于系统裁切，背景为 #E0EDFF。
-快捷磁贴使用同源单色图形与紧凑画布。生成资源提交源码，Android/Linux CI 不执行 Swift。
-生成器的 macOS 输出保持一致，不另画 Android 近似图形。
-快捷设置提供 FnCPN 磁贴，单击连接/断开、长按进入 App；需用户手动添加磁贴，首次 VPN 授权或未登录时先进入 App。
-磁贴采用面板可见时监听的模式，每次展开检查服务存活与就绪状态。退出监听时不缓存激活外观，
-避免应用被强制停止后系统仍显示旧状态；下次监听恢复真实状态。
-系统硬停止不会执行应用清理回调，面板正显示时的瞬时状态仍受 Android/厂商 SystemUI 控制。
-页面底色随主题刷新，不缓存 Android 主题初始化前的颜色。Fyne 2.8.2 移动驱动仍按约 60 Hz 调度，不承诺 120 Hz。
-渲染和逻辑边界：Fyne 控件与页面状态只由 UI goroutine 修改；网络/宿主命令在工作 goroutine，
-结果以一次 `fyne.Do` 事务更新。刷新请求合并在同一个在途读取中，诊断 JSON 在后台准备。
-菜单支持从主页面距左侧 32–112 dp 区域拖出（最左侧留给系统返回）、面板/遮罩横向拖动关闭；手势按方向锁定，
-菜单纵向拖动仍滚动内容；拖动时一比一跟手，松手支持 48 dp 短滑与近期快速甩动，
-其余按展开进度吸附。补间按剩余距离调整时长，使用减速曲线收尾。手势逻辑使用共用 Fyne 代码。
-菜单控件在启动时创建并提前布局，打开/关闭复用同一面板；挂载后按当前主题刷新，
-避免离屏缓存保留启动时的深色背景。按钮复用 Fyne 的布局与可访问性，在移动触摸按下时
-立即高亮，松手淡出，取消手势不执行动作。打开 NAS 浏览器在后台解析地址，
-不禁用整页按钮、不改动当前诊断，失败使用 toast。只读刷新不禁用整页按钮、不清空内容；相同文字/颜色不重复刷新，只有换行内容改变才重排父容器。
-首次状态加载显示轻量占位并直接落到目标页面，不播放登录到主页面的初始动画。
-TTC face 提取按完整表尺寸一次分配，避免首次加载大 CJK 字体时重复拷贝和 GC 压力。
-Android 自定义 Go 构建显式启用 `migrated_fynedo`（不能依赖设备读取源码目录的 FyneApp.toml）。
-生命周期事件先进入 UI 队列；动画 Tick 直接修改位置，不再次排队，不逐帧重排文字；滚动空闲隐藏共用一个计时器。
-连接字段采用单行省略，批量更新后刷新父容器，避免 DNS 长文本改变行高导致冷启动重叠。
-参照 [Fyne goroutine 指南](https://docs.fyne.io/started/goroutines/)。
-NAS 浏览器入口先在后台解析同一私有 IP 的 HTTP(S) 跳转（最多六跳、五秒超时），
-打开最终端口，避免从 80 端口重复经过浏览器缓存跳转；不共享浏览器 Cookie，也不禁用 TLS 校验。
-Go 核心和 Android 系统适配不依赖 Fyne；未来 iOS 可复用这些页面和导航逻辑，系统能力另行适配。
-显式退出必须先成功断开连接并保存暂停意图，然后停止 Android Service 并移除 App 任务。
+Android/iOS 共用 Fyne 页面、登录输入法 Next/Go、焦点避让与横屏双栏；最后一个字段在空间
+允许时同时露出提交按钮。菜单进入登录页后返回原页面，只有进入前已展开才恢复展开；
+登录失败保留表单和错误，状态更新不能替代授权成功。Duo 的系统侧栏是限定型号的呈现适配。
 
-管理后台使用原生 `AppChrome` 标题栏及系统安全区域布局；管理登录失效或账号权限不足时，
-弹窗确认后转入 Fyne 登录页。官网/捐赠使用系统浏览器。
-打开日志通过只读 `DocumentsProvider` 以根目录 URI 并优先选择系统处理器，将日志目录交给系统文件管理器；不支持目录查看的设备
-回退到以该目录为初始位置的系统文件选择器。仅暴露固定日志文件，不暴露配置和凭证。
-复制诊断后显示系统 Toast。密码输入向系统请求 ASCII 密码键盘、英文语言提示和禁止个性化学习，
-最终键盘布局仍取决于用户安装的输入法；不修改 Fyne 上游驱动。
-Fyne 字体优先读取 Android 系统 `fonts.xml` 配置的中文无衬线/默认无衬线字体，
-将配置中的 TTC face 转为单 face 后交给 Fyne，避免随机回退到衬线或装饰字体；
-系统字体不可读时保留 Fyne 的回退机制，不把系统字体复制到 APK。
+Toast 与信息/确认弹窗由共享 UI 实现，Toast 位于画布中下方。Android 通知、文件入口及
+快捷设置标题使用英文/中文资源。日志事件、文件名与诊断字段不随系统语言变化。
+管理后台先显示可取消 loading，再初始化原生 WebView，失败或超时可重试；单窗口会话
+关闭后清理网页存储，用户点击公共外域链接交给默认浏览器，同源主页面保留在后台窗口。
 
-Android 原生库使用 Fyne 官方 `no_emoji` build tag，不打包约 4 MiB 的内置彩色 Emoji 字体；
-缺字仍可走系统字体回退，不承诺彩色 Emoji 效果。使用 `-s -w` 移除不需要的原生符号/调试信息，
-保留运行时所需元数据和 JNI 导出。每个 APK 只包含一种 ABI，体积与专项结果见[验证记录](validation.md)。
-用于分发或比较体积时先执行 `gradle clean`，避免增量 APK 保留已废弃的大块 ZIP 空间；
-APK 校验会拒绝超过 1 MiB 的非条目空间，不仅检查条目清单与签名。
+菜单在启动阶段创建并预热 GL 文字/图标纹理，字体解析使用有界只读缓存，Face 按作用域
+独立；主题切换刷新缓存颜色。动画只移动持久面板，不逐帧重排文字。Android 使用系统字体，
+不打包完整 CJK 字库；控件普通输入使用系统键盘，登录提交按钮在确认点击后才取消焦点。
+
+显式退出先成功断开并保存暂停意图，再清理 Go 宿主、停止 Service、移除任务并结束主进程。
+返回桌面和普通后台切换不结束进程；键盘任务在 Activity 销毁或退出后失效。
+系统强制停止后的恢复及厂商后台限制见 [支持边界](platform-support.md#android)。
+
+日志通过只读 DocumentsProvider 交给系统文件界面，失败回退到文件选择器；导出使用共享
+脱敏 ZIP。后台 Activity 在专用 `:admin` 进程，不复用 Fyne 宿主的 WebView/生命周期。
+
+可调试包可通过启动参数 `--ez fncpn.uiProfile true` 采集一次 45 秒菜单 CPU profile 与
+阶段事件，写入 App 缓存；正常启动不采样，非 debuggable 包忽略该参数。
+诊断文件用于比较冷启动首次菜单与后续点击，不采集输入内容，不纳入发布资产。
 
 ### Android 本地真机调试与日志
 
@@ -604,14 +634,14 @@ macOS 中英文/回退运行测试；`FNCPN_LAYOUT_CHECK=1 go test ./packaging -
 ## 产品版本与正式发布准备
 
 唯一产品版本源为 `internal/version/VERSION`；修改后运行
-`python3 scripts/sync-version.py` 同步 fnOS manifest 与 macOS plist 模板。
+`python3 scripts/sync-version.py` 同步 fnOS manifest、macOS plist、Wails 及生成的 iOS 工程版本。
 Go CLI 默认构建也会嵌入这个版本，不再报告 `dev`。
 远程兼容性只检查 MAJOR 相同且 client MINOR 不大于 server MINOR，PATCH 不参与。
 稳定的 `/version` 入口、HTTP/relay 响应版本和带身份校验的局域网探测支持升级后重新检查。
 开发期已使用该判定器进行验证，正式兼容性承诺从 `1.0.0` 生效。
 
 普通开发构建允许重建本地产物。正式构建使用 `RELEASE=1 ./scripts/build-all.sh`，
-要求干净 checkout、当前 commit 对应 `v<version>` tag，并拒绝覆盖本地同名产物；重建草稿应使用新的 `DIST_DIR`。
+要求干净 checkout、显式版本与完整候选 commit，且不存在对应版本 tag；拒绝覆盖本地同名产物。重建草稿应使用新的 `DIST_DIR`。
 构建生成仅包含当前发布产物的 `release-<version>.json` 和 `SHA256SUMS-<version>`。
 发布时应归档安装包、元数据、协议与数据样本，后续兼容验收使用这些历史基线。
 正式产物需完成安装与基础连接确认；已有验证及暂缓范围见 [验证记录](validation.md)。
@@ -691,7 +721,7 @@ GitHub Secrets 是 CI 使用副本，网页/API 不提供原值下载。必要�
 本地首发环境可能不同，发布清单记录实际工具版本；两端同一 commit 不等于构建字节可复现。
 
 1. 更新 `internal/version/VERSION`（纯数字 `MAJOR.MINOR.PATCH`）、同步模板、更新 CHANGELOG，提交代码。
-2. 推送候选 commit 后运行 `gh workflow run release.yml --ref main -f version=1.1.4 -f commit="$(git rev-parse HEAD)"`（替换版本号）。流水线固定完整 SHA 检查、构建并上传草稿，不创建 tag、不自动公开。
+2. 推送候选 commit 后运行 `gh workflow run release.yml --ref main -f version=1.1.5 -f commit="$(git rev-parse HEAD)"`（替换版本号）。流水线固定完整 SHA 检查、构建并上传草稿，不创建 tag、不自动公开。
 3. 草稿出错可修复、提交新 commit 后按新 SHA 重建及替换；版本 tag 在草稿期间必须不存在。Review 使用 `https://github.com/rectcircle/fn-connect-private-network/compare/v<上一正式版本>...<候选完整SHA>`。公开后兼容修复应升 PATCH。
 4. 候选验收后，推荐运行 `python3 scripts/quark-release.py dispatch v1.0.10`（替换为待发布版本），先检查本地夸克授权并通过 `gh secret set` 同步 Secret，再触发公开发布。仅需 GitHub 发布时仍可运行 `gh workflow run release.yml --ref main -f version=1.0.10 -f commit=<草稿清单中的完整SHA> -f publish=true`，但必须预先准备夸克 Secret，否则后续镜像 job 会失败。独立的 publish job 下载原草稿产物复核并公开，不依赖构建 job，不安装编译工具、不重建或重新上传资产；也可使用本地已验收的原始产物运行 `python3 scripts/publish-release.py dist --publish`，避免将另一批未经确认的构建视为已验收。
 5. 草稿及其资产均按 Release ID 操作，更新草稿时显式保留 `tag_name`，支持尚无 Git tag 的草稿；下载入口使用 `python3 scripts/download-release.py v<版本> dist`。Release 说明从 CHANGELOG 对应版本条目提取；尚未登记版本时使用 Unreleased，公开前应完成版本条目。发布脚本下载远端所有资产逐字节复核后，在候选 commit 创建版本 tag，再公开；如创建 tag 后公开失败，重试仅允许复用相同 commit 的 tag；已公开版本只允许校验一致的幂等重试，不覆盖。
@@ -702,6 +732,7 @@ PKG Cask 安装使用系统 installer，卸载先运行项目脚本做网络清�
 历史正式协议及数据基线用于后续兼容验证，归档要求见 [版本契约](versioning-and-compatibility.md)。
 
 Android 从 1.1.4 起提供 `fncpn-<version>-android-{arm64-v8a,x86_64}.apk`，均使用固定项目证书签名。
+iOS 从 1.1.5 起提供 `fncpn-<version>-ios-arm64-unsigned.ipa`，独立 Xcode 27.1 job 记录同 commit 的结构核验与未签名证据；汇总、公开及夸克镜像都要求该资产。
 候选构建同时启动 Android Release 构建，macOS 汇总 job 下载同 commit 的 APK 和验签证据，
 校验非调试包、签名指纹、版本、ABI 与 SHA256 后纳入统一清单；公开与夸克镜像同样要求双 ABI APK。
 
@@ -810,7 +841,7 @@ runner 只提取固定版本 CLI 的运行文件并校验压缩包 SHA256，不�
 
 已在 1.0.10 验证本地授权导出、Ubuntu runner 恢复授权、全部 8 个文件上传与 SHA256 回读、
 校验后移动至公开目录，以及 Homebrew 并行更新。运行链接和未覆盖范围见
-[1.0.10 发布核验](validation.md#1010-构建与夸克镜像核验2026-10-15)。
+[历史发布结论](validation.md#历史发布结论)。
 该次通过不代表凭据长期续期、不同账号或全部平台安装专项已验证。
 
 ## 官网开发与部署

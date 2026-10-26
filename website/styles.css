@@ -178,8 +178,8 @@ html[lang="en"] .download-mirror{display:none}
 .server-download .button{white-space:nowrap;padding:13px 24px}
 .client-download{margin-top:18px}
 .client-heading{font-size:22px;margin:0 0 20px}
-.download-tabs{display:flex;gap:6px;border-bottom:1px solid #c8d8ee;margin-bottom:25px}
-.download-tabs button{border:0;border-bottom:2px solid transparent;background:transparent;color:var(--muted);padding:12px 20px;font:inherit;font-size:14px;cursor:pointer}
+.download-tabs{display:flex;flex-wrap:nowrap;gap:2px;min-width:0;max-width:100%;overflow-x:auto;overscroll-behavior-x:contain;scrollbar-width:none;border-bottom:1px solid #c8d8ee;margin-bottom:25px;--fade-left:0px;--fade-right:0px;-webkit-mask-image:linear-gradient(to right,transparent,#000 var(--fade-left),#000 calc(100% - var(--fade-right)),transparent);mask-image:linear-gradient(to right,transparent,#000 var(--fade-left),#000 calc(100% - var(--fade-right)),transparent)}
+.download-tabs button{flex:0 0 auto;white-space:nowrap;min-height:36px;border:0;border-bottom:2px solid transparent;background:transparent;color:var(--muted);padding:6px 10px;font:inherit;font-size:14px;cursor:pointer}
 .download-tabs button[aria-selected="true"]{color:#2455a1;border-bottom-color:#347deb;font-weight:650}
 .download-tabs button:hover{color:#2455a1;background:#edf3fe}
 .download-tabs button:focus-visible,.download-panel:focus-visible{outline:2px solid #347deb;outline-offset:4px}
@@ -207,8 +207,8 @@ html[lang="en"] .download-mirror{display:none}
  .download-title h2{font-size:30px;letter-spacing:-1px}
  .download-card{padding:22px 18px}
  .server-download-content{align-items:flex-start;flex-direction:column;gap:18px}
- .download-tabs{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:0;margin:0 -4px 22px}
- .download-tabs button{padding:12px 4px;font-size:12px;white-space:normal}
+ .download-tabs{margin-bottom:22px}
+ .download-tabs button{padding:6px 8px;font-size:12px}
  .download-panel{min-height:0}
  .download-row{gap:12px;flex-wrap:wrap}
  .download-options .brew code{font-size:11px;padding:12px}
@@ -229,13 +229,26 @@ html[lang="en"] .download-mirror{display:none}
 .server-download-content{gap:16px}
 .server-download h3,.client-heading{font-size:20px}
 .server-download .button{padding:12px 18px}
-.download-tabs button{padding:12px 14px;font-size:13px}
+.download-tabs button{padding:6px 8px;font-size:13px}
 .download-options .brew code{font-size:11px;padding:14px}
 .download-options .brew button{min-width:48px}
-@media(max-width:1000px){.download{gap:32px;padding:36px 28px}.download-card{padding:22px}.download-tabs button{padding:12px 9px;font-size:12px}}
+@media(max-width:1000px){.download{gap:32px;padding:36px 28px}.download-card{padding:22px}.download-tabs button{padding:6px 6px;font-size:12px}}
 @media(max-width:700px){
  .download{grid-template-columns:1fr;gap:30px;padding:30px 20px}
  .download-title h2{font-size:36px}
  .download-card{padding:22px 18px}
- .download-tabs button{padding:12px 4px;font-size:12px}
+ .download-tabs button{padding:6px 8px;font-size:12px}
 }
+
+.download-tabs button:focus-visible{outline-offset:-3px}
+
+.download-tabs::-webkit-scrollbar{display:none}
+
+.download-tabs-shell{display:flex;align-items:center;gap:2px;border-bottom:1px solid #c8d8ee;margin-bottom:25px;min-width:0}
+.download-tabs-shell .download-tabs{flex:1 1 auto;min-width:0;margin:0;border:0}
+.download-tab-arrow{display:none;flex:0 0 28px;width:28px;height:36px;align-items:center;justify-content:center;border:0;border-radius:6px;background:transparent;color:#2455a1;cursor:pointer}
+.download-tabs-shell.is-overflowing .download-tab-arrow{display:flex}
+.download-tab-arrow:disabled{visibility:hidden;pointer-events:none}
+.download-tab-arrow:hover{background:#edf3fe}
+.download-tab-arrow:focus-visible{outline:2px solid #347deb;outline-offset:-2px}
+.download-tab-arrow svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}

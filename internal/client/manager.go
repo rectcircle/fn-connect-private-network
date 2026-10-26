@@ -863,13 +863,33 @@ func (m *Manager) Forget(ctx context.Context) error {
 }
 
 func (m *Manager) Close(ctx context.Context) error {
+	return m.close(ctx, false)
+}
+
+// ClosePaused records an explicit system/user stop while releasing resources
+// once. Process loss and ordinary host shutdown continue to preserve intent.
+func (m *Manager) ClosePaused(ctx context.Context) error {
+	return m.close(ctx, true)
+}
+
+func (m *Manager) close(ctx context.Context, pause bool) error {
+	m.suspendConnections()
 	m.dns.lifecycle.Lock()
 	m.dns.closed = true
 	m.dns.lifecycle.Unlock()
 	dnsErr := m.stopDNS(ctx)
-	m.suspendConnections()
 	m.operation.Lock()
 	defer m.operation.Unlock()
+	var intentErr error
+	if pause {
+		config, err := m.store.Load()
+		intentErr = err
+		if err == nil && config != nil {
+			config.AutoConnect = false
+			intentErr = m.store.Save(*config)
+		}
+	}
+	dnsErr = errors.Join(dnsErr, intentErr)
 	m.cancelConfigurationWatch()
 	m.bridge.Stop()
 	m.privateAPIConfig = nil

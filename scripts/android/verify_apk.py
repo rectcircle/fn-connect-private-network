@@ -27,6 +27,8 @@ EXPORTS = {
     "Java_cn_rectcircle_fncpn_Bridge_networkChanged",
     "Java_cn_rectcircle_fncpn_Bridge_command",
     "Java_cn_rectcircle_fncpn_Bridge_back",
+    "Java_cn_rectcircle_fncpn_Bridge_imeSubmit",
+    "Java_cn_rectcircle_fncpn_Bridge_feedback",
 }
 
 

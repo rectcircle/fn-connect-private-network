@@ -13,6 +13,7 @@ import urllib.request
 import zipfile
 from release_assets import find_release, download_release
 from linux_support import release_packages
+from ios_release import packages as ios_packages, validate_inventory as validate_ios_inventory, verify_ipa
 from android_release import packages as android_packages, validate_inventory as validate_android_inventory
 
 REPOSITORY = 'rectcircle/fn-connect-private-network'
@@ -152,6 +153,10 @@ def inventory(directory, tag, release, commit):
     if tuple(map(int, version.split('.'))) >= (1, 1, 2):
         required.update(name for _, _, _, name in release_packages(version))
     required.update(android_packages(version))
+    required.update(ios_packages(version))
+    validate_ios_inventory(manifest, version)
+    for name in ios_packages(version):
+        verify_ipa(directory / name, version, manifest["build"]["ios"]["buildNumber"])
     validate_android_inventory(manifest, version)
     if len(artifacts) != len(required) or {a['file'] for a in artifacts} != required:
         raise ValueError('Release installers do not match the supported platform inventory')

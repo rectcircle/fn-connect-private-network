@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="connection_channel">FnCPN 连接</string>
+    <string name="pause">暂停</string>
+    <string name="starting_service">正在启动连接服务</string>
+    <string name="export_support">导出诊断与日志</string>
+    <string name="tile_stale">待更新</string>
+    <string name="tile_busy">正在切换…</string>
+    <string name="connected">已连接</string>
+    <string name="disconnected">已断开</string>
+    <string name="back">返回</string>
+    <string name="state_local">已连接 · 局域网</string>
+    <string name="state_direct">已连接 · 直连</string>
+    <string name="state_relay">已连接 · 中继</string>
+    <string name="state_reconnecting">正在重连</string>
+    <string name="state_probing">正在检测连接</string>
+    <string name="state_auth">需要登录</string>
+    <string name="logs_title">FnCPN 日志</string>
+    <string name="opening_admin">正在打开管理后台…</string>
+    <string name="admin_failed">管理后台加载失败，请重试。</string>
+    <string name="retry">重试</string>
+    <string name="browser_missing">未找到可用浏览器。</string>
+</resources>

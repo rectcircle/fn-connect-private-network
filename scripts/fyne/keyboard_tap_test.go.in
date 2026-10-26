@@ -1,0 +1,68 @@
+package mobile
+
+import (
+	"testing"
+
+	"fyne.io/fyne/v2"
+	"fyne.io/fyne/v2/container"
+	"fyne.io/fyne/v2/driver/mobile"
+	"fyne.io/fyne/v2/widget"
+)
+
+type fncpnKeyboardButton struct {
+	widget.Button
+	preserve bool
+}
+
+func (b *fncpnKeyboardButton) DeferUnfocusOnTap() bool        { return b.preserve }
+func (b *fncpnKeyboardButton) TouchDown(*mobile.TouchEvent)   {}
+func (b *fncpnKeyboardButton) TouchUp(*mobile.TouchEvent)     {}
+func (b *fncpnKeyboardButton) TouchCancel(*mobile.TouchEvent) {}
+func (b *fncpnKeyboardButton) Tapped(*fyne.PointEvent)        { b.OnTapped() }
+
+// Reproduce keyboard dismissal moving a button before the pointer is released.
+// The opted-in submit button must fire once; other widgets retain old policy.
+func TestFnCPNKeyboardRelayoutDoesNotLoseSubmit(t *testing.T) {
+	for _, preserve := range []bool{false, true} {
+		name := "ordinary"
+		if preserve {
+			name = "submit"
+		}
+		t.Run(name, func(t *testing.T) {
+			d.DoFromGoroutine(func() {
+				c := newCanvas(fyne.CurrentDevice()).(*canvas)
+				c.OnFocus = func(fyne.Focusable) {}
+				entry := widget.NewEntry()
+				button := &fncpnKeyboardButton{preserve: preserve}
+				button.Text = "Submit"
+				button.ExtendBaseWidget(button)
+				calls := 0
+				button.OnTapped = func() { c.Unfocus(); calls++ }
+				c.SetContent(container.NewWithoutLayout(entry, button))
+				c.content.Resize(fyne.NewSize(300, 300))
+				entry.Move(fyne.NewPos(0, 0))
+				entry.Resize(fyne.NewSize(200, 40))
+				button.Move(fyne.NewPos(0, 80))
+				button.Resize(fyne.NewSize(200, 40))
+				c.OnUnfocus = func() { button.Move(fyne.NewPos(0, 180)) }
+				c.Focus(entry)
+				pos := fyne.NewPos(10, 90)
+				c.tapDown(pos, 0)
+				if preserve && c.Focused() != entry {
+					t.Error("keyboard dismissed before touch-up")
+				}
+				c.tapUp(pos, 0, func(target fyne.Tappable, event *fyne.PointEvent) { target.Tapped(event) }, nil, nil, nil)
+				expected := 0
+				if preserve {
+					expected = 1
+				}
+				if calls != expected {
+					t.Errorf("submit calls=%d, want %d", calls, expected)
+				}
+				if preserve && c.Focused() != nil {
+					t.Error("accepted click did not dismiss keyboard")
+				}
+			}, true)
+		})
+	}
+}

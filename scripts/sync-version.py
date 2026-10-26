@@ -44,4 +44,23 @@ for path, (pattern, replacement) in updates.items():
             failed = True
         else:
             path.write_text(after, encoding='utf-8')
+# The generated iOS project is committed for direct Xcode use. Keep both
+# project configurations synchronized even when no Xcode build has run yet.
+ios_project = root / 'ios/FnCPN.xcodeproj/project.pbxproj'
+if ios_project.exists():
+    number = (root / 'ios/BUILD_NUMBER').read_text().strip()
+    if not re.fullmatch(r'[1-9][0-9]{0,3}', number):
+        raise SystemExit('iOS BUILD_NUMBER must be a positive integer of at most four digits')
+    before = ios_project.read_text()
+    after = before
+    for key, value in [('MARKETING_VERSION', version), ('CURRENT_PROJECT_VERSION', number)]:
+        after, count = re.subn(r'("' + key + r'" = ")[^"]+(";)', lambda match: match[1] + value + match[2], after)
+        if count != 2:
+            raise SystemExit('Expected two iOS project configurations for ' + key)
+    if before != after:
+        if args.check:
+            print('Outdated version template: ' + str(ios_project), file=sys.stderr)
+            failed = True
+        else:
+            ios_project.write_text(after)
 sys.exit(1 if failed else 0)

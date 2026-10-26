@@ -1,12 +1,13 @@
 # FN Connect Private Network
 
-从 Mac、Windows、Linux 或 Android 连接 fnOS NAS 和家庭局域网。FnCPN 自动选择局域网直达、IPv6 直连或 FN Connect 中继，无需手动配置密钥与路由。
+从 Mac、Windows、Linux、Android、iPhone 或 iPad 连接 fnOS NAS 和家庭局域网。FnCPN 自动选择局域网直达、IPv6 直连或 FN Connect 中继，无需手动配置密钥与路由。
 
 ## 使用条件
 
 - Apple Silicon 或 Intel Mac，macOS 13 或更新版本。
 - Windows 客户端：Windows 10 22H2（build 19045）或更新的 ARM64/x64 系统，不支持 32 位或 Windows Server。Windows 10 和原生 x64 已由用户完成验收。
 - Linux 客户端：Debian 12/13、Ubuntu 22.04/24.04/26.04/26.10、Fedora 43/44、openSUSE Leap 16.0/Tumbleweed（amd64/arm64），以及官方 Arch Linux（amd64）；需要 systemd。NixOS 使用 [Flake 模块](docs/development.md#nix-flake-与-nixos)，不支持 Alpine。
+- iOS/iPadOS 客户端：构建目标 iOS 15.0 起，ARM64；仅提供未签名 IPA，需具备 Packet Tunnel 权限的签名材料。安装教程：[中文](docs/ios-installation.zh-CN.md) / [English](docs/ios-installation.en.md)。
 - Android 客户端：Android 8.0 / API 26 起，ARM64 与 x86_64；大多数手机选择 ARM64。
 - 已启用 FN Connect 的 fnOS NAS，支持 x86_64 和 ARM64。
 - fnOS 用户账号。普通用户可以连接；安装软件和修改服务端网络设置需要管理员权限。
@@ -26,6 +27,7 @@ FnCPN 在自身的 fnOS HTTPS/WSS 连接中使用系统信任及内置、指纹�
 | Apple Silicon Mac | `fncpn-<version>-macos-arm64-unsigned.pkg` |
 | Intel Mac | `fncpn-<version>-macos-x64-unsigned.pkg` |
 | Windows ARM64 | `fncpn-<version>-windows-arm64-unsigned.msi` |
+| iPhone / iPad | `fncpn-<version>-ios-arm64-unsigned.ipa`（需自行签名） |
 | Android ARM64 | `fncpn-<version>-android-arm64-v8a.apk` |
 | Android x86_64 | `fncpn-<version>-android-x86_64.apk` |
 | Windows x64 | `fncpn-<version>-windows-x64-unsigned.msi` |
@@ -33,6 +35,14 @@ FnCPN 在自身的 fnOS HTTPS/WSS 连接中使用系统信任及内置、指纹�
 | Fedora / openSUSE | `fncpn-{core,ui}-<version>-linux-{amd64,arm64}.rpm` |
 | Arch Linux | `fncpn-{core,ui}-<version>-linux-amd64.pkg.tar.zst` |
 | Nix / NixOS | [Flake 源码构建与模块](docs/development.md#nix-flake-与-nixos)，无独立 Release 包 |
+
+### iPhone / iPad：签名安装
+
+从 1.1.5 起提供未签名 IPA，不能直接安装。维护者没有 Apple Developer Program 付费订阅，
+当前没有 App Store / TestFlight 分发。需要支持 Network Extension（Packet Tunnel）的
+设备签名证书与描述文件；维护者已验证 DxSign 和 KravaSign 的材料。
+
+签名及安装步骤：[中文教程](docs/ios-installation.zh-CN.md) / [English guide](docs/ios-installation.en.md)。
 
 ### Android：安装
 

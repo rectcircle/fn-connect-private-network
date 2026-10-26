@@ -2,7 +2,7 @@ import {detectDownloadPlatform} from './download-platform.mjs';
 
 const translations = {
   '● 连接示意':'● Connection illustration','macOS / Windows / Linux':'macOS / Windows / Linux','fnOS x86_64 & ARM64':'fnOS x86_64 & ARM64','MIT 开源':'MIT open source',' · fnOS x86_64 & ARM64 · MIT 开源':' · fnOS x86_64 & ARM64 · MIT open source','fnOS 服务端':'fnOS server','x86_64 / ARM64 · 需要启用 FN Connect':'x86_64 / ARM64 · FN Connect required','。':'.','在外，也在网内':'Your network, anywhere','共享 NAS':'Shared NAS','私有网络 · 已连接':'Private network · Connected','本地局域网':'Local network','个人 · 家人 · 团队':'You · Family · Team','内网':'LAN','加密隧道':'Encrypted tunnel','一条连接，回到熟悉的网络。':'One connection brings your familiar network close.','距离变了，访问习惯不必变。':'Your location changes. Your access stays familiar.','NAS 文件':'NAS files','本地局域网':'Local network','原生客户端':'Native apps','自动选路 ↗':'Automatic routing ↗',
-  '首页':'Home','产品介绍':'Overview','连接方式':'How it works','开始使用':'Get started','常见问题':'FAQ','下载客户端':'Download','为 fnOS 而生的私有网络':'A private network for fnOS','无论在哪。':'Wherever you are.','你的网络，':'Your network,','就在身旁。':'is close by.','无论是自己的文件、家人的 NAS，还是团队的共享资源，都能从 Mac、Windows 或 Linux 连接 fnOS NAS 和局域网。无需自建中转服务器，无需为每个服务逐一配置端口暴露，也无需手动配置密钥与路由。让熟悉的访问方式，不受地点限制。':'Access your files, family NAS, and team resources from Mac, Windows, or Linux. Connect to fnOS and your LAN without building a relay, exposing services one by one, or configuring keys and routes by hand.','开始连接':'Connect now','在 GitHub 查看源码 ↗':'View source on GitHub ↗','在外，也在网内':'Your network, anywhere','本地局域网':'Local network','个人 · 家人 · 团队':'You · Family · Team','一条连接，回到熟悉的网络。':'One connection brings your familiar network close.',
+  '首页':'Home','产品介绍':'Overview','连接方式':'How it works','开始使用':'Get started','常见问题':'FAQ','下载客户端':'Download','连接 fnOS 所在的私有网络':'Connect to the private network your fnOS NAS is on','无论在哪。':'Wherever you are.','你的网络，':'Your network,','就在身旁。':'is close by.','无论是自己的文件、家人的 NAS，还是团队的共享资源，都能从 Mac、Windows 或 Linux 连接 fnOS NAS 和局域网。无需自建中转服务器，无需为每个服务逐一配置端口暴露，也无需手动配置密钥与路由。让熟悉的访问方式，不受地点限制。':'Access your files, family NAS, and team resources from Mac, Windows, or Linux. Connect to fnOS and your LAN without building a relay, exposing services one by one, or configuring keys and routes by hand.','开始连接':'Connect now','在 GitHub 查看源码 ↗':'View source on GitHub ↗','在外，也在网内':'Your network, anywhere','本地局域网':'Local network','个人 · 家人 · 团队':'You · Family · Team','一条连接，回到熟悉的网络。':'One connection brings your familiar network close.',
   '01 / 为日常而连接':'01 / Made for everyday use','把连接的复杂，':'Connection complexity','留在界面背后。':'stays behind the scenes.','输入 FN Connect ID，用 fnOS 账号授权。':'Enter your FN Connect ID and authorize with your fnOS account.','从设备注册到建立连接，FnCPN 帮你完成。':'FnCPN handles device registration and connection setup.','像在本地一样访问':'Access your network like you are there','用连接详情中的 NAS 地址访问设备，也可访问服务端启用的 LAN 网段。':'Use the NAS address in connection details, or access LAN subnets enabled by the server.','网络变化，自动恢复':'Reconnects as your network changes','网络变化后自动尝试恢复连接。主动断开会暂停自动连接，直到你再次连接。':'FnCPN tries to reconnect when your network changes. Disconnecting pauses automatic reconnection until you connect again.','顺手的原生体验':'A native app experience','Mac 与 Windows 原生客户端，Linux 提供桌面 UI 和无头 Core。桌面端支持简体中文与英文，命令行也能查看状态与控制连接。':'Native Mac and Windows apps, plus a Linux desktop UI and headless Core, in Simplified Chinese and English. Check status and control connections from the command line too.',
   '02 / 连接你的网络':'02 / Connect your network','三种路径。':'Three paths.','同一个目的地。':'One destination.','自动选择局域网直达、IPv6 直连或 FN Connect 中继。':'FnCPN chooses LAN, direct IPv6, or FN Connect relay automatically.','你关注访问，FnCPN 负责连接。':'You get access. FnCPN handles the connection.','局域网直达':'Local network','在同一网络，就走近路。':'On the same network, take the direct route.','IPv6 直连':'Direct IPv6','在外，尝试直接相连。':'Try a direct connection from afar.','FN Connect 中继':'FN Connect relay','无法直连时，多一条路。':'A fallback when direct paths are unavailable.','路径示意':'Connection path','你的电脑':'Your computer','fnOS 官方':'Official fnOS','中转服务器':'relay server','fnOS NAS':'fnOS NAS','就在同一个网络里。':'On the same local network.','电脑与 NAS 在同一局域网时，自动选择局域网直达，使用 NAS 局域网地址访问。':'When your computer and NAS share a LAN, FnCPN connects directly. Access the NAS using its local address.','使用 fnOS 官方的 FN Connect 中继服务，无需手动搭建服务器。可享受 FN Connect 基础版的免费中继权益；带宽权益与付费方案详见':'Use the official FN Connect relay without setting up a server. The FN Connect Basic plan includes free relay access. See','FN Connect 官方页面 ↗':'the official FN Connect page ↗','自动选路':'Automatic routing','无需手动切换网络配置':'No need to switch network settings manually',
   '访问方式 / 做个比较':'ACCESS / A COMPARISON','连接一个网络，':'Connect to your network','不用逐个开放服务。':'without exposing each service.','端口暴露适合向外提供指定服务；FnCPN 适合让自己、家人或团队成员通过授权的电脑访问 NAS 和局域网资源。选择适合访问对象的方式。':'Port forwarding can expose specific services. FnCPN lets you and authorized family or team members access a NAS and LAN from their computers. Choose the approach that fits who needs access.','FnCPN 与直接公网端口暴露的比较':'FnCPN compared with exposing public ports','比较项':'Criteria','FnCPN 私有网络':'FnCPN private network','直接公网端口暴露':'Direct public port exposure','安装与准备':'Setup','NAS 安装服务端，电脑安装客户端；启用 FN Connect 后授权连接。':'Install the server on your NAS and the client on your computer. Enable FN Connect and authorize the connection.','配置路由器或网关；直连通常需要可达的公网地址。经隧道转发则依赖额外服务。':'Configure a router or gateway. Direct access usually needs a reachable public address; tunnel forwarding needs an additional service.','配置与维护':'Configuration and maintenance','无需自建中转、逐个映射端口或手动配置密钥与路由；LAN 访问范围由服务端设置。':'No self-hosted relay, per-service port mapping, or manual key and route setup. The server controls LAN access.','通常需要为各服务配置映射、域名与访问规则，并维护认证、TLS 和防火墙。':'Usually requires service mappings, domains, access rules, and ongoing management of authentication, TLS, and firewall settings.','安全边界':'Security','远程通过加密隧道访问私有地址，减少逐项公开服务入口；仍需保护账号、授权设备及内网服务。':'Remote access uses an encrypted tunnel to private addresses, reducing public service endpoints. Protect accounts, authorized devices, and LAN services.','公开的服务入口可能被扫描和尝试访问，需要持续管理服务更新、认证与访问限制。':'Public endpoints may be scanned and probed. Keep services updated and manage authentication and access controls.','访问对象':'Who can access','适合自己、家人或团队成员，用各自的 fnOS 账号授权 Mac / Windows / Linux 访问 NAS 和已启用的 LAN 网段；每台电脑需要安装客户端。':'For you, family, or teammates. Each person authorizes a Mac, Windows, or Linux computer with their fnOS account to access the NAS and enabled LAN subnets. Each computer needs the client.','适合对外提供指定服务；是否需要客户端取决于服务，例如网页通常可直接用浏览器访问。':'For providing selected services publicly. A client may not be needed; websites, for example, can usually be opened in a browser.','速度与成本':'Speed and cost','自动选路；可享受 FN Connect 基础版的免费中继权益。中继速度受服务权益及网络条件影响，更高带宽等付费权益':'Automatic routing. FN Connect Basic includes free relay access. Relay speeds depend on service entitlements and network conditions. See','以官方服务说明为准 ↗':'the official service details ↗','直连取决于 NAS 所在网络的上行带宽与网络条件；使用第三方隧道或自建中转时，可能有额外费用。':'Direct speeds depend on the NAS network upload bandwidth and conditions. Third-party tunnels or self-hosted relays may cost extra.','私有网络不替代服务自身的安全措施。请按需启用 LAN 网段，并保持 fnOS 与应用更新。':'A private network does not replace service security. Enable only the LAN subnets you need, and keep fnOS and apps updated.',
@@ -42,10 +42,54 @@ Object.assign(translations, {
   "Mac、Windows、Android 按架构选择安装包；Linux 使用自动安装脚本，按桌面环境安装 UI 或无头 Core。": "Choose a package for your Mac, Windows PC or Android device. On Linux, the installer selects the desktop UI or headless Core.",
   "Mac 与 Windows 原生客户端，Android 提供 Fyne 移动界面，Linux 提供桌面 UI 和无头 Core。桌面端支持简体中文与英文，命令行也能查看状态与控制连接。": "Native apps for Mac and Windows, a Fyne mobile UI for Android, and a desktop UI or headless Core for Linux. The command line also controls connections and shows status.",
   "管理员先在 NAS 上安装并配置 FnCPN。每位成员在自己的电脑或 Android 手机安装客户端，用各自的 fnOS 账号授权连接，无需共享账号密码。请按实际需要设置 LAN 访问范围；私有网络连接不能替代 NAS 与内网应用自身的账号权限。": "An administrator installs FnCPN on the NAS. Each member installs the client on their computer or Android phone and signs in with their own fnOS account. Configure LAN access as needed; the network connection does not replace application permissions.",
-  "适合自己、家人或团队成员，用各自的 fnOS 账号授权 Mac / Windows / Linux / Android 访问 NAS 和已启用的 LAN 网段；每台设备需要安装客户端。": "For you, family or team members to authorize Mac, Windows, Linux or Android devices with their own fnOS accounts. Each device needs the client to access the NAS and enabled LAN subnets.",
-  "无论是自己的文件、家人的 NAS，还是团队的共享资源，都能从 Mac、Windows、Linux 或 Android 连接 fnOS NAS 和局域网。无需自建中转服务器，无需为每个服务逐一配置端口暴露，也无需手动配置密钥与路由。让熟悉的访问方式，不受地点限制。": "Access your files, family NAS and team resources from Mac, Windows, Linux or Android. Connect to fnOS and your LAN without building a relay, exposing services one by one, or configuring keys and routes by hand."
+  "适合自己、家人或团队成员，用各自的 fnOS 账号授权 Mac / Windows / Linux / Android 访问 NAS 和已启用的 LAN 网段；每台设备需要安装客户端。": "For you, family or team members to authorize Mac, Windows, Linux, Android, iPhone or iPad devices with their own fnOS accounts. Each device needs the client to access the NAS and enabled LAN subnets.",
+  "无论是自己的文件、家人的 NAS，还是团队的共享资源，都能从 Mac、Windows、Linux、Android、iPhone 或 iPad 连接 fnOS NAS 和局域网。无需自建中转服务器，无需为每个服务逐一配置端口暴露，也无需手动配置密钥与路由。让熟悉的访问方式，不受地点限制。": "Access your files, family NAS and team resources from Mac, Windows, Linux, Android, iPhone or iPad. Connect to fnOS and your LAN without building a relay, exposing services one by one, or configuring keys and routes by hand."
+});
+Object.assign(translations, {
+ 'iOS 15.0+ 构建目标 · ARM64':'iOS 15.0+ build target · ARM64',
+ '从 1.1.5 起提供未签名 IPA，不能直接安装。':'Unsigned IPAs are available starting with 1.1.5. They cannot be installed directly.',
+ '下载未签名 IPA ↗':'Download unsigned IPA ↗',
+ '维护者没有 Apple 开发者付费订阅，当前无 App Store / TestFlight 分发。需要支持 Packet Tunnel 网络扩展的设备签名材料。':'The maintainer has no paid Apple Developer subscription. No App Store or TestFlight distribution is available. Device signing materials must authorize the Packet Tunnel network extension.',
+ '维护者已验证 DxSign、KravaSign；其他证书服务未验证。下载前请先阅读签名与安装教程。':'The maintainer has verified DxSign and KravaSign; other certificate services are untested. Read the signing and installation guide before downloading.',
+ '仅对应版本公开后可下载；草稿不对公众开放。':'Downloads are available once the corresponding version is public; drafts are not public.',
+ '签名与安装教程 ↗':'Signing and installation guide ↗'
 });
 const downloadTabs = [...document.querySelectorAll('[data-download-platform]')];
+const downloadTabBar = document.querySelector('.download-tabs');
+const downloadTabFrame = document.querySelector('.download-tabs-shell');
+const downloadTabPrevious = downloadTabFrame.querySelector('.previous');
+const downloadTabNext = downloadTabFrame.querySelector('.next');
+Object.assign(translations, {'向左滚动标签':'Scroll tabs left','向右滚动标签':'Scroll tabs right'});
+for (const [button, direction] of [[downloadTabPrevious, -1], [downloadTabNext, 1]]) {
+  button.addEventListener('click', () => downloadTabBar.scrollBy({
+    left:direction * Math.max(120, downloadTabBar.clientWidth * 0.7),
+    behavior:matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth'
+  }));
+}
+
+function updateDownloadTabEdges() {
+  downloadTabFrame.classList.toggle('is-overflowing', downloadTabBar.scrollWidth > downloadTabFrame.clientWidth + 1);
+  const remaining = downloadTabBar.scrollWidth - downloadTabBar.clientWidth - downloadTabBar.scrollLeft;
+  downloadTabPrevious.disabled = downloadTabBar.scrollLeft <= 1;
+  downloadTabNext.disabled = remaining <= 1;
+  downloadTabBar.style.setProperty('--fade-left', downloadTabBar.scrollLeft > 1 ? '18px' : '0px');
+  downloadTabBar.style.setProperty('--fade-right', remaining > 1 ? '18px' : '0px');
+}
+function revealDownloadTab(tab) {
+  const bar = downloadTabBar.getBoundingClientRect();
+  const item = tab.getBoundingClientRect();
+  if (item.left < bar.left + 18) downloadTabBar.scrollBy({left:item.left - bar.left - 18});
+  else if (item.right > bar.right - 18) downloadTabBar.scrollBy({left:item.right - bar.right + 18});
+  updateDownloadTabEdges();
+}
+downloadTabBar.addEventListener('scroll', updateDownloadTabEdges, {passive:true});
+const downloadTabResize = new ResizeObserver(() => {
+  const selected = downloadTabs.find(tab => tab.getAttribute('aria-selected') === 'true');
+  if (selected) revealDownloadTab(selected);
+});
+downloadTabResize.observe(downloadTabBar);
+for (const tab of downloadTabs) downloadTabResize.observe(tab);
+
 function selectDownload(tab, focus = false) {
   for (const item of downloadTabs) {
     const selected = item === tab;
@@ -53,7 +97,8 @@ function selectDownload(tab, focus = false) {
     item.tabIndex = selected ? 0 : -1;
     document.getElementById(item.getAttribute('aria-controls')).hidden = !selected;
   }
-  if (focus) tab.focus();
+  if (focus) tab.focus({preventScroll:true});
+  revealDownloadTab(tab);
 }
 for (const [index, tab] of downloadTabs.entries()) {
   tab.addEventListener('click', () => selectDownload(tab));
@@ -83,6 +128,7 @@ function setLanguage(language) {
   try { localStorage.setItem('fncpn-language', language); } catch {}
   const nextURL = new URL(location.href); nextURL.searchParams.set('lang', language); history.replaceState(null, '', nextURL);
   document.documentElement.lang = language === 'en' ? 'en' : 'zh-CN';
+  document.querySelectorAll('.ios-guide').forEach(link => { link.href = 'https://github.com/rectcircle/fn-connect-private-network/blob/main/docs/ios-installation.' + (language === 'en' ? 'en' : 'zh-CN') + '.md'; });
   support.dataset.language = language;
   languageToggle.textContent = language === 'en' ? '中文' : 'EN';
   languageToggle.setAttribute('aria-label', language === 'en' ? '切换到简体中文' : 'Switch to English');
@@ -119,7 +165,7 @@ function setLanguage(language) {
   }
   const svgLabels = document.querySelectorAll('.network-svg[aria-label]');
   svgLabels.forEach(node => node.setAttribute('aria-label', language === 'en' ? 'Laptop connected through an encrypted tunnel to a dual bay fnOS NAS on a local network' : '笔记本通过加密隧道进入本地局域网，连接内网中的双盘位 fnOS NAS，连接示意'));
-  document.querySelectorAll('meta[name="description"],meta[property="og:description"]').forEach(meta => meta.content = language === 'en' ? 'Connect from Mac, Windows, Linux or Android to your fnOS NAS and home network with automatic LAN, IPv6, and FN Connect relay paths.' : 'FnCPN 让个人、家人和团队从 Mac、Windows、Linux 或 Android 自动连接 fnOS NAS 和局域网，支持局域网直达、IPv6 直连与 FN Connect 中继。');
+  document.querySelectorAll('meta[name="description"],meta[property="og:description"]').forEach(meta => meta.content = language === 'en' ? 'Connect from Mac, Windows, Linux, Android, iPhone or iPad to your fnOS NAS and home network with automatic LAN, IPv6, and FN Connect relay paths.' : 'FnCPN 让个人、家人和团队从 Mac、Windows、Linux、Android、iPhone 或 iPad 自动连接 fnOS NAS 和局域网，支持局域网直达、IPv6 直连与 FN Connect 中继。');
   if (activeRoute) selectRoute(activeRoute);
 }
 document.querySelectorAll('a[href^="#"]').forEach(a => a.addEventListener('click', () => {siteNav.classList.remove('is-open'); menuToggle.setAttribute('aria-expanded','false');}));

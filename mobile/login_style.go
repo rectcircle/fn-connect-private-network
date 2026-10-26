@@ -13,7 +13,7 @@ import (
 
 func heroCopy() fyne.CanvasObject {
 	lines := []fyne.CanvasObject{}
-	for i, text := range []string{"无论在哪。", "你的网络，", "就在身旁。"} {
+	for i, text := range []string{tr("无论在哪。"), tr("你的网络，"), tr("就在身旁。")} {
 		ink := color.NRGBA{R: 23, G: 47, B: 88, A: 255}
 		if i == 2 {
 			ink = color.NRGBA{R: 52, G: 125, B: 235, A: 255}
@@ -35,27 +35,67 @@ func identityText(id, user string) string {
 	return strings.Join(parts, " · ")
 }
 
-type passwordEntry struct {
+type loginEntry struct {
 	widget.Entry
-	onFocus func()
+	onFocus    func(fyne.CanvasObject)
+	onKeyboard func(int)
+	submitKey  bool
 }
 
-func newPasswordEntry(onFocus func()) *passwordEntry {
-	entry := &passwordEntry{onFocus: onFocus}
-	entry.Password = true
+func newLoginEntry(password bool, onFocus func(fyne.CanvasObject)) *loginEntry {
+	entry := &loginEntry{onFocus: onFocus}
+	entry.Password = password
 	entry.Wrapping = fyne.TextWrap(fyne.TextTruncateClip)
 	entry.ExtendBaseWidget(entry)
 	return entry
 }
-func (e *passwordEntry) FocusGained() {
+func (e *loginEntry) FocusGained() {
 	e.Entry.FocusGained()
+	if e.onKeyboard != nil {
+		action := 1
+		if e.submitKey {
+			action = 2
+		}
+		e.onKeyboard(action)
+	}
 	time.AfterFunc(350*time.Millisecond, func() {
 		fyne.Do(func() {
 			if fyne.CurrentApp().Driver().CanvasForObject(e) != nil && fyne.CurrentApp().Driver().CanvasForObject(e).Focused() == e && e.onFocus != nil {
-				e.onFocus()
+				e.onFocus(e)
 			}
 		})
 	})
+}
+func (e *loginEntry) FocusLost() {
+	e.Entry.FocusLost()
+	if e.onKeyboard != nil {
+		e.onKeyboard(0)
+	}
+}
+
+// Run after the keyboard has resized the viewport, and reveal only the focused
+// field: scrolling to the bottom can move the first fields above the viewport.
+func (v *clientView) revealLoginEntry(entry fyne.CanvasObject) {
+	if v.ctx.Err() != nil || v.loginScroll == nil {
+		return
+	}
+	driver := fyne.CurrentApp().Driver()
+	y := driver.AbsolutePositionForObject(entry).Y - driver.AbsolutePositionForObject(v.loginScroll).Y
+	offset := v.loginScroll.Offset
+	bottom := y + entry.Size().Height + 12
+	if (entry == v.password || entry == v.otp) && v.loginSubmit != nil {
+		buttonBottom := driver.AbsolutePositionForObject(v.loginSubmit).Y - driver.AbsolutePositionForObject(v.loginScroll).Y + v.loginSubmit.Size().Height + 12
+		// Reveal the action only if the field and action fit together.
+		if buttonBottom-y <= v.loginScroll.Size().Height-24 {
+			bottom = max(bottom, buttonBottom)
+		}
+	}
+	if bottom > v.loginScroll.Size().Height {
+		offset.Y += bottom - v.loginScroll.Size().Height
+	} else if y < 12 {
+		offset.Y += y - 12
+	}
+	v.loginScroll.ScrollToOffset(offset)
 }
 
 func externalLinkIcon() fyne.Resource {

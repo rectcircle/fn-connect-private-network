@@ -73,3 +73,55 @@ func TestDrawerReleaseAcceptsShortSwipeAndFlick(t *testing.T) {
 		})
 	}
 }
+
+func TestRightDrawerOpensLeftAndClosesRight(t *testing.T) {
+	app := test.NewApp()
+	defer app.Quit()
+	w := app.NewWindow("Duo")
+	w.Resize(fyne.NewSize(400, 700))
+	d := newNavigationDrawer(w.Canvas(), widget.NewLabel("menu"))
+	d.layout.right = true
+	defer d.Dispose()
+	d.drag(&fyne.DragEvent{Dragged: fyne.Delta{DX: -100}})
+	if !d.visible || d.layout.progress <= 0 {
+		t.Fatal("left swipe must open right drawer")
+	}
+	if x := d.root.Objects[1].Position().X; x < 0 {
+		t.Fatal("right drawer moved to left edge", x)
+	}
+	d.drag(&fyne.DragEvent{Dragged: fyne.Delta{DX: -1000}})
+	if d.layout.progress != 1 {
+		t.Fatal("left swipe must fully open")
+	}
+	d.dragging = false
+	d.drag(&fyne.DragEvent{Dragged: fyne.Delta{DX: 1000}})
+	if d.layout.progress != 0 {
+		t.Fatal("right swipe must close")
+	}
+}
+
+func TestExternalDrawerSharesVisibilityAndRunsActions(t *testing.T) {
+	app := test.NewApp()
+	defer app.Quit()
+	w := app.NewWindow("Duo")
+	d := newNavigationDrawer(w.Canvas(), widget.NewLabel("menu"))
+	var expanded bool
+	d.externalVisibility = func(value bool) { expanded = value }
+	d.Show()
+	if !d.visible || !expanded {
+		t.Fatal("native menu did not open")
+	}
+	if len(w.Canvas().Overlays().List()) != 0 {
+		t.Fatal("native menu must not add a second Fyne panel")
+	}
+	ran := false
+	d.CloseThen(func() { ran = true })
+	if d.visible || expanded || !ran {
+		t.Fatal("native menu must close and run selected action")
+	}
+	d.Show()
+	d.Dispose()
+	if expanded || d.visible {
+		t.Fatal("dispose must hide native panel")
+	}
+}

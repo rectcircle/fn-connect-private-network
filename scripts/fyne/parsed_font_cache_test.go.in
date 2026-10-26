@@ -1,0 +1,109 @@
+package painter
+
+import (
+	"sync"
+	"testing"
+
+	"fyne.io/fyne/v2"
+	"fyne.io/fyne/v2/theme"
+	"github.com/go-text/typesetting/font"
+)
+
+func TestFnCPNParsedFontSharedButFacesIndependent(t *testing.T) {
+	ClearFontCache()
+	defer ClearFontCache()
+	resource := fyne.NewStaticResource("font.ttf", theme.DefaultTextFont().Content())
+	a, b := loadMeasureFont(resource), loadMeasureFont(resource)
+	if a == nil || b == nil || a == b || a.Font != b.Font {
+		t.Fatal("expected shared immutable Font with independent Faces")
+	}
+	a.SetPpem(18, 20)
+	if x, y := b.Ppem(); x != 0 || y != 0 {
+		t.Fatal("Face settings leaked across scopes")
+	}
+	gidA, okA := a.NominalGlyph('A')
+	gidB, okB := b.NominalGlyph('A')
+	if !okA || !okB || gidA != gidB {
+		t.Fatal("glyph mapping changed")
+	}
+}
+
+func TestFnCPNParsedFontIdentityAndClear(t *testing.T) {
+	ClearFontCache()
+	defer ClearFontCache()
+	a := fyne.NewStaticResource("same.ttf", theme.DefaultTextFont().Content())
+	b := fyne.NewStaticResource("same.ttf", theme.DefaultTextBoldFont().Content())
+	first := loadMeasureFont(a)
+	if first.Font == loadMeasureFont(b).Font {
+		t.Fatal("same resource name confused distinct fonts")
+	}
+	ClearFontCache()
+	if first.Font == loadMeasureFont(a).Font {
+		t.Fatal("ClearFontCache retained stale parsed Font")
+	}
+}
+
+type fncpnDynamicResource struct{ raw []byte }
+
+func (r *fncpnDynamicResource) Name() string    { return "dynamic.ttf" }
+func (r *fncpnDynamicResource) Content() []byte { return r.raw }
+func TestFnCPNDynamicFontUsesContent(t *testing.T) {
+	ClearFontCache()
+	defer ClearFontCache()
+	r := &fncpnDynamicResource{theme.DefaultTextFont().Content()}
+	first := loadMeasureFont(r)
+	if first.Font != loadMeasureFont(r).Font {
+		t.Fatal("equal content was reparsed")
+	}
+	r.raw = theme.DefaultTextBoldFont().Content()
+	if first.Font == loadMeasureFont(r).Font {
+		t.Fatal("changed dynamic resource reused stale font")
+	}
+}
+
+func TestFnCPNParsedFontConcurrentAndBounded(t *testing.T) {
+	ClearFontCache()
+	defer ClearFontCache()
+	resource := fyne.NewStaticResource("shared.ttf", theme.DefaultTextFont().Content())
+	var wait sync.WaitGroup
+	faces := make([]*font.Face, 16)
+	for i := range faces {
+		wait.Add(1)
+		go func(i int) {
+			defer wait.Done()
+			faces[i] = loadMeasureFont(resource)
+			faces[i].SetPpem(uint16(i+1), uint16(i+2))
+		}(i)
+	}
+	wait.Wait()
+	for i, face := range faces {
+		if face == nil || face.Font != faces[0].Font {
+			t.Fatal("concurrent cache misses reparsed font")
+		}
+		x, y := face.Ppem()
+		if x != uint16(i+1) || y != uint16(i+2) {
+			t.Fatal("concurrent Face state leaked")
+		}
+	}
+	for i := 0; i < fncpnFontCacheEntries+5; i++ {
+		loadMeasureFont(fyne.NewStaticResource("font.ttf", theme.DefaultTextFont().Content()))
+	}
+	fncpnFonts.Lock()
+	defer fncpnFonts.Unlock()
+	if len(fncpnFonts.entries) > fncpnFontCacheEntries || fncpnFonts.bytes > fncpnFontCacheBytes {
+		t.Fatal("parsed font cache exceeded bounds")
+	}
+}
+
+func TestFnCPNFailedParseDoesNotPoisonResource(t *testing.T) {
+	ClearFontCache()
+	defer ClearFontCache()
+	resource := fyne.NewStaticResource("retry.ttf", []byte("invalid"))
+	if loadMeasureFont(resource) != nil {
+		t.Fatal("invalid font accepted")
+	}
+	resource.StaticContent = theme.DefaultTextFont().Content()
+	if loadMeasureFont(resource) == nil {
+		t.Fatal("failed load poisoned resource cache")
+	}
+}

@@ -22,19 +22,20 @@ func loginField(title string, entry fyne.CanvasObject) fyne.CanvasObject {
 	return container.NewVBox(widget.NewLabel(title), entry)
 }
 func (v *clientView) toast(text string) {
-	if platform, ok := v.backend.(interface{ Toast(string) error }); ok {
-		go func() { _ = platform.Toast(text) }()
-		return
-	}
 	popup := widget.NewPopUp(widget.NewLabel(text), v.window.Canvas())
-	popup.Show()
+	// Center the toast in the lower quarter of the usable canvas.
+	viewport, size := v.window.Canvas().Size(), popup.MinSize()
+	popup.ShowAtPosition(fyne.NewPos(
+		max(float32(0), (viewport.Width-size.Width)/2),
+		max(float32(0), min(viewport.Height-size.Height-16, viewport.Height*0.75-size.Height/2)),
+	))
 	time.AfterFunc(2*time.Second, func() { fyne.Do(popup.Hide) })
 }
 func (v *clientView) promptAdminLogin() {
 	if v.window == nil {
 		return
 	}
-	dialog.ShowConfirm("登录管理后台", "管理后台需要具有管理员权限的 fnOS 账号。是否前往登录？", func(yes bool) {
+	dialog.ShowConfirm(tr("登录管理后台"), tr("管理后台需要具有管理员权限的 fnOS 账号。是否前往登录？"), func(yes bool) {
 		if yes {
 			v.execute(func(ctx context.Context) error {
 				if err := v.authorization.cancel(ctx, v.backend); err != nil {

@@ -1,4 +1,4 @@
-//go:build (!darwin && !windows) || (darwin && !cgo)
+//go:build (!darwin && !windows) || (darwin && !cgo) || ios
 
 package platform
 

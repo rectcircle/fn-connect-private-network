@@ -9,6 +9,8 @@ python3 scripts/sync-localizations.py --check
 python3 scripts/rpm_signing_test.py
 python3 scripts/install_linux_test.py
 python3 scripts/android_release_test.py
+python3 scripts/ios_release_test.py
+python3 -m unittest discover -s scripts/ios -p '*_test.py'
 python3 -m unittest discover -s scripts/android -p '*_test.py'
 python3 scripts/release_manifest_test.py
 python3 scripts/release_candidate_test.py
@@ -19,6 +21,7 @@ python3 scripts/update_cask_test.py
 go test ./...
 go test -race ./...
 go vet ./...
+(cd mobile && go test -tags ci ./... && go test -race -tags ci ./... && go vet -tags ci ./...)
 node --test internal/server/web/index.test.cjs website/download-platform.test.mjs
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build ./...
 CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build ./...

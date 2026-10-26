@@ -45,7 +45,7 @@ public final class FnVpnService extends VpnService {
         credentials = new Credentials(this);
         connectivity = (ConnectivityManager) getSystemService(CONNECTIVITY_SERVICE);
         NotificationManager manager = (NotificationManager)getSystemService(NOTIFICATION_SERVICE);
-        manager.createNotificationChannel(new NotificationChannel("connection", "FnCPN connection", NotificationManager.IMPORTANCE_LOW));
+        manager.createNotificationChannel(new NotificationChannel("connection", getString(R.string.connection_channel), NotificationManager.IMPORTANCE_LOW));
         connectivity.registerNetworkCallback(new NetworkRequest.Builder()
             .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
             .addCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN).build(), callback);
@@ -57,13 +57,27 @@ public final class FnVpnService extends VpnService {
         PendingIntent pause = PendingIntent.getService(this,1,new Intent(this,FnVpnService.class).setAction("pause"),PendingIntent.FLAG_IMMUTABLE|PendingIntent.FLAG_UPDATE_CURRENT);
         return new Notification.Builder(this,"connection").setSmallIcon(R.drawable.tile_icon)
             .setContentTitle("FnCPN").setContentText(text).setContentIntent(open).setOngoing(true)
-            .addAction(new Notification.Action.Builder(null,"Pause",pause).build()).build();
+            .addAction(new Notification.Action.Builder(null,getString(R.string.pause),pause).build()).build();
+    }
+    private String stateText(String text) {
+        String[] parts=text.split(" ",2);
+        int label;
+        switch(parts[0]) {
+            case "LOCAL":label=R.string.state_local;break;
+            case "DIRECT":label=R.string.state_direct;break;
+            case "RELAY":label=R.string.state_relay;break;
+            case "RECONNECTING":label=R.string.state_reconnecting;break;
+            case "PROBING":label=R.string.state_probing;break;
+            case "AUTH_REQUIRED":label=R.string.state_auth;break;
+            default:label=R.string.disconnected;
+        }
+        return getString(label)+(parts.length>1 && !parts[1].isEmpty()?" · "+parts[1]:"");
     }
     private boolean started;
     @Override public int onStartCommand(Intent intent, int flags, int startId) {
         try {
-            if (Build.VERSION.SDK_INT >= 34) startForeground(1,notification("Starting connection service"),ServiceInfo.FOREGROUND_SERVICE_TYPE_SYSTEM_EXEMPTED);
-            else startForeground(1,notification("Starting connection service"));
+            if (Build.VERSION.SDK_INT >= 34) startForeground(1,notification(getString(R.string.starting_service)),ServiceInfo.FOREGROUND_SERVICE_TYPE_SYSTEM_EXEMPTED);
+            else startForeground(1,notification(getString(R.string.starting_service)));
         } catch (RuntimeException error) {
             SupportLog.event(this,"foreground_service_failed",error);
             Bridge.startupError = "Android refused the VPN foreground service"; Bridge.ready.countDown(); stopSelf(); return START_NOT_STICKY;
@@ -84,7 +98,7 @@ public final class FnVpnService extends VpnService {
                 if(Bridge.startupError!=null)throw new Exception("Service startup failed");
                 boolean connect="tile-connect".equals(intent.getAction());
                 JSONObject command=new JSONObject(Bridge.command(connect?"connect":"disconnect","{}"));if(!command.optBoolean("ok"))throw new Exception("Connection command failed");
-            }catch(Exception error){SupportLog.event(this,"tile_command_failed",error);new android.os.Handler(android.os.Looper.getMainLooper()).post(()->android.widget.Toast.makeText(this,"切换失败，请打开 FnCPN 查看诊断",android.widget.Toast.LENGTH_SHORT).show());}
+            }catch(Exception error){SupportLog.event(this,"tile_command_failed",error);Bridge.feedback("切换失败，请打开 FnCPN 查看诊断");new android.os.Handler(android.os.Looper.getMainLooper()).post(()->startActivity(new Intent(this,MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK|Intent.FLAG_ACTIVITY_SINGLE_TOP)));}
             finally{ConnectionTileService.busy=false;ConnectionTileService.refresh();}
         });
         return START_STICKY;
@@ -158,7 +172,7 @@ public final class FnVpnService extends VpnService {
         }
         case "vpn.remove": return JSONObject.NULL; // Go closes the sole fd owner.
         case "notification": {
-            String text=input.optString("text","FnCPN");ConnectionTileService.changed(this,text.split(" ",2)[0]);((NotificationManager)getSystemService(NOTIFICATION_SERVICE)).notify(1,notification(text));return JSONObject.NULL;
+            String text=input.optString("text","FnCPN");ConnectionTileService.changed(this,text.split(" ",2)[0]);((NotificationManager)getSystemService(NOTIFICATION_SERVICE)).notify(1,notification(stateText(text)));return JSONObject.NULL;
         }
         case "secret.get":case "secret.put":case "secret.delete":case "secret.reset": return credentials.dispatch(method,input);
         default: throw new Exception("Unsupported Android system operation");

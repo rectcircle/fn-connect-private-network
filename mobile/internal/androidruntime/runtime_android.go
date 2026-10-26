@@ -10,7 +10,9 @@ char *fncpn_android_rpc(const char *request);
 import "C"
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"log/slog"
@@ -26,6 +28,8 @@ import (
 	"github.com/rectcircle/fn-connect-private-network/internal/model"
 	"github.com/rectcircle/fn-connect-private-network/mobile/internal/androidvpn"
 	"github.com/rectcircle/fn-connect-private-network/mobile/internal/support"
+	"github.com/rectcircle/fn-connect-private-network/mobile/internal/uifeedback"
+	"github.com/rectcircle/fn-connect-private-network/mobile/internal/uiperf"
 	"golang.org/x/sys/unix"
 )
 
@@ -290,11 +294,22 @@ func ExportSupport(report string) error {
 	if err := (system{}).Call("support.read", nil, &logs); err != nil {
 		return err
 	}
-	data, err := support.Report([]byte(report), logs)
+	names := []string{"client.log.2", "client.log.1", "client.log", "android.log.1", "android.log"}
+	files := make([]map[string]any, 0, len(names))
+	for _, name := range names {
+		if text, ok := logs[name]; ok {
+			files = append(files, map[string]any{"name": name, "size": len(text)})
+		}
+	}
+	metadata, _ := json.Marshal(map[string]any{"format": 1, "capturedAt": time.Now().UTC(), "platform": "android", "files": files})
+	var data bytes.Buffer
+	err := support.Archive(&data, []byte(report), logs, metadata,
+		"FnCPN diagnostics and log snapshots / FnCPN 诊断与日志快照\n\nSee snapshot.json for capture time (UTC). client.log: shared daemon; android.log: Android VPN adapter. Exported logs are filtered.\n采集时间（UTC）见 snapshot.json。client.log：共享客户端；android.log：Android VPN 适配层。导出日志已脱敏。\n",
+		names)
 	if err != nil {
 		return err
 	}
-	return (system{}).Call("ui.export", map[string]string{"text": string(data)}, nil)
+	return (system{}).Call("ui.export", map[string]string{"archive": base64.StdEncoding.EncodeToString(data.Bytes())}, nil)
 }
 
 func OpenLogs() error { return (system{}).Call("ui.logs", nil, nil) }
@@ -306,9 +321,17 @@ func Exit() error { return (system{}).Call("ui.exit", nil, nil) }
 //export fncpnBack
 func fncpnBack() { dispatchBack() }
 
-func Toast(text string) error {
-	return (system{}).Call("ui.toast", map[string]string{"text": text}, nil)
-}
+//export fncpnImeSubmit
+func fncpnImeSubmit() { dispatchKeyboardSubmit() }
 
 func Background() error        { return (system{}).Call("ui.background", nil, nil) }
 func OpenNAS(url string) error { return (system{}).Call("ui.nas", map[string]string{"url": url}, nil) }
+
+//export fncpnFeedback
+func fncpnFeedback(text *C.char) { uifeedback.Publish(C.GoString(text)) }
+
+//export fncpnUIProfile
+func fncpnUIProfile(directory *C.char) {
+	path := C.GoString(directory)
+	go uiperf.Capture(path, 45*time.Second)
+}

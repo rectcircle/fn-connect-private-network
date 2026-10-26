@@ -169,9 +169,16 @@ jobs:
       FNCPN_STORE_PASSWORD: ${{ secrets.FNCPN_STORE_PASSWORD }}
       FNCPN_KEY_ALIAS: ${{ secrets.FNCPN_KEY_ALIAS }}
       FNCPN_KEY_PASSWORD: ${{ secrets.FNCPN_KEY_PASSWORD }}
+  ios-build:
+    needs: candidate
+    if: ${{ !inputs.publish }}
+    uses: ./.github/workflows/build-ios.yml
+    with:
+      version: ${{ inputs.version }}
+      ref: ${{ inputs.commit }}
   release:
     if: ${{ !inputs.publish }}
-    needs: [windows-build, linux-build, nix-check, android-build, fnos-check]
+    needs: [windows-build, linux-build, nix-check, android-build, ios-build, fnos-check]
     runs-on: macos-15
     env:
       DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
@@ -224,6 +231,10 @@ jobs:
         with:
           name: android-release-candidates-${{ inputs.commit }}
           path: dist/android
+      - uses: actions/download-artifact@v4
+        with:
+          name: ios-release-candidates-${{ inputs.commit }}
+          path: dist/ios
       - name: Build release draft
         if: ${{ !inputs.publish }}
         run: ./scripts/build-all.sh

@@ -15,10 +15,15 @@ import java.util.concurrent.TimeUnit;
 public final class Bridge {
     static { System.loadLibrary("fncpn"); }
     static volatile FnVpnService service;
+    static volatile boolean exiting;
+    public static boolean isExiting(){return exiting;}
     static volatile Context application;
     static volatile String startupError;
     static volatile CountDownLatch ready = new CountDownLatch(1);
     static native void back();
+    public static native void imeSubmit();
+    static native void profileUI(String directory);
+    static native void feedback(String text);
     private static WeakReference<MainActivity> activity = new WeakReference<>(null);
     private static final Handler main = new Handler(Looper.getMainLooper());
     static final java.util.concurrent.ExecutorService lifecycle = java.util.concurrent.Executors.newSingleThreadExecutor();
@@ -95,6 +100,12 @@ public final class Bridge {
                 if(config.exists() && !config.delete())throw new Exception("Cannot remove local configuration");
                 result=JSONObject.NULL;
             }
+            else if (method.equals("ui.keyboard")) {
+                int action=params.getInt("action");
+                if(action<0 || action>2)throw new Exception("Invalid keyboard action");
+                main.post(()->org.golang.app.FnNativeActivity.setKeyboardAction(action));
+                result=JSONObject.NULL;
+            }
             else if (method.equals("ui.logs")) {
                 MainActivity owner=activity.get();if(owner==null)throw new Exception("Open FnCPN first");
                 android.net.Uri directory=android.provider.DocumentsContract.buildDocumentUri(owner.getPackageName()+".logs","logs");
@@ -105,7 +116,7 @@ public final class Bridge {
                     for(android.content.pm.ResolveInfo handler:handlers){if((handler.activityInfo.applicationInfo.flags&android.content.pm.ApplicationInfo.FLAG_SYSTEM)!=0){browse.setComponent(new android.content.ComponentName(handler.activityInfo.packageName,handler.activityInfo.name));break;}}
                     try{owner.startActivity(browse);}catch(android.content.ActivityNotFoundException unavailable){
                         Intent picker=new Intent(Intent.ACTION_OPEN_DOCUMENT).setType("text/plain").addCategory(Intent.CATEGORY_OPENABLE).putExtra(android.provider.DocumentsContract.EXTRA_INITIAL_URI,directory);
-                        try{owner.startActivity(picker);}catch(android.content.ActivityNotFoundException missing){android.widget.Toast.makeText(owner,"未找到系统文件管理器",android.widget.Toast.LENGTH_SHORT).show();}
+                        try{owner.startActivity(picker);}catch(android.content.ActivityNotFoundException missing){feedback("未找到系统文件管理器");SupportLog.event(application,"file_manager_missing",missing);}
                     }
                 });result=JSONObject.NULL;
             } else if(method.equals("device.name")) {
@@ -113,7 +124,6 @@ public final class Bridge {
                 if(name==null||name.trim().isEmpty())name=android.os.Build.MODEL;result=name;
             } else if(method.equals("ui.background")){MainActivity owner=activity.get();if(owner!=null)main.post(()->owner.moveTaskToBack(true));result=JSONObject.NULL;
             } else if(method.equals("ui.nas")){MainActivity owner=activity.get();if(owner==null)throw new Exception("Open FnCPN first");android.net.Uri uri=android.net.Uri.parse(params.getString("url"));if(!"http".equals(uri.getScheme())&& !"https".equals(uri.getScheme()))throw new Exception("Unsupported URL");main.post(()->owner.startActivity(new Intent(Intent.ACTION_VIEW,uri)));result=JSONObject.NULL;
-            } else if(method.equals("ui.toast")){ MainActivity owner=activity.get();if(owner==null)throw new Exception("Open FnCPN first");String text=params.getString("text");main.post(()->android.widget.Toast.makeText(owner,text,android.widget.Toast.LENGTH_SHORT).show());result=JSONObject.NULL;
             } else if (method.equals("ui.browser")) {
                 MainActivity owner=activity.get();if(owner==null)throw new Exception("Open FnCPN first");
                 String url=params.getString("url");
@@ -121,7 +131,20 @@ public final class Bridge {
                 main.post(()->owner.startActivity(new Intent(Intent.ACTION_VIEW,android.net.Uri.parse(url))));result=JSONObject.NULL;
             } else if (method.equals("ui.exit")) {
                 MainActivity owner=activity.get();if(owner==null)throw new Exception("Open FnCPN first");
-                main.post(()->{FnVpnService running=service;if(running!=null)running.stopSelf();owner.finishAndRemoveTask();});result=JSONObject.NULL;
+                if(!exiting) {
+                    exiting=true;
+                    lifecycle.execute(()->{
+                        // Only explicit menu Exit ends this runtime. Closing an Activity
+                        // alone leaves Fyne's process-global event loop alive.
+                        stop(false);
+                        main.post(()->{
+                            FnVpnService running=service;if(running!=null)running.stopSelf();
+                            owner.finishAndRemoveTask();
+                            android.os.Process.killProcess(android.os.Process.myPid());
+                        });
+                    });
+                }
+                result=JSONObject.NULL;
             } else if (method.equals("ui.admin")) {
                 MainActivity owner = activity.get();
                 if (owner == null) throw new Exception("Open FnCPN first");
@@ -144,7 +167,7 @@ public final class Bridge {
                 result=logs;
             } else if (method.equals("ui.export")) {
                 MainActivity owner=activity.get();if(owner==null)throw new Exception("Open FnCPN first");
-                String text=params.getString("text");if(text.length()>4194304)throw new Exception("Support report is too large");
+                String archive=params.getString("archive");if(archive.length()>12582912)throw new Exception("Support report is too large");
                 java.io.File directory=new java.io.File(owner.getCacheDir(),"support");directory.mkdirs();
                 java.io.File[] old=directory.listFiles();
                 if(old!=null) {
@@ -152,15 +175,13 @@ public final class Bridge {
                     for(int i=0;i<old.length;i++)if(i>=7 || System.currentTimeMillis()-old[i].lastModified()>86400000L)old[i].delete();
                 }
                 java.io.File file=new java.io.File(directory,"support-"+java.util.UUID.randomUUID()+".zip");
-                try(java.util.zip.ZipOutputStream zip=new java.util.zip.ZipOutputStream(new java.io.FileOutputStream(file))) {
-                    zip.putNextEntry(new java.util.zip.ZipEntry("support.json"));zip.write(text.getBytes(java.nio.charset.StandardCharsets.UTF_8));zip.closeEntry();
-                }
+                java.nio.file.Files.write(file.toPath(),android.util.Base64.decode(archive,android.util.Base64.DEFAULT));
                 android.net.Uri uri=new android.net.Uri.Builder().scheme("content").authority(owner.getPackageName()+".support").appendPath(file.getName()).build();
                 main.post(() -> {
                     Intent share=new Intent(Intent.ACTION_SEND).setType("application/zip").putExtra(Intent.EXTRA_STREAM,uri)
                         .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
                     share.setClipData(android.content.ClipData.newRawUri("FnCPN support",uri));
-                    owner.startActivity(Intent.createChooser(share,"导出诊断与日志"));
+                    owner.startActivity(Intent.createChooser(share,owner.getString(R.string.export_support)));
                 });
                 SupportLog.event(application,"support_export",null);
                 result=JSONObject.NULL;

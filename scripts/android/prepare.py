@@ -9,9 +9,12 @@ import os
 from pathlib import Path
 import platform
 import shutil
+import sys
 import subprocess
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0,str(ROOT / "scripts"))
+import fyne_mobile_render
 MOBILE = ROOT / "mobile"
 OUT = MOBILE / "android/app/build/generated"
 
@@ -53,6 +56,21 @@ def main():
     module = json.loads(subprocess.check_output(
         [go, "list", "-m", "-json", "fyne.io/fyne/v2"], cwd=MOBILE, env=env, text=True))
     fyne = Path(module["Dir"])
+    local = OUT / "fyne-mobile-v2.8.2"
+    if not local.exists():
+        shutil.copytree(fyne,local)
+    (local / "internal/driver/mobile").chmod(0o755)
+    # Always refresh patched files from the pinned source, so rebuilding is idempotent.
+    for name in ("canvas.go","driver.go"):
+        copy_generated(fyne / "internal/driver/mobile" / name, local / "internal/driver/mobile" / name)
+    (local / "internal/painter").chmod(0o755)
+    copy_generated(fyne / "internal/painter/font.go",local / "internal/painter/font.go")
+    fyne_mobile_render.prepare(fyne,local)
+    modfile=OUT / "android.mod"
+    modfile.parent.mkdir(parents=True,exist_ok=True)
+    modfile.write_text((MOBILE / "go.mod").read_text()+f"\nreplace fyne.io/fyne/v2 => {local}\n")
+    shutil.copyfile(MOBILE / "go.sum",modfile.with_suffix(".sum"))
+    subprocess.run([go,"mod","edit","-modfile",str(modfile),"-replace=github.com/rectcircle/fn-connect-private-network="+str(ROOT)],cwd=MOBILE,env=env,check=True)
     java = OUT / "fyne/java/org/golang/app"
     java.mkdir(parents=True, exist_ok=True)
     for source in (fyne / "internal/driver/mobile/app").glob("*.java"):
@@ -73,7 +91,7 @@ def main():
         output = OUT / "go/jniLibs" / abi / "libfncpn.so"
         output.parent.mkdir(parents=True, exist_ok=True)
         build_env = dict(env, GOOS="android", GOARCH=arch, CC=str(cc))
-        subprocess.run([go, "build", "-trimpath", "-tags", "no_emoji,migrated_fynedo", "-buildmode=c-shared",
+        subprocess.run([go, "build", "-modfile",str(modfile), "-trimpath", "-tags", "no_emoji,migrated_fynedo", "-buildmode=c-shared",
                         "-ldflags", f"-s -w -X github.com/rectcircle/fn-connect-private-network/internal/version.Revision={trace_revision} -extldflags=-Wl,-z,max-page-size=16384",
                         "-o", str(output), "."], cwd=MOBILE, env=build_env, check=True)
     (assets / "build.json").write_text(json.dumps({

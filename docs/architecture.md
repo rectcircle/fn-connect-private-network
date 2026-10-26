@@ -41,45 +41,61 @@ fnOS
 
 客户端数据面由系统特权组件持有 WireGuard（macOS/Linux root / Windows LocalSystem）；RELAY 的 WSS 连接由普通 client daemon 持有，通过 loopback UDP 转发密文；LOCAL 不创建隧道。图中的进程关系不表示 root 进程发起 WSS。
 
-### 客户端平台适配与扩展
+### 共享核心与平台边界
 
-总体图描述客户端的逻辑职责，具体启动方式、IPC 和系统权限由平台实现。当前已实现 macOS、Windows 与 Linux；
-后续客户端复用 `internal/client` 的连接状态机、配置同步、选路及 DNS 逻辑，按平台接入 UI、
-进程生命周期、凭据存储、IPC、WireGuard、路由、DNS 和网络事件。
+客户端分为呈现控制、共享连接核心和系统适配三层。桌面图表示进程隔离方式，
+不是移动端必须复制的部署结构。所有平台复用 `internal/client` 的状态机、授权、
+配置同步、选路、DNS 业务及中继，`internal/clienthost` 提供嵌入式宿主；平台层实现窄接口。
 
-| 能力 | macOS | Windows | Linux |
+```text
+呈现与控制：桌面原生 UI / 移动 Fyne UI / CLI
+                         ↓ 平台控制接口
+共享连接核心：clienthost → Service / Manager
+              授权、状态机、选路、配置同步、DNS、RelayBridge
+                         ↓ 网络与系统窄接口
+系统适配：生命周期、凭据、WireGuard/TUN、路由、DNS、网络事件
+```
+
+### 平台运行模型
+
+| 平台 | 界面与控制 | 核心承载及权限边界 | 网络与凭据 |
 |---|---|---|---|
-| 界面 | 默认 AppKit / WebKit，可选 Wails v2 | 原生 Windows UI，WebView2 | Wails v2、GTK3 / WebKitGTK 4.1 |
-| 后台生命周期 | LaunchAgent / LaunchDaemon | 用户 daemon / Windows 系统服务 | systemd 用户服务 / 按 UID 隔离的系统服务 |
-| 特权身份 | root | LocalSystem | root |
-| 本地 IPC | Unix Socket 与 peer credential | Named Pipe 与 Windows 身份校验 | Unix Socket 与 peer credential |
-| WireGuard / 虚拟接口 | wireguard-go / utun | wireguard-go / Wintun | 内核 WireGuard / netlink |
-| 系统 DNS | loopback DNS + resolver 文件 | loopback DNS + NRPT | systemd-resolved 专属链路与受限 DNS bridge |
+| macOS | AppKit / WebKit，可选 Wails；CLI | 用户 LaunchAgent 与 root LaunchDaemon，Unix Socket 校验身份 | wireguard-go / utun；loopback DNS + resolver；Keychain |
+| Windows | 原生 UI / WebView2；CLI | 用户 daemon 与 LocalSystem 服务，Named Pipe 校验身份 | wireguard-go / Wintun；NRPT；系统凭据 |
+| Linux | Wails / GTK3 / WebKitGTK；CLI | systemd 用户服务与按 UID 隔离的 root 服务，Unix Socket | 内核 WireGuard / netlink；systemd-resolved；用户凭据存储 |
+| Android | Fyne + Java/JNI | VpnService 在应用中持有 clienthost，单 Go runtime；无需 root 或桌面双 daemon | 系统 VPN/TUN、路由、DNS；Keystore |
+| iOS / iPadOS 真机 | Fyne + 原生桥 | App 与 Packet Tunnel 独立进程；扩展独占活动 clienthost，通过 Provider 消息控制 | wireguard-go、packetFlow、系统网络设置；Keychain |
+| iOS 模拟器 | 同一 Fyne UI及网络调试入口 | App 内唯一 clienthost；编译标签隔离，不启动系统 Packet Tunnel | 用户态 netstack；仅显式应用内 HTTP/DNS 请求入隧道 |
 
-Linux 不修改物理接口、转发或主机防火墙；安装、网络资源所有权与支持范围见
-[Linux 支持](platform-support.md#linux)。NixOS 通过 [Flake 模块](development.md#nix-flake-与-nixos) 声明服务。
+Linux 不修改物理接口、转发或主机防火墙。Android LOCAL 名称解析可以保留 DNS 用 TUN，
+不运行 WireGuard。平台支持和实测边界见 [支持范围](platform-support.md) 与 [发布验收](validation.md)。
 
-新增平台应实现业务核心定义的窄接口，保持 UI、连接状态机和系统网络权限的职责边界。
-若目标系统要求不同的进程或系统扩展模型，由平台适配承接；支持范围以实际实现和验收为准。
+### iOS / iPadOS 承载关系
 
-Android 编码实现位于 `mobile/`，尚未完成 Android 打包或真机验收。
-Fyne UI 单向依赖连接接口；Java VpnService 通过 JNI 持有 `internal/clienthost`，复用 Manager/Service。
-宿主和系统适配均不依赖 Fyne，所有组件链接进同一 Go native library，不启动桌面双 daemon。
-Android 使用系统 VPN/TUN、路由和 DNS，不使用 root、Linux netlink 或 systemd。
-LOCAL 开启名称解析时保留 DNS 用 TUN，不运行 WireGuard。见 [Android 支持](platform-support.md#android)。
+```text
+App 进程：Fyne UI → iosui / iosClient → NETunnelProviderSession
+                                      │ Provider 消息
+Packet Tunnel 进程：Swift Provider → C bridge → clienthost / Service / Manager
+                                                   ↓ iosvpn.Engine
+                          packetFlow、网络设置、Keychain、wireguard-go
+```
 
-### 职责边界
+`mobile/ioscore` 编为单份 C archive；连接、配置和凭据由扩展单写，App 不持有第二个
+活动 Manager。Swift 负责系统生命周期和系统回调，共享核心负责业务。DNS netstack
+将匹配后缀的 UDP/TCP 请求转交共享 loopback DNS，平台不重新实现 DNS 业务。
+App 与扩展均不依赖 App Groups；配置在扩展沙盒，日志通过受限 Provider 消息同步为 App 快照。
 
-| 组件 | 负责 | 明确不负责 |
-|---|---|---|
-| 平台 UI（macOS / Windows / Linux） | 授权窗口、首次引导、状态和设置 | 不直接配置网络，不长期承载连接 |
-| `fncpn` 用户 CLI | 脚本化查询和控制客户端 daemon | 不读取 profile 执行连接，不直接调用系统特权能力 |
-| `fncpn client daemon` | 唯一客户端状态机、配置同步、授权凭证、选路和 WSS bridge | 以普通用户运行，不直接修改系统网络 |
-| `fncpn client privileged-daemon` | 进程内运行 WireGuard，并按结构化计划配置接口和路由 | 不联网、不解析凭据、不接受命令名和文件路径 |
-| `fncpn server daemon` | 设备、地址池、配置、HTTP API 和中继桥 | 不以 root 运行，不直接操作接口、防火墙和转发 |
-| `fncpn server privileged-daemon` | 管理服务端私钥、内核 WireGuard、转发和防火墙 | 不监听 HTTP/WSS，不处理浏览器或客户端原始输入 |
+模拟器使用 `fncpn_ios_simulator`，复用相同核心与 Engine，配置及 Keychain 命名空间独立。
+HTTP 通过 `Engine.DialApplication`、DNS 通过共享 listener 显式访问；Safari、WebView、
+其他 App 与系统路由/DNS 不进入该调试隧道。它不代替真机系统 VPN 验收。
 
-单一二进制不代表单一进程。当前桌面客户端的普通权限 daemon 与系统特权 privileged-daemon 作为独立进程运行，通过窄 IPC 保持权限隔离。
+### 职责与扩展约束
+
+UI 只展示状态和提交命令，不直接配置网络。业务核心通过接口使用系统能力，
+不得依赖 Fyne、UIKit 或 Java。平台宿主负责进程、系统扩展及权限模型，不复制连接状态机。
+桌面 privileged-daemon 只接受结构化网络计划，不处理浏览器输入或账号凭据；
+server 普通进程承载 HTTP/WSS、设备与配置，root 进程负责 WireGuard、转发和防火墙。
+新增平台实现这些边界即可复用核心，不要求使用桌面 IPC 或启动桌面 daemon 可执行文件。
 
 ## Go 业务包设计
 

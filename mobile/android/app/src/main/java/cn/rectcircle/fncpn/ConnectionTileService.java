@@ -26,12 +26,12 @@ public final class ConnectionTileService extends TileService {
         // A force-stopped package cannot run a cleanup callback, and some
         // systems refuse to bind it again. Do not leave an active cached tile
         // behind while invisible; onStartListening restores the live state.
-        Tile tile=getQsTile();if(tile!=null){tile.setState(Tile.STATE_INACTIVE);if(Build.VERSION.SDK_INT>=29)tile.setSubtitle("待更新");tile.updateTile();}
+        Tile tile=getQsTile();if(tile!=null){tile.setState(Tile.STATE_INACTIVE);if(Build.VERSION.SDK_INT>=29)tile.setSubtitle(getString(R.string.tile_stale));tile.updateTile();}
         if(listening.get()==this)listening.clear();super.onStopListening();
     }
     private void render(){
         Tile tile=getQsTile();if(tile==null)return;tile.setLabel("FnCPN");tile.setState(busy?Tile.STATE_UNAVAILABLE:(isActive()?Tile.STATE_ACTIVE:Tile.STATE_INACTIVE));
-        if(Build.VERSION.SDK_INT>=29)tile.setSubtitle(busy?"正在切换…":isActive()?"已连接":"已断开");tile.updateTile();
+        if(Build.VERSION.SDK_INT>=29)tile.setSubtitle(getString(busy?R.string.tile_busy:isActive()?R.string.connected:R.string.disconnected));tile.updateTile();
     }
     private static boolean isActive(){return active&&Bridge.service!=null&&Bridge.service.isReady();}
     @Override public void onClick(){super.onClick();if(isLocked()){unlockAndRun(this::toggle);return;}toggle();}

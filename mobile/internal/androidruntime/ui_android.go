@@ -2,7 +2,31 @@
 
 package androidruntime
 
-import "sync"
+import (
+	"sync"
+)
+
+var keyboardBridge struct {
+	sync.Mutex
+	handler func()
+}
+
+func SetKeyboardSubmitHandler(handler func()) {
+	keyboardBridge.Lock()
+	keyboardBridge.handler = handler
+	keyboardBridge.Unlock()
+}
+func dispatchKeyboardSubmit() {
+	keyboardBridge.Lock()
+	handler := keyboardBridge.handler
+	keyboardBridge.Unlock()
+	if handler != nil {
+		handler()
+	}
+}
+func SetKeyboardAction(action int) {
+	_ = (system{}).Call("ui.keyboard", map[string]int{"action": action}, nil)
+}
 
 // The platform forwards system back events; navigation belongs to the Go UI.
 var backBridge struct {

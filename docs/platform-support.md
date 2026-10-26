@@ -10,7 +10,8 @@
 | Windows | Windows 10 22H2（build 19045）起的 x64 / ARM64 客户端系统 | 分架构 MSI；不支持 Windows Server、32 位；Windows 10 与原生 x64 已有用户验收 |
 | Linux | 下表列明的 systemd 常规发行版 | Core/UI 双包；已有容器矩阵及 Debian 13 arm64 验证，其他发行版实机集成仍待验收 |
 | Nix / NixOS | x86_64-linux、aarch64-linux | Flake 源码构建、NixOS 模块；双架构构建和前端启动已验证，NixOS 实机集成待验收 |
-| Android | 当前配置 Android 8.0 / API 26 起，arm64-v8a、x86_64 | 1.1.4 候选；本地完整构建及单台手机验证通过，提供正式签名 APK，最终草稿仍待验收 |
+| iOS / iPadOS | iOS 15.0 起的构建目标；ARM64 设备与本机架构模拟器 | 1.1.5 新增未签名 IPA；设备证书重签自测通过，最终草稿验收见验证记录 |
+| Android | 当前配置 Android 8.0 / API 26 起，arm64-v8a、x86_64 | 提供正式签名 APK；移动端开发自测完成，最终草稿仍需同 commit 核验 |
 
 Linux 目标以 [targets.json](../packaging/linux/targets.json) 为唯一机器可读清单，以下保留 2026-10-21 核对结果，不自动承诺未来版本：
 
@@ -90,3 +91,19 @@ Android 无桌面后缀 resolver 接口，因此系统名称解析采用 VPN 内
 凭据由 Keystore 管理的密钥加密保存，设备身份及凭据排除自动备份，避免跨设备恢复共用身份。管理后台使用原生 WebView，保留原生会话与管理 Web 会话隔离。
 
 发布前必须完成 Android 构建与 Service 冷启动、外部 App 的 NAS/LAN 访问、DIRECT/RELAY、切网与锁屏恢复、系统撤销、DNS、签名升级和资源清理验收。模拟器及 Go 测试不能代替蜂窝和不同厂商真机；当前不承诺完整桌面能力对齐或固定工期。构建入口与工具链见 [移动端开发](development.md#android-开发与构建)。
+
+## iOS / iPadOS
+
+采用通用 Fyne App、原生系统控制桥和 Swift Packet Tunnel 扩展；扩展通过 C archive
+复用 Go clienthost、Service、Manager、RelayBridge 和 DNS 业务。App 只负责命令与展示，
+不运行第二个活动连接 Manager；桌面双 daemon 与特权 IPC 不进入移动系统。
+平台适配实现 packetFlow、网络计划、网络事件和 Keychain；扩展自身沙盒保存现有 schema 配置，
+不引入服务端要求或新远程准入规则。
+
+开发阶段已完成 iPhone 证书重签安装、连接与恢复测试，并经维护者确认移动端开发自测完成。
+Duo 布局在模拟器验证；不据此承诺真实 Duo 或全部 iPad 多窗口行为。当前使用单 UIScene，
+不支持多窗口。最低系统构建目标不等于所有 iOS 版本均经真机验证。
+
+发布资产为未签名 IPA，不能直接安装；使用带 Packet Tunnel 权限的配套材料重签。
+安装：[中文](ios-installation.zh-CN.md) / [English](ios-installation.en.md)。
+最终版本证据见 [验收记录](validation.md)，构建见 [开发文档](development.md#iosipados-开发构建与模拟器)。

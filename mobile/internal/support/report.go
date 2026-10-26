@@ -20,7 +20,7 @@ func init() {
 var events = map[string]bool{}
 
 func init() {
-	for _, event := range []string{"FN Connect discovery completed", "direct path unavailable", "direct connection attempted", "direct connection failed; trying next path", "client connected", "client reconnect requested", "WireGuard handshake waiting", "WireGuard handshake confirmed", "WireGuard handshake still pending"} {
+	for _, event := range []string{"FN Connect discovery completed", "direct path unavailable", "direct connection attempted", "direct connection failed; trying next path", "client connected", "client reconnect requested", "WireGuard handshake waiting", "WireGuard handshake confirmed", "WireGuard handshake still pending", "extension started", "extension stopping", "extension stopped", "network settings applying", "network settings applied", "network settings failed", "platform operation failed", "automatic connection requested", "client configuration loaded"} {
 		events[event] = true
 	}
 }
@@ -50,6 +50,23 @@ func clean(value any) any {
 		return value
 	}
 }
+
+func FilteredLog(text string) []byte {
+	var output strings.Builder
+	scan := bufio.NewScanner(strings.NewReader(text))
+	scan.Buffer(make([]byte, 4096), 256*1024)
+	for scan.Scan() {
+		var row any
+		if json.Unmarshal(scan.Bytes(), &row) == nil {
+			data, err := json.Marshal(clean(row))
+			if err == nil {
+				output.Write(data)
+				output.WriteByte('\n')
+			}
+		}
+	}
+	return []byte(output.String())
+}
 func Report(diagnostics []byte, logs map[string]string) ([]byte, error) {
 	var report any
 	if len(diagnostics) > 0 {
@@ -60,7 +77,7 @@ func Report(diagnostics []byte, logs map[string]string) ([]byte, error) {
 	rows := map[string][]any{}
 	for name, text := range logs {
 		// Filenames are supplied by the fixed system adapter, not arbitrary paths.
-		if !strings.HasPrefix(name, "client.log") && !strings.HasPrefix(name, "android.log") {
+		if !strings.HasPrefix(name, "client.log") && !strings.HasPrefix(name, "android.log") && !strings.HasPrefix(name, "privileged.log") {
 			continue
 		}
 		scan := bufio.NewScanner(strings.NewReader(text))

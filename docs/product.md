@@ -3,7 +3,7 @@
 面向 fnOS NAS 用户，通过一次登录自动连接 NAS 与已启用的家庭 LAN。
 本文记录当前产品契约与后续范围。P0 表示基础能力，P1 表示后续能力，不代表发布或验收状态；平台范围见 [平台支持](platform-support.md)，实际证据见 [发布验收](validation.md)。
 
-Android 在 1.1.4 提供候选 APK，本地完整构建与单台真机主要流程已验证；最终 Release 草稿及长期后台、更多设备专项仍待验收。
+Android 提供正式签名 APK，iOS/iPadOS 从 1.1.5 起提供需自行签名的 IPA。移动端开发自测已完成；最终候选与更广设备验证见验收记录。
 移动端以访问能力对齐桌面：Fyne 界面、系统 VPN 后台、独立设备身份及同样的直连/中继协议。
 Android LOCAL 开启名称解析时保留 DNS 用 VPN/TUN，不运行 WireGuard，系统 VPN 标记可能仍显示。
 通知取代托盘，不提供移动 CLI、Always-on/lockdown 或开机自启；系统撤销授权后暂停。

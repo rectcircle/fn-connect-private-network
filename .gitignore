@@ -13,3 +13,5 @@
 /mobile/mobile
 
 __pycache__/
+
+/ios/**/xcuserdata/

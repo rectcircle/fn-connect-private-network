@@ -21,9 +21,9 @@ func TestConnectionAndLoginNavigation(t *testing.T) {
 	app := test.NewApp()
 	defer app.Quit()
 	app.Settings().SetTheme(clientTheme{theme.DefaultTheme()})
-	view := newClientView(nil)
-	defer view.cancel()
 	for _, state := range []model.ClientState{model.ClientUnconfigured, model.ClientDirect, model.ClientPaused, model.ClientAuthRequired} {
+		view := newClientView(nil)
+		defer view.cancel()
 		view.showStatus(model.ClientStatus{State: state, Path: "ipv6"})
 		login := needsLogin(state)
 		view.settlePage(view.editing)
@@ -184,6 +184,90 @@ type backgroundBackend struct {
 }
 
 func (b *backgroundBackend) Background() error { b.background = true; return nil }
+
+type systemLifetimeBackend struct{ exitBackend }
+
+func (*systemLifetimeBackend) CanExit() bool { return false }
+
+func TestRootLoginMenuOnExitCapablePlatform(t *testing.T) {
+	app := test.NewApp()
+	defer app.Quit()
+	b := &exitBackend{}
+	v := newClientView(b)
+	defer v.cancel()
+	v.window = app.NewWindow("navigation")
+	v.window.SetContent(v.content)
+	for _, state := range []model.ClientState{model.ClientUnconfigured, model.ClientAuthRequired} {
+		v.showStatus(model.ClientStatus{State: state})
+		v.navigate()
+		if !v.navigation.Visible() || v.navigation.Icon != theme.MenuIcon() || v.drawer == nil || !v.drawer.visible || len(b.calls) != 0 {
+			t.Fatal("unconfigured and expired authorization must allow menu access without exiting")
+		}
+		v.back()
+		if v.drawer.visible || len(b.calls) != 0 {
+			t.Fatal("system back must dismiss the open menu first")
+		}
+	}
+}
+
+func TestLoginEntriesRevealWithinReducedViewport(t *testing.T) {
+	app := test.NewApp()
+	defer app.Quit()
+	v := newClientView(nil)
+	defer v.cancel()
+	w := app.NewWindow("keyboard")
+	w.SetContent(v.accountPanel)
+	w.Resize(fyne.NewSize(420, 280))
+	for _, challenge := range []bool{false, true} {
+		v.account.Show()
+		v.challenge.Hide()
+		entries := []*loginEntry{v.fnID, v.username, v.password}
+		if challenge {
+			v.account.Hide()
+			v.challenge.Show()
+			entries = []*loginEntry{v.accessCode, v.otp}
+		}
+		// Move between fields in both directions with the keyboard already open.
+		entries = append(entries, entries[0])
+		for _, entry := range entries {
+			if entry.onFocus == nil {
+				t.Fatal("every login field must reveal itself on focus")
+			}
+			v.revealLoginEntry(entry)
+			y := app.Driver().AbsolutePositionForObject(entry).Y - app.Driver().AbsolutePositionForObject(v.loginScroll).Y
+			if y < 0 || y+entry.Size().Height > v.loginScroll.Size().Height {
+				t.Fatalf("focused field outside reduced viewport: y=%v height=%v viewport=%v", y, entry.Size().Height, v.loginScroll.Size().Height)
+			}
+		}
+	}
+}
+
+func TestSystemLifetimeRootNavigationKeepsWindowAlive(t *testing.T) {
+	app := test.NewApp()
+	defer app.Quit()
+	b := &systemLifetimeBackend{}
+	v := newClientView(b)
+	defer v.cancel()
+	v.window = app.NewWindow("navigation")
+	v.window.SetContent(v.content)
+	v.showStatus(model.ClientStatus{State: model.ClientUnconfigured})
+	v.navigate()
+	if !v.navigation.Visible() || v.navigation.Icon != theme.MenuIcon() || v.drawer == nil || !v.drawer.visible || v.ctx.Err() != nil || len(b.calls) != 0 {
+		t.Fatal("root login must open the menu without quitting or issuing commands")
+	}
+	v.back()
+	if v.drawer.visible || v.ctx.Err() != nil {
+		t.Fatal("back must dismiss the menu and keep the root login page alive")
+	}
+	v.showStatus(model.ClientStatus{State: model.ClientDirect})
+	v.showLogin(false)
+	if !v.navigation.Visible() {
+		t.Fatal("login entered from an existing connection must retain back navigation")
+	}
+	if err := v.pauseAndExit(context.Background(), false); err != nil || len(b.calls) != 0 {
+		t.Fatal("system-owned lifetime must never call Exit")
+	}
+}
 func TestMainBackDoesNotPauseConnection(t *testing.T) {
 	app := test.NewApp()
 	defer app.Quit()

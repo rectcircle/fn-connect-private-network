@@ -79,11 +79,46 @@ func (v *clientView) back() {
 		return
 	}
 	if v.editing {
+		if v.requiresLogin() && !v.loginFromMenu {
+			if v.canExit() {
+				v.quit()
+			}
+			return
+		}
 		v.navigate()
 		return
 	}
 	if v.background != nil {
 		go v.background()
+	}
+}
+
+// Restore the page beneath the menu and reopen the same persistent drawer.
+// A successful sign-in or an automatic status change never takes this path.
+func (v *clientView) returnFromLogin() {
+	fromMenu, editing, menu := v.loginFromMenu, v.loginReturnEditing, v.loginReturnMenu
+	v.loginFromMenu = false
+	v.loginReturnEditing = false
+	v.loginReturnMenu = false
+	if fromMenu && editing || v.requiresLogin() {
+		v.showLogin(false)
+	} else {
+		v.showMain()
+	}
+	if menu {
+		v.showMenu()
+	}
+}
+
+func (v *clientView) syncBackGesture() {
+	if platform, ok := v.backend.(interface{ SetRailAdmin(bool) }); ok {
+		platform.SetRailAdmin(v.admin != nil && !v.admin.Disabled())
+	}
+	if platform, ok := v.backend.(interface{ SetNavigationState(bool, bool) }); ok {
+		platform.SetNavigationState(v.editing && (v.loginFromMenu || !v.requiresLogin()), v.statusReceived && !v.navigation.Disabled())
+	}
+	if platform, ok := v.backend.(interface{ SetBackGestureEnabled(bool) }); ok {
+		platform.SetBackGestureEnabled(v.statusReceived && v.editing && (v.loginFromMenu || !v.requiresLogin()) && !v.navigation.Disabled())
 	}
 }
 

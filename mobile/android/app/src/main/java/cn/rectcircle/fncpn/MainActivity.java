@@ -13,6 +13,7 @@ public final class MainActivity extends FnNativeActivity {
     @Override public void onCreate(Bundle state) {
         // Load the same native library used by Fyne before its NativeActivity.
         Bridge.attach(this);
+        if((getApplicationInfo().flags & android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE)!=0 && getIntent().getBooleanExtra("fncpn.uiProfile",false))Bridge.profileUI(getCacheDir().getAbsolutePath());
         super.onCreate(state);
         if(Build.VERSION.SDK_INT>=33) getOnBackInvokedDispatcher().registerOnBackInvokedCallback(android.window.OnBackInvokedDispatcher.PRIORITY_DEFAULT,this::onBackPressed);
         if(Build.VERSION.SDK_INT>=33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED)

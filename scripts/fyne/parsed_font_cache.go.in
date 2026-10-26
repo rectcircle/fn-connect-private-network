@@ -1,0 +1,102 @@
+package painter
+
+import (
+	"bytes"
+	"crypto/sha256"
+	"sync"
+	"time"
+
+	"fyne.io/fyne/v2"
+	"github.com/go-text/typesetting/font"
+)
+
+// Theme scopes need their own mutable Face, but the parsed Font is read-only.
+// StaticResource follows Fyne's existing resource-identity cache contract:
+// changing its bytes requires ClearFontCache. Other resources use content keys.
+type fncpnFontKey struct {
+	static *fyne.StaticResource
+	digest [32]byte
+}
+type fncpnParsedFont struct {
+	font *font.Font
+	size int
+	used uint64
+}
+
+const fncpnFontCacheEntries = 16
+const fncpnFontCacheBytes = 64 << 20
+
+var fncpnFonts struct {
+	sync.Mutex
+	entries map[fncpnFontKey]fncpnParsedFont
+	bytes   int
+	clock   uint64
+}
+
+func fncpnClearParsedFonts() {
+	fncpnFonts.Lock()
+	defer fncpnFonts.Unlock()
+	fncpnFonts.entries = nil
+	fncpnFonts.bytes = 0
+	fncpnFonts.clock = 0
+}
+
+func fncpnLoadMeasureFont(data fyne.Resource) *font.Face {
+	if data == nil {
+		return nil
+	}
+	raw := data.Content()
+	key := fncpnFontKey{}
+	if resource, ok := data.(*fyne.StaticResource); ok {
+		key.static = resource
+	} else {
+		key.digest = sha256.Sum256(raw)
+	}
+	observer := fontPerfObserver()
+	var started time.Time
+	if observer != nil {
+		started = time.Now()
+	}
+	// Serialize misses so simultaneous scopes do not parse the same resource twice.
+	fncpnFonts.Lock()
+	fncpnFonts.clock++
+	if cached, ok := fncpnFonts.entries[key]; ok {
+		cached.used = fncpnFonts.clock
+		fncpnFonts.entries[key] = cached
+		fncpnFonts.Unlock()
+		face := font.NewFace(cached.font)
+		if observer != nil {
+			observer("font.reuse:"+data.Name(), time.Since(started), 0)
+		}
+		return face
+	}
+	face, err := font.ParseTTF(bytes.NewReader(raw))
+	if err == nil && len(raw) <= fncpnFontCacheBytes {
+		if fncpnFonts.entries == nil {
+			fncpnFonts.entries = make(map[fncpnFontKey]fncpnParsedFont)
+		}
+		for len(fncpnFonts.entries) >= fncpnFontCacheEntries || fncpnFonts.bytes+len(raw) > fncpnFontCacheBytes {
+			var oldest fncpnFontKey
+			oldestUse := ^uint64(0)
+			for candidate, cached := range fncpnFonts.entries {
+				if cached.used < oldestUse {
+					oldest = candidate
+					oldestUse = cached.used
+				}
+			}
+			fncpnFonts.bytes -= fncpnFonts.entries[oldest].size
+			delete(fncpnFonts.entries, oldest)
+		}
+		fncpnFonts.entries[key] = fncpnParsedFont{face.Font, len(raw), fncpnFonts.clock}
+		fncpnFonts.bytes += len(raw)
+	}
+	fncpnFonts.Unlock()
+	if observer != nil {
+		observer("font.parse:"+data.Name(), time.Since(started), 0)
+	}
+	if err != nil {
+		fyne.LogError("font load error", err)
+		return nil
+	}
+	return face
+}

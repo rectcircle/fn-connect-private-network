@@ -28,7 +28,7 @@ final class AppChrome {
     static void theme(Activity owner){owner.setTheme(dark(owner)?android.R.style.Theme_Material_NoActionBar:android.R.style.Theme_Material_Light_NoActionBar);}
     static LinearLayout header(Activity owner){
         LinearLayout bar=new LinearLayout(owner);bar.setGravity(Gravity.CENTER_VERTICAL);bar.setBackgroundColor(background(owner));bar.setElevation(0);
-        FrameLayout back=new FrameLayout(owner);back.setBackground(ripple(owner));back.setContentDescription("返回");back.setFocusable(true);back.setOnClickListener(v->owner.onBackPressed());
+        FrameLayout back=new FrameLayout(owner);back.setBackground(ripple(owner));back.setContentDescription(owner.getString(R.string.back));back.setFocusable(true);back.setOnClickListener(v->owner.onBackPressed());
         back.addView(new ChromeIcon(owner,primary(owner)),new FrameLayout.LayoutParams(dp(owner,24),dp(owner,24),Gravity.CENTER));
         bar.addView(back,new LinearLayout.LayoutParams(dp(owner,48),dp(owner,56)));
         ImageView icon=new ImageView(owner);icon.setImageResource(R.drawable.app_icon);icon.setScaleType(ImageView.ScaleType.FIT_CENTER);

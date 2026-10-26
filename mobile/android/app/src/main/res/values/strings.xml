@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="connection_channel">FnCPN connection</string>
+    <string name="pause">Pause</string>
+    <string name="starting_service">Starting connection service</string>
+    <string name="export_support">Export diagnostics and logs</string>
+    <string name="tile_stale">Pending update</string>
+    <string name="tile_busy">Switching…</string>
+    <string name="connected">Connected</string>
+    <string name="disconnected">Disconnected</string>
+    <string name="back">Back</string>
+    <string name="state_local">Connected locally</string>
+    <string name="state_direct">Connected directly</string>
+    <string name="state_relay">Connected through relay</string>
+    <string name="state_reconnecting">Reconnecting</string>
+    <string name="state_probing">Checking connection</string>
+    <string name="state_auth">Sign-in required</string>
+    <string name="logs_title">FnCPN logs</string>
+    <string name="opening_admin">Opening administration…</string>
+    <string name="admin_failed">Administration failed to load. Please retry.</string>
+    <string name="retry">Retry</string>
+    <string name="browser_missing">No browser is available.</string>
+</resources>

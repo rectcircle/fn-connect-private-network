@@ -9,11 +9,14 @@ import (
 	"fyne.io/fyne/v2/driver/mobile"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
+	"github.com/rectcircle/fn-connect-private-network/mobile/internal/uiperf"
 )
 
 // Keep Fyne's button layout, accessibility and keyboard handling. Mobile touch
 // adds immediate feedback instead of waiting for the tap to finish.
 type touchButton struct {
+	deferUnfocus bool
+	traceMenu    bool
 	widget.Button
 	shade   *canvas.Rectangle
 	fade    *fyne.Animation
@@ -53,6 +56,9 @@ func (b *touchButton) stopFade() {
 	}
 }
 func (b *touchButton) TouchDown(*mobile.TouchEvent) {
+	if b.traceMenu {
+		uiperf.Mark("menu.touchdown", 0, 0)
+	}
 	if b.Disabled() {
 		return
 	}
@@ -76,7 +82,15 @@ func (b *touchButton) release() {
 	b.fade = fyne.NewAnimation(160*time.Millisecond, func(p float32) { b.feedback(uint8(55 * (1 - p))) })
 	b.fade.Start()
 }
+
+// Keep keyboard geometry stable between touch-down and touch-up. The existing
+// Tapped path unfocuses only after the gesture has been accepted as a click.
+func (b *touchButton) DeferUnfocusOnTap() bool { return b.deferUnfocus && !b.Disabled() }
+
 func (b *touchButton) Tapped(*fyne.PointEvent) {
+	if b.traceMenu {
+		uiperf.Mark("menu.tapped", 0, 0)
+	}
 	if b.Disabled() {
 		return
 	}
