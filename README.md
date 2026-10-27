@@ -66,7 +66,7 @@ Android 只允许一个当前 VPN，与其他 VPN 冲突；主页面返回进入
 **鸿蒙版暂未上架华为应用市场。应用功能已通过华为云真机调试验证，包括登录和 VPN 连接。**
 支持 API20+、ARM64 的手机（含折叠屏）、平板、PC/二合一；智慧屏暂不支持。
 
-从 **1.1.6 起**提供普通系统 VPN 模式的未签名 HAP：
+从 **1.1.7 起**提供普通系统 VPN 模式的未签名 HAP：
 `fncpn-<version>-harmonyos-arm64-release-unsigned.hap`。对应版本公开后可从
 [GitHub Releases](https://github.com/rectcircle/fn-connect-private-network/releases) 或官网夸克镜像下载，
 并对照同版本 `SHA256SUMS-<version>` 校验。未签名包不能直接安装，不要选择 `application-tunnel` 模拟器包。

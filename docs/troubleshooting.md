@@ -39,13 +39,16 @@
 | --- | --- | --- |
 | NAS `54789/UDP` | WireGuard 数据通道；公网 IPv6 DIRECT 直连 | 需要直连时，允许客户端到 NAS 该 UDP 端口及返回流量；尤其检查路由器和 NAS 的 IPv6 入站规则。管理页修改监听端口后，同步修改规则 |
 | NAS `54790/TCP` | LOCAL 局域网身份探测及三种连接路径的 无需额外鉴权的 DNS 查询，仅监听 NAS 私网 IPv4 地址 | 允许物理 LAN 和 WireGuard 客户端访问该 NAS LAN IP；跨 VLAN 时检查 ACL。无需向公网开放或做公网端口映射 |
-| NAS fnOS HTTPS 网关，默认 `5667/TCP` | 用户直接打开 NAS 的本地 HTTPS 管理入口 | 按 fnOS 实际配置放行；当前客户端登录和控制请求使用 FN Connect 网关，不依赖直连此端口 |
+| NAS fnOS Web 入口，默认 HTTP `5666/TCP` / HTTPS `5667/TCP` | NAS 网页及已连接客户端的配置监听、管理 API、认证 WebSocket | 按实际启用端口放行；LOCAL 通过 LAN、DIRECT/RELAY 通过已安装隧道路由访问，无需额外向公网映射 |
 | FN Connect HTTPS/WSS 入口，通常 `443/TCP` | 发现、登录、控制接口和 RELAY 中继 | 客户端及 NAS 需能正常使用 FN Connect；客户端网络允许访问实际返回的入口，代理或网关需支持 WebSocket Upgrade 和长连接 |
 | NAS 到 LAN 目标设备的实际服务端口 | 访问共享、网页等内网服务 | NAS 转发策略、目标设备防火墙及服务监听地址均需允许访问；FnCPN 连通不代表目标服务端口自动开放 |
 
-FnCPN 的控制、管理与 WSS 接口只监听应用私有 Unix Socket，通过 fnOS 网关的 `/app/fncpn/` 路径提供服务，**没有需要额外映射到公网的独立 FnCPN HTTP TCP 端口**。fnOS 的 HTTP 管理端口默认是 `5666/TCP`，它不能替代客户端使用的 HTTPS 网关。
+FnCPN 的控制、管理与 WSS 接口只监听应用私有 Unix Socket，通过 fnOS 网关的 `/app/fncpn/` 路径提供服务，**没有需要额外映射到公网的独立 FnCPN HTTP TCP 端口**。fnOS 的 HTTP 管理端口默认是 `5666/TCP`；其本地 `/app/fncpn/` 入口提供同一应用 API，并仍由 fnOS token 鉴权。
 
-FN Connect 发现响应中的 `port.httpsPort` 会被解析，但当前连接逻辑没有使用该字段直连 NAS。原生登录使用 `wss://<FN ID>.fnos.net/websocket`，控制请求使用 FN Connect 域名，中继使用发现结果的 `fn` 入口。因此不能把“能读取自定义端口”理解为“客户端会连接该端口”；修改 NAS 本地 HTTPS 端口后，仍需保证 FN Connect 网关正常可用。
+客户端读取并缓存发现响应中的 `port.httpPort` / `port.httpsPort`，已连接后优先经 NAS
+本地 Web 入口进行配置监听、版本检查、会话恢复及后台访问；无端口提示或直达网络不可用
+时回退 FN Connect。初始接入、发现及 RELAY 数据通道仍可能依赖 FN Connect。选路规则见
+[架构设计](architecture.md#控制请求选路)，日志判断见[诊断](diagnostics.md#会话恢复与控制选路日志)。
 
 使用 FN Connect 中继通常无需在家用路由器上新增 IPv4 入站端口映射；公网 IPv6 直连则要求对应 UDP 入站可达。不要把上表理解为所有端口都要对公网开放，也不要通过关闭整个防火墙来排障。
 

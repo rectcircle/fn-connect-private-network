@@ -84,12 +84,12 @@ class APKVerificationTests(unittest.TestCase):
             with self.subTest(), self.assertRaises(ValueError):
                 verify_apk.check_elf(data, 183)
 
-    def test_debug_package_and_sdk_bounds(self):
-        text = "package: name='cn.rectcircle.fncpn.debug' versionCode='42' versionName='1.2.0'\nsdkVersion:'26'\ntargetSdkVersion:'36'\napplication-debuggable\n"
+    def test_production_package_and_sdk_bounds(self):
+        text = "package: name='cn.rectcircle.fncpn' versionCode='42' versionName='1.2.0'\nsdkVersion:'26'\ntargetSdkVersion:'36'\n"
         for field in ("sdkVersion", "minSdkVersion"):
             with self.subTest(field=field):
                 verify_apk.check_badging(text.replace("sdkVersion:", field + ":"), "1.2.0", 42)
-        for bad in (text.replace(".debug", ""), text.replace("application-debuggable", ""),
+        for bad in (text.replace("fncpn'", "fncpn.debug'"), text+"application-debuggable\n",
                     text.replace("sdkVersion:'26'", "sdkVersion:'23'"),
                     text.replace("sdkVersion:'26'", "minSdkVersion:'23'"),
                     text.replace("targetSdkVersion:'36'", "targetSdkVersion:'35'"),
@@ -113,7 +113,7 @@ class SigningIdentityTests(unittest.TestCase):
 class ReleaseBadgingTests(unittest.TestCase):
     def test_production_package_must_not_be_debuggable(self):
         text = "package: name='cn.rectcircle.fncpn' versionCode='100' versionName='1.1.4'\nsdkVersion:'26'\ntargetSdkVersion:'36'\n"
-        verify_apk.check_badging(text, '1.1.4', 100, 'cn.rectcircle.fncpn', release=True)
+        verify_apk.check_badging(text, '1.1.4', 100)
         for invalid in (text+'application-debuggable\n', text.replace("fncpn'", "fncpn.debug'")):
             with self.assertRaises(ValueError):
-                verify_apk.check_badging(invalid, '1.1.4', 100, 'cn.rectcircle.fncpn', release=True)
+                verify_apk.check_badging(invalid, '1.1.4', 100)

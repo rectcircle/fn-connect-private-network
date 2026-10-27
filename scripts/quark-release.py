@@ -27,15 +27,37 @@ DEFAULT_CLI = Path.home() / '.local/share/quark-cli/1.0.24/quark-drive.cjs'
 DEFAULT_AUTH = DEFAULT_CLI.parent.parent / 'codex/config.json'
 
 
-def checked(args, *, input=None, env=None, cwd=None, timeout=300):
+def failure_codes(result):
+    """Allowlist numeric result codes and known network errors, never vendor text."""
+    codes = set()
+    raw = (result.stdout or '') + '\n' + (result.stderr or '')
+    for line in raw.splitlines():
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(row, dict):
+            for key in ('code', 'status', 'errno', 'statusCode'):
+                value = row.get(key)
+                if type(value) is int:
+                    codes.add(f'{key}={value}')
+    for code in ('ENOENT', 'EACCES', 'ETIMEDOUT', 'ECONNRESET', 'ENOTFOUND', 'ECONNREFUSED',
+                 'EAI_AGAIN', 'CERT_HAS_EXPIRED', 'UNABLE_TO_VERIFY_LEAF_SIGNATURE'):
+        if re.search(r'\b' + code + r'\b', raw):
+            codes.add(code)
+    return ', '.join(sorted(codes)) or 'no safe error code returned'
+
+
+def checked(args, *, input=None, env=None, cwd=None, timeout=300, operation=None):
     # Never print subprocess output: vendor errors can contain credentials or signed URLs.
     try:
         result = subprocess.run(args, input=input, text=True, capture_output=True,
                                 env=env, cwd=cwd, timeout=timeout)
     except subprocess.TimeoutExpired:
-        raise RuntimeError(f'{args[0]} timed out') from None
+        raise RuntimeError(f'{operation or args[0]} timed out') from None
     if result.returncode:
-        raise RuntimeError(f'{args[0]} failed (exit {result.returncode}); no credentials logged')
+        raise RuntimeError(f'{operation or args[0]} failed (exit {result.returncode}; '
+                           f'{failure_codes(result)}); no credentials logged')
     return result.stdout
 
 
@@ -101,8 +123,9 @@ class Quark:
         # The exported secret is restored to the CLI's Codex channel, including on Linux.
 
     def call(self, *args):
+        print(f'Quark operation: {args[0]}', flush=True)
         output = checked(['node', str(self.entry), *map(str, args)], env=self.env,
-                         cwd=self.work, timeout=1800)
+                         cwd=self.work, timeout=1800, operation=f'Quark {args[0]}')
         results = []
         for line in output.splitlines():
             try:

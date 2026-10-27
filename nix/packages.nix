@@ -67,6 +67,9 @@ let
     inherit version;
     src = source;
     modRoot = "ui";
+    # Cache external module downloads, not a vendor tree containing replace => ..
+    # project sources. The local module is compiled from the candidate checkout.
+    proxyVendor = true;
     vendorHash = hashes.ui;
     subPackages = [ "." ];
     tags = [ "desktop" "production" "webkit2_41" ];

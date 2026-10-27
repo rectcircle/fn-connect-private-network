@@ -25,7 +25,7 @@ def candidates(root, version, commit):
         evidence = json.loads(path.with_name(name + '.verification.json').read_text())
         build = evidence.get('build', {})
         digest = hashlib.sha256(path.read_bytes()).hexdigest()
-        if (evidence.get('variant') != 'release' or evidence.get('apk') != name or evidence.get('sha256') != digest or
+        if (evidence.get('localValidation', False) is not False or evidence.get('variant') != 'release' or evidence.get('apk') != name or evidence.get('sha256') != digest or
                 evidence.get('signingCertificateSha256') != certificate_fingerprint() or
                 not CHECKS.issubset(evidence.get('checks', [])) or
                 build.get('version') != version or build.get('commit') != commit or build.get('dirty') is not False or

@@ -57,7 +57,7 @@ Object.assign(translations, {
 Object.assign(translations, {
  '手机（含折叠屏）、平板、PC / 二合一；智慧屏暂不支持。': 'Phones (including foldables), tablets and PCs / 2-in-1s. TVs are not supported.',
  "下载未签名 HAP ↗": "Download unsigned HAP \u2197",
- '1.1.6 起纳入发布清单；仅对应版本公开后可下载，草稿不对公众开放。': 'Included in release inventories from 1.1.6. Downloads become available after publication; drafts are not public.',
+ '1.1.7 起纳入发布清单；仅对应版本公开后可下载，草稿不对公众开放。': 'Included in release inventories from 1.1.7. Downloads become available after publication; drafts are not public.',
  "暂未上架华为应用市场；登录和 VPN 连接等功能已通过华为云真机调试验证。": "Not yet listed on Huawei AppGallery. Features including sign-in and VPN connections have been tested on Huawei cloud devices.",
  "未签名 HAP 不能直接安装。可尝试使用自己的实名认证华为开发者账号，通过 HapSign 自行签名安装，通常需要电脑和设备调试授权。": "Unsigned HAPs cannot be installed directly. Try signing with HapSign using your own identity-verified Huawei developer account; a computer and device debugging authorization are usually required.",
  "维护者暂无华为实体设备，跨账号同包名的自行签名安装流程尚未验证，用户可自行尝试并反馈。": "The maintainer has no physical Huawei device. Cross-account signing of the same package name remains unverified; users may try it and report results.",

@@ -2,6 +2,7 @@ package client
 
 import (
 	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -145,5 +146,134 @@ func TestAdminWebSessionProbeClassifiesOnlyAuthenticationFailure(t *testing.T) {
 				t.Fatalf("probe error = %#v, want %s", err, test.want)
 			}
 		})
+	}
+}
+
+func TestAdminProxyRetriesOnlyDefiniteGatewayRejection(t *testing.T) {
+	for _, test := range []struct {
+		name, method, reply string
+		status              int
+		recover             bool
+	}{
+		{"read expired", http.MethodGet, "invalid token", 200, true},
+		{"write expired", http.MethodPost, "invalid token", 200, true},
+		{"application unauthorized", http.MethodPost, `{"error":{"code":"AUTH_REQUIRED"}}`, 401, false},
+		{"application forbidden", http.MethodPost, "permission denied", 403, false},
+		{"gateway offline", http.MethodPost, "invalid token", 503, false},
+		{"large response", http.MethodGet, strings.Repeat("x", 9000), 200, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var attempts, recoveries int
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				attempts++
+				body, _ := io.ReadAll(r.Body)
+				if test.method == http.MethodPost && string(body) != `{"enabled":true}` {
+					t.Error("write body changed during retry")
+				}
+				token, _ := r.Cookie("fnos-token")
+				if token == nil {
+					t.Error("missing Web cookie")
+					return
+				}
+				if token.Value == "fresh-web" {
+					_, _ = w.Write([]byte(`{"ok":true}`))
+					return
+				}
+				w.WriteHeader(test.status)
+				_, _ = w.Write([]byte(test.reply))
+			}))
+			defer upstream.Close()
+			upstreamURL, _ := url.Parse(upstream.URL)
+			proxy := &AdminProxy{
+				FNIDProvider:   func() (string, error) { return "home-nas", nil },
+				CookieProvider: func(string) ([]Cookie, error) { return nativeGatewayCookies("home-nas", "old-web"), nil },
+				Recover: func(_ context.Context, fnID, token string) ([]Cookie, error) {
+					recoveries++
+					if fnID != "home-nas" || token != "old-web" {
+						t.Error("wrong rejected session")
+					}
+					return nativeGatewayCookies("home-nas", "fresh-web"), nil
+				},
+				upstreamTransport: adminTestTransport(func(r *http.Request) (*http.Response, error) {
+					clone := r.Clone(r.Context())
+					clone.URL.Scheme = upstreamURL.Scheme
+					clone.URL.Host = upstreamURL.Host
+					return upstream.Client().Transport.RoundTrip(clone)
+				}),
+			}
+			bootstrap, err := proxy.Start()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer proxy.Close()
+			client := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+			response, err := client.Get(bootstrap.String())
+			if err != nil {
+				t.Fatal(err)
+			}
+			cookies := response.Cookies()
+			response.Body.Close()
+			target := *bootstrap
+			target.RawQuery = ""
+			target.Path = "/app/fncpn/api/v1/admin/network"
+			var input io.Reader
+			if test.method == http.MethodPost {
+				input = strings.NewReader(`{"enabled":true}`)
+			}
+			request, _ := http.NewRequest(test.method, target.String(), input)
+			request.AddCookie(cookies[0])
+			response, err = client.Do(request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			body, _ := io.ReadAll(response.Body)
+			response.Body.Close()
+			if test.recover {
+				if attempts != 2 || recoveries != 1 || string(body) != `{"ok":true}` {
+					t.Fatalf("attempts=%d recoveries=%d response=%s", attempts, recoveries, body)
+				}
+			} else if attempts != 1 || recoveries != 0 || string(body) != test.reply {
+				t.Fatal("ambiguous response was replayed or changed")
+			}
+		})
+	}
+}
+
+type adminTestTransport func(*http.Request) (*http.Response, error)
+
+func (f adminTestTransport) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+func TestAdminProxyDoesNotReplayUnbufferedBodyAndRetriesAtMostOnce(t *testing.T) {
+	for _, streaming := range []bool{false, true} {
+		attempts, recoveries := 0, 0
+		proxy := &AdminProxy{Recover: func(context.Context, string, string) ([]Cookie, error) {
+			recoveries++
+			return nativeGatewayCookies("home-nas", "new-web"), nil
+		}}
+		transport := adminProxyTransport{proxy: proxy, upstream: adminTestTransport(func(r *http.Request) (*http.Response, error) {
+			attempts++
+			if r.Body != nil {
+				_, _ = io.Copy(io.Discard, r.Body)
+				r.Body.Close()
+			}
+			return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader("invalid token")), Request: r}, nil
+		})}
+		req, _ := http.NewRequest(http.MethodPost, "https://home-nas.fnos.net/app/fncpn/api/v1/admin/network", strings.NewReader("body"))
+		req.AddCookie(&http.Cookie{Name: "fnos-token", Value: "old-web"})
+		if streaming {
+			req.GetBody = nil
+		}
+		response, err := transport.RoundTrip(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		response.Body.Close()
+		expected := 2
+		if streaming {
+			expected = 1
+		}
+		if attempts != expected || recoveries != expected-1 {
+			t.Fatalf("streaming=%v attempts=%d recoveries=%d", streaming, attempts, recoveries)
+		}
 	}
 }

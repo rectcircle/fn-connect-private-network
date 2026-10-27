@@ -29,7 +29,7 @@ import (
 
 const (
 	nativeSessionVersion   = 1
-	adminWebSessionVersion = 1
+	adminWebSessionVersion = 2
 	nativeRPCReadLimit     = 256 * 1024
 	nativeRPCTimeout       = 20 * time.Second
 )
@@ -46,6 +46,7 @@ type NativeSession struct {
 	UpdatedAt time.Time `json:"updatedAt"`
 }
 
+// Version 1 contains only a short token; version 2 adds optional recovery credentials.
 type AdminWebSession struct {
 	Version   int       `json:"version"`
 	FNID      string    `json:"fnId"`
@@ -53,6 +54,8 @@ type AdminWebSession struct {
 	DeviceID  string    `json:"deviceId"`
 	Token     string    `json:"token"`
 	UpdatedAt time.Time `json:"updatedAt"`
+	LongToken string    `json:"longToken,omitempty"`
+	Secret    string    `json:"secret,omitempty"`
 }
 
 type NativeAuthenticator interface {
@@ -79,6 +82,7 @@ type NativeLogin struct {
 }
 
 type NativeSessionClient struct {
+	controlTransport http.RoundTripper
 	// Dial mirrors websocket.Dial: the second argument is the fnID and the
 	// third the gateway Cookie header. The HTTP response is returned so a
 	// failed handshake can still be classified (see nativeDialFailure).
@@ -252,17 +256,27 @@ func (c NativeSessionClient) Recover(
 	session NativeSession,
 	deviceName string,
 ) (NativeSession, error) {
+	return c.recoverSession(ctx, session, deviceName, false)
+}
+
+// RecoverRejectedToken skips re-authenticating a token already rejected by fnOS.
+func (c NativeSessionClient) RecoverRejectedToken(ctx context.Context, session NativeSession, deviceName string) (NativeSession, error) {
+	return c.recoverSession(ctx, session, deviceName, true)
+}
+func (c NativeSessionClient) recoverSession(ctx context.Context, session NativeSession, deviceName string, rejected bool) (NativeSession, error) {
 	if err := validateNativeSession(session); err != nil {
 		return NativeSession{}, model.WithOperation(model.WrapError(
 			model.ErrorFailedPrecondition, "stored fnOS session is invalid", false, err,
 		), "native_session.recover")
 	}
-	if recovered, err := c.recoverToken(
-		ctx, session, "user.authToken", session.Token, deviceName,
-	); err == nil {
-		return recovered, nil
-	} else if RequiresAdditionalCredential(err) {
-		return NativeSession{}, err
+	if !rejected {
+		if recovered, err := c.recoverToken(
+			ctx, session, "user.authToken", session.Token, deviceName,
+		); err == nil {
+			return recovered, nil
+		} else if RequiresAdditionalCredential(err) {
+			return NativeSession{}, err
+		}
 	}
 	recovered, err := c.recoverToken(
 		ctx, session, "user.tokenLogin", session.LongToken, deviceName,
@@ -453,7 +467,52 @@ func (c NativeSessionClient) webLogin(
 	if value := nativeString(response, "token"); value != "" {
 		session.Token = value
 	}
+	if encrypted := nativeString(response, "secret"); encrypted != "" {
+		secret, err := decryptWebSecret(aesKeyBytes, ivBytes, encrypted)
+		if err != nil {
+			return AdminWebSession{}, model.WithOperation(model.NewError(
+				model.ErrorProtocol, "fnOS returned an invalid Web signing key", false,
+			), "admin_web.login")
+		}
+		session.Secret = secret
+	}
+	session.LongToken = nativeString(response, "longToken")
+	if err := validateAdminWebSession(session); err != nil {
+		return AdminWebSession{}, model.WithOperation(model.NewError(
+			model.ErrorProtocol, "fnOS returned an incomplete Web session", false,
+		), "admin_web.login")
+	}
 	return session, nil
+}
+
+// The browser decrypts the Web secret with the AES key and IV of the login
+// handshake. Only the decrypted base64 signing key is persisted.
+func decryptWebSecret(key, iv []byte, encrypted string) (string, error) {
+	data, err := base64.StdEncoding.DecodeString(encrypted)
+	if err != nil || len(data) == 0 || len(data)%aes.BlockSize != 0 {
+		return "", errors.New("invalid Web secret ciphertext")
+	}
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return "", err
+	}
+	cipher.NewCBCDecrypter(block, iv).CryptBlocks(data, data)
+	padding := int(data[len(data)-1])
+	if padding < 1 || padding > aes.BlockSize || padding > len(data) {
+		return "", errors.New("invalid Web secret padding")
+	}
+	for _, value := range data[len(data)-padding:] {
+		if int(value) != padding {
+			return "", errors.New("invalid Web secret padding")
+		}
+	}
+	secret := data[:len(data)-padding]
+	if len(secret) == 0 {
+		return "", errors.New("invalid Web signing key")
+	}
+	// CryptoJS decrypt(...).toString(Base64) encodes the raw decrypted bytes;
+	// the plaintext is a binary HMAC key, not an already-base64 string.
+	return base64.StdEncoding.EncodeToString(secret), nil
 }
 
 const base62Chars = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
@@ -504,6 +563,15 @@ func pkcs7Pad(data []byte, blockSize int) []byte {
 }
 
 func (c NativeSessionClient) recoverToken(
+	ctx context.Context, session NativeSession, method, token, deviceName string,
+) (NativeSession, error) {
+	finish := beginSessionRecoveryLog(ctx, "cli", session.FNID, method)
+	recovered, err := c.recoverTokenRequest(ctx, session, method, token, deviceName)
+	finish(err == nil && recovered.Token != session.Token, err == nil && recovered.LongToken != session.LongToken, err)
+	return recovered, err
+}
+
+func (c NativeSessionClient) recoverTokenRequest(
 	ctx context.Context,
 	session NativeSession,
 	method string,
@@ -590,10 +658,14 @@ func (c NativeSessionClient) dial(ctx context.Context, fnID string) (*websocket.
 	headers.Set("Origin", "https://"+target.Host)
 	dialContext, cancel := context.WithTimeout(ctx, nativeRPCTimeout)
 	defer cancel()
+	transport := c.controlTransport
+	if transport == nil {
+		transport = newFNOSTransport(nil)
+	}
 	connection, response, err := websocket.Dial(dialContext, target.String(), &websocket.DialOptions{
 		HTTPHeader: headers,
 		HTTPClient: &http.Client{
-			Transport:     newFNOSTransport(nil),
+			Transport:     transport,
 			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 		},
 	})
@@ -636,12 +708,7 @@ func (c NativeSessionClient) gatewayCookieHeader(ctx context.Context, fnID strin
 	return header, nil
 }
 
-func nativeRPC(
-	ctx context.Context,
-	connection *websocket.Conn,
-	request map[string]any,
-	secret string,
-) (map[string]any, error) {
+func nativeRequestPayload(request map[string]any, secret string) ([]byte, error) {
 	data, err := json.Marshal(request)
 	if err != nil {
 		return nil, model.WithOperation(err, "native_session.encode")
@@ -658,6 +725,19 @@ func nativeRPC(
 		_, _ = signature.Write(data)
 		prefix := base64.StdEncoding.EncodeToString(signature.Sum(nil))
 		payload = append([]byte(prefix), data...)
+	}
+	return payload, nil
+}
+
+func nativeRPC(
+	ctx context.Context,
+	connection *websocket.Conn,
+	request map[string]any,
+	secret string,
+) (map[string]any, error) {
+	payload, err := nativeRequestPayload(request, secret)
+	if err != nil {
+		return nil, err
 	}
 	requestContext, cancel := context.WithTimeout(ctx, nativeRPCTimeout)
 	defer cancel()
@@ -815,7 +895,7 @@ func validateNativeSession(session NativeSession) error {
 }
 
 func validateAdminWebSession(session AdminWebSession) error {
-	if session.Version != adminWebSessionVersion {
+	if session.Version != 1 && session.Version != adminWebSessionVersion {
 		return errors.New("unsupported admin Web session version")
 	}
 	fnID, err := normalizeFNID(session.FNID)
@@ -827,6 +907,12 @@ func validateAdminWebSession(session AdminWebSession) error {
 	}
 	if session.DeviceID == "" || len(session.DeviceID) > 128 || session.Token == "" {
 		return errors.New("missing admin Web session field")
+	}
+	if session.Secret != "" {
+		key, err := decodeNativeSecret(session.Secret)
+		if err != nil || len(key) == 0 {
+			return errors.New("invalid admin Web session secret")
+		}
 	}
 	return nil
 }

@@ -69,7 +69,7 @@ jobs:
         run: python3 -m unittest discover -s scripts/android -p '*_test.py'
 
   build:
-    name: Signed development APK (arm64 and x86_64)
+    name: Signed Release APK (arm64 and x86_64)
     # Pull requests run checks only; never expose the production key to PR code.
     if: github.event_name != 'pull_request'
     needs: check
@@ -111,7 +111,7 @@ jobs:
       - name: Download pinned Go module dependencies
         working-directory: mobile
         run: go mod download
-      - name: Select build variant and verify release source
+      - name: Verify release source and select build number
         env:
           RELEASE_BUILD: ${{ inputs.release || false }}
           RELEASE_VERSION: ${{ inputs.version }}
@@ -120,12 +120,8 @@ jobs:
           if [[ "$RELEASE_BUILD" == true ]]; then
             python3 scripts/check-release-candidate.py
             test -z "$(git status --porcelain)"
-            echo 'FNCPN_VARIANT=release' >> "$GITHUB_ENV"
-            echo "FNCPN_BUILD=$(git rev-list --count HEAD)" >> "$GITHUB_ENV"
-          else
-            echo 'FNCPN_VARIANT=debug' >> "$GITHUB_ENV"
-            echo "FNCPN_BUILD=$GITHUB_RUN_NUMBER" >> "$GITHUB_ENV"
           fi
+          echo "FNCPN_BUILD=$(git rev-list --count HEAD)" >> "$GITHUB_ENV"
       - name: Restore application signing key
         env:
           KEYSTORE_BASE64: ${{ secrets.FNCPN_KEYSTORE_BASE64 }}
@@ -134,29 +130,27 @@ jobs:
           umask 077
           printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/fncpn-release.jks"
           echo "FNCPN_KEYSTORE=$RUNNER_TEMP/fncpn-release.jks" >> "$GITHUB_ENV"
-      - name: Compile Java, JNI and both Go libraries; package signed development APK
+      - name: Compile Java, JNI and both Go libraries; package signed Release APK
         env:
           FNCPN_STORE_PASSWORD: ${{ secrets.FNCPN_STORE_PASSWORD }}
           FNCPN_KEY_ALIAS: ${{ secrets.FNCPN_KEY_ALIAS }}
           FNCPN_KEY_PASSWORD: ${{ secrets.FNCPN_KEY_PASSWORD }}
         working-directory: mobile/android
         run: |
-          gradle --no-daemon --console=plain --stacktrace clean ":app:assemble${FNCPN_VARIANT^}" \
+          gradle --no-daemon --console=plain --stacktrace clean :app:assembleRelease \
             "-PfncpnBuild=$FNCPN_BUILD" 2>&1 | tee "$RUNNER_TEMP/android-build.log"
       - name: Verify APK, JNI exports, versions and pinned application signature
         run: |
-          flags=()
-          if [[ "$FNCPN_VARIANT" == release ]]; then flags+=(--release); fi
           for abi in arm64-v8a x86_64; do
             python3 scripts/android/verify_apk.py \
-              "mobile/android/app/build/outputs/apk/$FNCPN_VARIANT/app-$abi-$FNCPN_VARIANT.apk" \
-              --abi "$abi" --build-number "$FNCPN_BUILD" "${flags[@]}" \
+              "mobile/android/app/build/outputs/apk/release/app-$abi-release.apk" \
+              --abi "$abi" --build-number "$FNCPN_BUILD" --release \
               --output "$RUNNER_TEMP/android-artifacts"
           done 2>&1 | tee "$RUNNER_TEMP/android-verification.log"
-      - name: Upload installable signed development APK and verification manifest
+      - name: Upload installable signed Release APK and verification manifest
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ inputs.release && format('android-release-candidates-{0}', inputs.ref) || format('fncpn-android-debug-{0}-{1}', github.run_number, github.run_attempt) }}
+          name: ${{ inputs.release && format('android-release-candidates-{0}', inputs.ref) || format('fncpn-android-release-{0}-{1}', github.run_number, github.run_attempt) }}
           path: ${{ runner.temp }}/android-artifacts/
           if-no-files-found: error
           retention-days: 14

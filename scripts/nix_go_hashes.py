@@ -22,8 +22,27 @@ def check(root, system, run=subprocess.run):
     result = run(command, cwd=root)
     if result.returncode == 0:
         # A fixed-output cache hit alone cannot prove the current source still
-        # generates the pinned bytes. Rebuild it to detect stale local-module code.
+        # generates the pinned external dependencies. Do not trust a cache hit alone.
         result = run(command + ['--rebuild'], cwd=root)
+    if result.returncode == 0:
+        # Exercise the real locked builder with changed local source and embedded
+        # version bytes. Neither may enter the UI's external-module cache hash.
+        expression = ('let f = builtins.getFlake (builtins.getEnv "FNCPN_NIX_SOURCE"); '
+                      f'pkgs = import f.inputs.nixpkgs {{ system = "{system}"; }}; '
+                      f'in f.packages.{system}.ui.goModules.overrideAttrs (old: {{ '
+                      'src = pkgs.runCommand "fncpn-dependency-isolation-source" {} \'\' '
+                      'mkdir -p "$out"; cp -r ${old.src}/. "$out/"; chmod -R u+w "$out"; '
+                      'printf "\\n// dependency isolation check\\n" >> "$out/internal/client/manager.go"; '
+                      'printf "0.0.0\\n" > "$out/internal/version/VERSION"; '
+                      '\'\'; })')
+        environment = dict(os.environ, FNCPN_NIX_SOURCE=str(root))
+        result = run(['nix', '--extra-experimental-features', 'nix-command flakes',
+                      'build', '--no-link', '--no-update-lock-file', '--rebuild',
+                      '--impure', '--expr', expression], cwd=root, env=environment)
+        if result.returncode:
+            raise RuntimeError('UI dependency isolation failed: local source and version changes '
+                               'must not affect external dependency output. Check the Nix packaging; '
+                               'do not accept a new hash for this test.')
     if result.returncode:
         raise RuntimeError('Nix Go dependencies failed verification. For a hash mismatch, run '
                            f'scripts/update-nix-go-hashes.sh --system {system}, review nix/go-hashes.json, then rerun --check.')

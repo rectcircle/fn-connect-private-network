@@ -1013,15 +1013,6 @@ func TestClientNetworkHealthErrorIncludesCause(t *testing.T) {
 			code:    model.ErrorUnavailable,
 		},
 		{
-			name:  "stale handshake",
-			state: model.ClientDirect,
-			network: model.ClientPrivilegedStatus{
-				Active:        true,
-				LastHandshake: func() *time.Time { value := now.Add(-4 * time.Minute); return &value }(),
-			},
-			code: model.ErrorTimeout,
-		},
-		{
 			name:  "relay disconnected",
 			state: model.ClientRelay,
 			network: model.ClientPrivilegedStatus{

@@ -1,7 +1,7 @@
 cask "fncpn" do
-  version "1.1.4"
+  version "1.1.6"
   arch arm: "arm64", intel: "x64"
-  sha256 arm: "32d8784dc716f87bc3ae4f155a1f4cfa295d7458a138736c1f8321a03260cbee", intel: "1391ca5f915fc10ed95de3d631f7a63b640a84ddd3c9e04f6784621f9442e93e"
+  sha256 arm: "fc19dbac1eddd7de0f2421089749ab2a6f087823935f005dae0345abf797b591", intel: "06ea62fefe378e443efae644b62f49dd0f498cda66dea1bfc39f360f39beadec"
 
   url "https://github.com/rectcircle/fn-connect-private-network/releases/download/v#{version}/fncpn-#{version}-macos-#{arch}-unsigned.pkg"
   name "FnCPN"

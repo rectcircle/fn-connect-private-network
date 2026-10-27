@@ -8,7 +8,7 @@
 | [技术架构](architecture.md) | 进程边界、WireGuard、网络恢复、存储、事务与安全决策 |
 | [项目布局](project-layout.md) | 目录规范与演进提案；鸿蒙已采用 apps/<平台>/ 布局，其他平台待逐端迁移 |
 | [接口契约](interfaces.md) | FnCPN HTTP/WSS、本地 IPC 与局域网探测 |
-| [fnOS 协议参考](fnos-protocols.md) | 本机信息、地址发现、网关 Cookie、登录会话、访问码及 OTP |
+| [fnOS 协议参考](fnos-protocols.md) | 本机信息、本地 Web / FN Connect 路由、Cookie、原生登录与保持登录、访问码及 OTP |
 | [故障排查](troubleshooting.md) | 系统要求、登录限制、端口与防火墙、连接及域名问题自查、Linux 系统托盘扩展安装 |
 | [诊断](diagnostics.md) | 错误契约、日志、排障与安全边界 |
 | [开发、构建与发布](development.md) | 环境、各端开发构建、测试、签名、GitHub 发布、Homebrew、夸克镜像与官网部署 |

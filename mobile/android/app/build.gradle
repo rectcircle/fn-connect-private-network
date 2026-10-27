@@ -25,6 +25,7 @@ android {
     buildToolsVersion '35.0.0'
     ndkVersion '28.2.13676358'
     ndkPath existingNdk
+    testBuildType 'release'
     defaultConfig {
         applicationId 'cn.rectcircle.fncpn'
         manifestPlaceholders = [appLabel: 'FnCPN']
@@ -41,11 +42,7 @@ android {
         assets.srcDir layout.buildDirectory.dir('generated/fyne/assets')
     }
     buildTypes {
-        debug {
-            applicationIdSuffix providers.gradleProperty('fncpnDev').isPresent() ? '.dev' : '.debug'
-            if (providers.gradleProperty('fncpnDev').isPresent()) manifestPlaceholders = [appLabel: 'FnCPN 开发版']
-        }
-        release { minifyEnabled false }
+        release { minifyEnabled false; debuggable false }
     }
     splits {
         abi {
@@ -64,10 +61,17 @@ android {
             keyPassword signingKeyPassword
         }
     }
-    buildTypes.debug.signingConfig signingConfigs.release
     buildTypes.release.signingConfig signingConfigs.release
 
 }
+
+// AGP creates a default Debug type; disable its variants and tasks completely.
+androidComponents {
+    beforeVariants(selector().withBuildType('debug')) { variant -> variant.enable = false }
+}
+if (providers.gradleProperty('fncpnDev').isPresent()) throw new GradleException('Only the production Release package is supported')
+def localValidation = providers.gradleProperty('fncpnLocalValidation').orElse('false').get().toBoolean()
+if (localValidation && System.getenv('CI')) throw new GradleException('Local validation is not allowed in CI')
 
 tasks.register('prepareGo', Exec) {
     workingDir file('../../..')
@@ -87,13 +91,16 @@ tasks.register('prepareGo', Exec) {
 }
 tasks.named('preBuild').configure { dependsOn 'prepareGo' }
 
-tasks.configureEach {
-    if (name == 'packageRelease' || name == 'bundleRelease') {
-        doFirst {
-            if (!providers.gradleProperty('fncpnBuild').isPresent()) throw new GradleException('Release requires an explicit increasing fncpnBuild')
-            if (!signingPath) throw new GradleException('Release requires the configured FnCPN signing key')
-            def metadata = new groovy.json.JsonSlurper().parse(layout.buildDirectory.file('generated/fyne/assets/build.json').get().asFile)
-            if (metadata.dirty) throw new GradleException('Release requires a clean source tree')
-        }
+// A separate dependency runs even when packageRelease is UP-TO-DATE.
+// A doFirst action on the package task alone can be skipped by Gradle's cache.
+tasks.register('validateReleaseSource') {
+    dependsOn 'prepareGo'
+    doLast {
+        if (!providers.gradleProperty('fncpnBuild').isPresent()) throw new GradleException('Release requires an explicit increasing fncpnBuild')
+        def metadata = new groovy.json.JsonSlurper().parse(layout.buildDirectory.file('generated/fyne/assets/build.json').get().asFile)
+        if (metadata.dirty && !localValidation) throw new GradleException('Release publication requires a clean source tree; local installation validation must explicitly set -PfncpnLocalValidation=true')
     }
+}
+tasks.configureEach {
+    if (name == 'packageRelease' || name == 'bundleRelease') dependsOn 'validateReleaseSource'
 }

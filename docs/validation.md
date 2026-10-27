@@ -3,7 +3,7 @@
 本文件只保留版本级验收结论与支持边界，不记录日常部署或逐次排障。
 操作命令见[开发文档](development.md)，判定依据见[版本契约](versioning-and-compatibility.md)。
 
-## 1.1.6 合入检查与 HarmonyOS 候选（2026-10-27，未发布）
+## 1.1.7 合入检查与 HarmonyOS 候选（2026-10-27，未发布）
 
 新增 HarmonyOS 平台沿用既有认证、版本准入和网络协议；PATCH 不要求服务端更新。
 本轮为工作树合入前检查，不是正式发布或完整历史版本验收。
@@ -16,7 +16,7 @@
 - 用户经云设备测试已反馈系统 VPN 连接、NAS访问、私有DNS、登录/菜单/日志与多设备UI当前可用；
   PC首次状态刷新、管理后台独立窗口修正后也反馈测试通过。该反馈未逐项证明所有协议/网络组合。
 - 范围为手机/折叠屏/平板/PC/2in1 API20+ ARM64；智慧屏暂不支持。
-- 当前 release + app_gallery Profile 无设备 UDID 绑定。普通零售设备开启开发者模式后是否可直接安装此包，尚未实测；现有云设备结果不替代该项。不预先改为指定设备发布或收集用户 UDID。
+- 公开分发未签名 HAP；功能已有云真机反馈，跨账号自行调试签名安装尚未验证。
 
 ### 构建环境遗留门槛
 
@@ -42,12 +42,12 @@ HarmonyOS 已接入发布资产汇总、公开与夸克镜像校验；构建工�
 
 ### 草稿验收门槛
 
-1. 确认 `internal/version/VERSION`、平台模板及 Changelog 均为 1.1.6；iOS build number
+1. 确认 `internal/version/VERSION`、平台模板及 Changelog 均为 1.1.7；iOS build number
    来自 `ios/BUILD_NUMBER`，App 与扩展相同；记录干净候选的完整 commit。
 2. Windows、Linux、Nix、Android、iOS、fnOS 及统一发布 job 全部成功。
    iOS 使用 Xcode 27.1；不将桌面 Xcode 16.4 构建当作移动端证据。
-3. 核对 `release-1.1.6.json`、SHA256SUMS 与下载的每份资产，包含两架构 APK 和
-   `fncpn-1.1.6-ios-arm64-unsigned.ipa`。IPA 无签名、描述文件或私钥；两 target 的版本、
+3. 核对 `release-1.1.7.json`、SHA256SUMS 与下载的每份资产，包含两架构 APK 和
+   `fncpn-1.1.7-ios-arm64-unsigned.ipa`。IPA 无签名、描述文件或私钥；两 target 的版本、
    ARM64/device Mach-O、Packet Tunnel 声明与许可证通过结构检查。
 4. 对最终 Android APK、重签后的 iOS IPA 覆盖安装，确认身份与配置保留、登录与附加验证、
    LOCAL / DIRECT / RELAY、私网 DNS、Safari/浏览器访问 NAS、断开与恢复、系统 VPN 关闭。
@@ -64,7 +64,7 @@ HarmonyOS 已接入发布资产汇总、公开与夸克镜像校验；构建工�
 
 ## 1.1.5 开发阶段基线（2026-10-26）
 
-以下保留 iOS 阶段的验证依据，当前发布编号及产物核验按 1.1.6 执行。
+以下保留 iOS 阶段的验证依据，当前发布编号及产物核验按 1.1.7 执行。
 
 ### 开发验证与最终候选
 

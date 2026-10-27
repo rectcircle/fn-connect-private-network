@@ -1,12 +1,17 @@
 package client
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/hex"
+	"encoding/json"
+
 	"errors"
 	"fmt"
+	"github.com/rectcircle/fn-connect-private-network/internal/model"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -26,7 +31,11 @@ type AdminProxy struct {
 	FNIDProvider   func() (string, error)
 	CookieProvider func(string) ([]Cookie, error)
 	Logger         *slog.Logger
+	Recover        func(context.Context, string, string) ([]Cookie, error)
+	Activity       func(context.Context, string)
 
+	lifecycle         context.Context
+	cancel            context.CancelFunc
 	mu                sync.Mutex
 	ln                net.Listener
 	server            *http.Server
@@ -72,8 +81,9 @@ func (p *AdminProxy) Start() (*url.URL, error) {
 		ModifyResponse: p.modifyResponse,
 		ErrorHandler:   p.errorHandler,
 		// HTTPS verification stays in Go; the WebView uses loopback HTTP.
-		Transport: transport,
+		Transport: adminProxyTransport{proxy: p, upstream: transport},
 	}
+	p.lifecycle, p.cancel = context.WithCancel(context.Background())
 	server := &http.Server{
 		Handler: http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 			if !p.authorizeLocalRequest(writer, request) {
@@ -93,6 +103,23 @@ func (p *AdminProxy) Start() (*url.URL, error) {
 			if providerErr != nil || len(cookies) == 0 {
 				http.Error(writer, "admin Web session is unavailable", http.StatusUnauthorized)
 				return
+			}
+			p.recordActivity(fnID)
+			// ReverseProxy cannot recreate an incoming streaming body. Buffer
+			// only small management requests; larger bodies are never replayed.
+			if p.Recover != nil && request.Body != nil && request.Body != http.NoBody {
+				body, err := io.ReadAll(io.LimitReader(request.Body, (1<<20)+1))
+				if err != nil {
+					http.Error(writer, "read admin request", http.StatusBadRequest)
+					return
+				}
+				if len(body) <= 1<<20 {
+					request.Body.Close()
+					request.Body = io.NopCloser(bytes.NewReader(body))
+					request.GetBody = func() (io.ReadCloser, error) { return io.NopCloser(bytes.NewReader(body)), nil }
+				} else {
+					request.Body = &adminProxyBody{Reader: io.MultiReader(bytes.NewReader(body), request.Body), Closer: request.Body}
+				}
 			}
 			proxy.ServeHTTP(writer, request)
 		}),
@@ -123,12 +150,19 @@ func (p *AdminProxy) bootstrapURL() *url.URL {
 }
 
 func (p *AdminProxy) authorizeLocalRequest(writer http.ResponseWriter, request *http.Request) bool {
+	p.mu.Lock()
+	token := p.token
+	p.mu.Unlock()
+	if token == "" {
+		http.Error(writer, "forbidden", http.StatusForbidden)
+		return false
+	}
 	if cookie, err := request.Cookie("fncpn-proxy"); err == nil &&
-		subtle.ConstantTimeCompare([]byte(cookie.Value), []byte(p.token)) == 1 {
+		subtle.ConstantTimeCompare([]byte(cookie.Value), []byte(token)) == 1 {
 		return true
 	}
 	query := request.URL.Query()
-	if subtle.ConstantTimeCompare([]byte(query.Get("fncpn_proxy")), []byte(p.token)) != 1 {
+	if subtle.ConstantTimeCompare([]byte(query.Get("fncpn_proxy")), []byte(token)) != 1 {
 		http.Error(writer, "forbidden", http.StatusForbidden)
 		return false
 	}
@@ -136,7 +170,7 @@ func (p *AdminProxy) authorizeLocalRequest(writer http.ResponseWriter, request *
 	target := *request.URL
 	target.RawQuery = query.Encode()
 	http.SetCookie(writer, &http.Cookie{
-		Name: "fncpn-proxy", Value: p.token, Path: "/",
+		Name: "fncpn-proxy", Value: token, Path: "/",
 		HttpOnly: true, SameSite: http.SameSiteStrictMode,
 	})
 	http.Redirect(writer, request, target.String(), http.StatusSeeOther)
@@ -213,7 +247,21 @@ func (p *AdminProxy) modifyResponse(resp *http.Response) error {
 func (p *AdminProxy) errorHandler(w http.ResponseWriter, r *http.Request, err error) {
 	p.logger().Warn("admin proxy request failed",
 		"method", r.Method, "path", r.URL.Path, "error", err)
-	http.Error(w, "FnCPN admin proxy error: "+err.Error(), http.StatusBadGateway)
+	failure := model.PublicError(model.WithOperation(err, "admin_proxy.request"))
+	status := http.StatusBadGateway
+	if failure.Code == model.ErrorAuthRequired {
+		status = http.StatusUnauthorized
+	}
+	if failure.Code == model.ErrorFailedPrecondition {
+		status = http.StatusPreconditionFailed
+	}
+	if failure.Code == model.ErrorUnavailable {
+		status = http.StatusServiceUnavailable
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(map[string]any{"error": failure})
 }
 
 func (p *AdminProxy) currentBase() (*url.URL, error) {
@@ -233,6 +281,9 @@ func (p *AdminProxy) Close() error {
 		return nil
 	}
 	server := p.server
+	if p.cancel != nil {
+		p.cancel()
+	}
 	p.server = nil
 	p.ln = nil
 	p.base = nil
@@ -248,4 +299,70 @@ func (p *AdminProxy) logger() *slog.Logger {
 		return p.Logger
 	}
 	return slog.Default()
+}
+
+// adminProxyBody restores a bounded peek without losing Close on the original body.
+type adminProxyBody struct {
+	io.Reader
+	io.Closer
+}
+
+type adminProxyTransport struct {
+	proxy    *AdminProxy
+	upstream http.RoundTripper
+}
+
+func (t adminProxyTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	response, err := t.upstream.RoundTrip(req)
+	if err != nil || t.proxy.Recover == nil {
+		return response, err
+	}
+	data, err := io.ReadAll(io.LimitReader(response.Body, 8193))
+	response.Body = &adminProxyBody{Reader: io.MultiReader(bytes.NewReader(data), response.Body), Closer: response.Body}
+	if err != nil {
+		response.Body.Close()
+		return nil, err
+	}
+	// Only the gateway's exact rejection proves that a write did not reach the
+	// application. An application 401/403, redirect or ambiguous body is not replayed.
+	if len(data) > 8192 || strings.TrimSpace(string(data)) != "invalid token" || gatewayAuthenticationError(response, data) == nil {
+		return response, nil
+	}
+	if req.Body != nil && req.Body != http.NoBody && req.GetBody == nil {
+		return response, nil
+	}
+	fnID := strings.TrimSuffix(req.URL.Hostname(), ".fnos.net")
+	rejected := ""
+	if cookie, err := req.Cookie("fnos-token"); err == nil {
+		rejected = cookie.Value
+	}
+	cookies, err := t.proxy.Recover(req.Context(), fnID, rejected)
+	if err != nil {
+		response.Body.Close()
+		return nil, err
+	}
+	retry := req.Clone(req.Context())
+	if req.GetBody != nil {
+		retry.Body, err = req.GetBody()
+		if err != nil {
+			response.Body.Close()
+			return nil, err
+		}
+	}
+	response.Body.Close()
+	retry.Header.Set("Cookie", cookieHeaderForURL(cookies, retry.URL))
+	t.proxy.recordActivity(fnID)
+	return t.upstream.RoundTrip(retry)
+}
+
+func (p *AdminProxy) recordActivity(fnID string) {
+	if p.Activity == nil {
+		return
+	}
+	p.mu.Lock()
+	ctx := p.lifecycle
+	p.mu.Unlock()
+	if ctx != nil && ctx.Err() == nil {
+		p.Activity(ctx, fnID)
+	}
 }
