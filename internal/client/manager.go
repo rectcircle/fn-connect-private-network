@@ -24,6 +24,8 @@ import (
 	"syscall"
 	"time"
 
+	"golang.org/x/sync/singleflight"
+
 	"github.com/rectcircle/fn-connect-private-network/internal/ipc"
 	"github.com/rectcircle/fn-connect-private-network/internal/logging"
 	"github.com/rectcircle/fn-connect-private-network/internal/model"
@@ -148,7 +150,8 @@ func (s NetworkSnapshot) Fingerprint() string {
 }
 
 type ManagerOptions struct {
-	// DNSHTTPClient optionally supplies a private-network transport. DNS never uses its cookie jar.
+	// DNSHTTPClient optionally supplies the private-network transport for DNS and
+	// tunnel health probes. Neither uses its cookie jar.
 	DNSHTTPClient    *http.Client
 	Store            *ConfigStore
 	Discoverer       Discoverer
@@ -172,6 +175,7 @@ type ManagerOptions struct {
 }
 
 type Manager struct {
+	control          *nasControlRouter
 	dnsHTTPClient    *http.Client
 	dns              clientDNS
 	mu               sync.RWMutex
@@ -197,21 +201,28 @@ type Manager struct {
 	// It is retained even when the LAN probe itself fails: once the VPN tunnel
 	// is up this address is reachable, so it is shown on the client's details
 	// page regardless of which path (local/direct/relay) was selected.
-	localAccessContext  context.Context
-	localAccessCancel   func()
-	localAccessEndpoint string
-	localAccessReady    chan struct{}
-	localAccessSkip     chan struct{}
-	nasAddress          string
-	ipv6RouteChecker    func(context.Context, netip.Addr, int) bool
-	status              model.ClientStatus
-	maintenanceError    bool
-	maintenancePhase    string
-	statusChanges       *notify.Change
-	watchCancel         context.CancelFunc
-	adminProxy          *AdminProxy
-	coordinatorMu       sync.Mutex
-	coordinator         *connectionCoordinator
+	localAccessContext      context.Context
+	localAccessCancel       func()
+	localAccessEndpoint     string
+	localAccessReady        chan struct{}
+	localAccessSkip         chan struct{}
+	nasAddress              string
+	ipv6RouteChecker        func(context.Context, netip.Addr, int) bool
+	status                  model.ClientStatus
+	maintenanceError        bool
+	maintenancePhase        string
+	statusChanges           *notify.Change
+	watchCancel             context.CancelFunc
+	adminProxyGeneration    uint64
+	adminRecovery           singleflight.Group
+	adminActivityMu         sync.Mutex
+	adminActivityCancel     context.CancelFunc
+	adminActivityLast       time.Time
+	adminActivityNext       time.Time
+	adminActivityGeneration uint64
+	adminProxy              *AdminProxy
+	coordinatorMu           sync.Mutex
+	coordinator             *connectionCoordinator
 	// The following connection evidence is owned by operation.
 	lastPlan               *model.ClientPlan
 	lastNetworkFingerprint string
@@ -249,20 +260,42 @@ func NewManager(options ManagerOptions) (*Manager, error) {
 	if handshakeTimeout <= 0 {
 		handshakeTimeout = 10 * time.Second
 	}
+	control := newNASControlRouter(options.Store, options.Discoverer, options.DNSHTTPClient, managerLogger)
 	authenticator := options.Authenticator
 	webAuthenticator := options.WebAuthenticator
 	if authenticator == nil {
 		// The default authenticator must replay the stored gateway cookies,
 		// because the FN Connect gateway blocks the login WebSocket until the
 		// access-code session has been established.
-		authenticator = NativeSessionClient{CookieHeader: gatewayCookieHeaderForStore(options.Store)}
+		authenticator = NativeSessionClient{CookieHeader: gatewayCookieHeaderForStore(options.Store), controlTransport: control.transport(nil)}
+	}
+	if client, ok := authenticator.(NativeSessionClient); ok && client.Dial == nil {
+		client.controlTransport = control.transport(nil)
+		authenticator = client
+	}
+	if client, ok := webAuthenticator.(NativeSessionClient); ok && client.Dial == nil {
+		client.controlTransport = control.transport(nil)
+		webAuthenticator = client
+	}
+	if client, ok := authenticator.(*NativeSessionClient); ok && client.Dial == nil {
+		routed := *client
+		routed.controlTransport = control.transport(nil)
+		authenticator = &routed
+	}
+	if client, ok := webAuthenticator.(*NativeSessionClient); ok && client.Dial == nil {
+		routed := *client
+		routed.controlTransport = control.transport(nil)
+		webAuthenticator = &routed
 	}
 	if webAuthenticator == nil {
 		webAuthenticator, _ = authenticator.(AdminWebAuthenticator)
 	}
 	adminWebProbe := options.AdminWebProbe
 	if adminWebProbe == nil {
-		adminWebProbe = probeAdminWebSession
+		adminWebProbe = func(ctx context.Context, fnID string, cookies []Cookie) error {
+			target := "https://" + fnID + ".fnos.net/app/fncpn/api/v1/admin/snapshot"
+			return probeAdminWebSessionWithClient(ctx, &http.Client{Transport: control.transport(nil), Timeout: 15 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, target, cookies)
+		}
 	}
 	accessCodeVerify := options.AccessCodeVerify
 	if accessCodeVerify == nil {
@@ -273,10 +306,17 @@ func NewManager(options ManagerOptions) (*Manager, error) {
 		ipv6RouteChecker = hasIPv6RouteTo
 	}
 	return &Manager{
-		dnsHTTPClient:    options.DNSHTTPClient,
-		store:            options.Store,
-		discoverer:       options.Discoverer,
-		remote:           options.Remote,
+		dnsHTTPClient: options.DNSHTTPClient,
+		store:         options.Store,
+		control:       control,
+		discoverer:    controlDiscoverer{Discoverer: options.Discoverer, router: control},
+		remote: func(fnID string, cookies []Cookie, onCookies func([]Cookie) error) (RemoteService, error) {
+			remote, err := options.Remote(fnID, cookies, onCookies)
+			if client, ok := remote.(*RemoteClient); err == nil && ok {
+				client.httpClient.Transport = control.transport(client.httpClient.Transport)
+			}
+			return remote, err
+		},
 		privileged:       options.Privileged,
 		bridge:           options.Bridge,
 		probe:            options.Probe,
@@ -873,6 +913,10 @@ func (m *Manager) ClosePaused(ctx context.Context) error {
 }
 
 func (m *Manager) close(ctx context.Context, pause bool) error {
+	if m.control != nil {
+		m.control.deactivate()
+	}
+	m.stopAdminWebActivity()
 	m.suspendConnections()
 	m.dns.lifecycle.Lock()
 	m.dns.closed = true
@@ -896,6 +940,7 @@ func (m *Manager) close(ctx context.Context, pause bool) error {
 	m.lastPlan = nil
 	m.lastNetworkFingerprint = ""
 	m.mu.Lock()
+	m.adminProxyGeneration++
 	proxy := m.adminProxy
 	m.adminProxy = nil
 	m.mu.Unlock()
@@ -909,7 +954,9 @@ func (m *Manager) close(ctx context.Context, pause bool) error {
 }
 
 func (m *Manager) closeAdminProxy() {
+	m.stopAdminWebActivity()
 	m.mu.Lock()
+	m.adminProxyGeneration++
 	proxy := m.adminProxy
 	m.adminProxy = nil
 	m.mu.Unlock()
@@ -947,7 +994,7 @@ func (m *Manager) handleRelayFailure(ctx context.Context, err error) {
 		return
 	}
 	if model.AsError(err).Code == model.ErrorAuthRequired {
-		recovered, recoverErr := m.recoverNativeSession(ctx, config.FNID, true)
+		recovered, recoverErr := m.recoverNativeSession(ctx, config.FNID, true, err)
 		if recoverErr == nil && recovered {
 			_ = m.reconnect(ctx, *config)
 			return
@@ -1012,7 +1059,7 @@ func (m *Manager) watchConfiguration(ctx context.Context) {
 			}
 			continue
 		}
-		if !canAutoConnect(config, m.Status()) {
+		if !canAutoConnect(config, m.Status()) || m.connectionsSuspended() {
 			cursor = ""
 			m.operation.Unlock()
 			m.statusChanges.Wait(ctx, statusGeneration)
@@ -1101,20 +1148,40 @@ func (m *Manager) watchConfiguration(ctx context.Context) {
 			}
 			latestCookies, loadErr := m.store.LoadCookies(config.FNID)
 			if loadErr == nil && len(latestCookies) > 0 && !slices.Equal(expected, latestCookies) {
-				err = model.WithOperation(model.NewError(model.ErrorUnavailable,
-					"gateway credentials changed during configuration watch; retrying", true), "configuration.watch")
+				// A different request already renewed this credential sequence.
+				// Retry quietly with freshly loaded cookies, not a UI error.
+				m.operation.Unlock()
+				nativeRecoveryAttempted = false
+				cursor = ""
+				retryDelay = 0
+				continue
 			}
 		}
-		if err != nil && model.AsError(err).Code == model.ErrorAuthRequired {
-			// One recovery per rejected credential sequence. A second rejection
-			// after recovery is terminal; polls while recovery is pending just wait.
-			if m.authenticationRecoveryInProgress() || !nativeRecoveryAttempted && m.scheduleAuthenticationRecovery() {
+		if err != nil && model.AsError(err).Code == model.ErrorAuthRequired &&
+			(m.authenticationRecoveryInProgress() || !nativeRecoveryAttempted) {
+			if recovery := m.scheduleAuthenticationRecovery(err); recovery != nil {
 				nativeRecoveryAttempted = true
-				err = model.NewError(model.ErrorUnavailable, "gateway authentication recovery pending", true)
+				m.operation.Unlock()
+				recoveryErr := recovery.wait(ctx)
+				if ctx.Err() != nil {
+					return
+				}
+				cursor = ""
+				if recoveryErr != nil {
+					nativeRecoveryAttempted = false
+					if !errors.Is(recoveryErr, context.Canceled) && model.AsError(recoveryErr).Retryable {
+						if !m.waitConfigurationRetry(ctx, &retryDelay, recoveryErr) {
+							return
+						}
+					}
+				} else {
+					retryDelay = 0
+				}
+				continue
 			}
 		}
 		if err != nil && model.AsError(err).Code == model.ErrorAuthRequired && !nativeRecoveryAttempted {
-			recovered, recoverErr := m.recoverNativeSession(ctx, config.FNID, true)
+			recovered, recoverErr := m.recoverNativeSession(ctx, config.FNID, true, err)
 			if recoverErr == nil && recovered {
 				m.logger.Info("configuration watch credentials recovered", "fn_id", config.FNID)
 				nativeRecoveryAttempted = true
@@ -1512,6 +1579,16 @@ func (m *Manager) maintainHealth(ctx context.Context) {
 			statusErr,
 			m.bridge.Connected(),
 		)
+		if healthErr == nil {
+			healthErr = m.tunnelHealthError(ctx, config)
+			if isAdmissionFailure(healthErr) {
+				_ = m.fail(healthErr)
+				return
+			}
+			if ctx.Err() != nil {
+				return
+			}
+		}
 		if statusErr == nil {
 			m.mu.Lock()
 			changed := m.status.MTU != networkStatus.MTU ||
@@ -1702,6 +1779,9 @@ func (m *Manager) Diagnose(ctx context.Context) model.ClientDiagnostics {
 // management UI. It combines the independent Web session with the gateway
 // access-code session, without exposing the CLI login token to the browser path.
 func (m *Manager) AdminProxyURL(ctx context.Context) (string, error) {
+	m.mu.RLock()
+	generation := m.adminProxyGeneration
+	m.mu.RUnlock()
 	// The management UI uses its dedicated Web token, not the CLI tunnel token.
 	config, err := m.store.Load()
 	if err != nil {
@@ -1731,15 +1811,23 @@ func (m *Manager) AdminProxyURL(ctx context.Context) (string, error) {
 		return "", err
 	}
 	if err := m.adminWebProbe(ctx, config.FNID, cookies); err != nil {
-		if model.AsError(err).Code == model.ErrorAuthRequired {
-			_ = m.store.ClearAdminWebSession(config.FNID)
-			m.closeAdminProxy()
+		if model.AsError(err).Code != model.ErrorAuthRequired {
+			return "", err
 		}
-		return "", err
+		cookies, err = m.recoverAdminWebWithCause(ctx, config.FNID, session.Token, rejectedFNOSToken(err))
+		if err != nil {
+			return "", err
+		}
+		if err := m.adminWebProbe(ctx, config.FNID, cookies); err != nil {
+			return "", err
+		}
 	}
 	m.mu.Lock()
+	defer m.mu.Unlock()
+	if generation != m.adminProxyGeneration {
+		return "", adminWebAuthRequired()
+	}
 	proxy := m.adminProxy
-	m.mu.Unlock()
 	if proxy == nil {
 		proxy = &AdminProxy{
 			ListenAddress: "127.0.0.1:0",
@@ -1760,15 +1848,12 @@ func (m *Manager) AdminProxyURL(ctx context.Context) (string, error) {
 				}
 				return m.adminGatewayCookies(fnID, session.Token)
 			},
-			Logger: m.logger,
+			upstreamTransport: m.controlTransport(),
+			Recover:           m.recoverRejectedAdminWeb,
+			Activity:          m.touchAdminWebActivity,
+			Logger:            m.logger,
 		}
-		m.mu.Lock()
-		if m.adminProxy == nil {
-			m.adminProxy = proxy
-		} else {
-			proxy = m.adminProxy
-		}
-		m.mu.Unlock()
+		m.adminProxy = proxy
 	}
 	base, err := proxy.Start()
 	if err != nil {
@@ -1894,6 +1979,7 @@ func (m *Manager) refreshAdminWebSession(
 			"fn_id", fnID, "error", err)
 		return
 	}
+	m.stopAdminWebActivity()
 	m.logger.Info("admin auth: Web session saved",
 		"fn_id", fnID, "token_present", webSession.Token != "")
 }
@@ -1982,7 +2068,7 @@ func (m *Manager) connectWithOptionalConfiguration(
 		if checkErr != nil && model.AsError(checkErr).Code == model.ErrorAuthRequired {
 			// The version endpoint sits behind fnOS authentication too. Recover
 			// an expired session before retrying admission, never skip admission.
-			recovered, recoverErr := m.recoverNativeSession(ctx, config.FNID, true)
+			recovered, recoverErr := m.recoverNativeSession(ctx, config.FNID, true, checkErr)
 			if recoverErr != nil {
 				return m.fail(recoverErr)
 			}
@@ -2040,7 +2126,7 @@ func (m *Manager) connectWithOptionalConfiguration(
 			// gateway actually rejected our token, then retry the configuration once.
 			if model.AsError(err).Code == model.ErrorAuthRequired {
 				recoveryStarted := time.Now()
-				if recovered, recoverErr := m.recoverNativeSession(ctx, config.FNID, true); recoverErr != nil {
+				if recovered, recoverErr := m.recoverNativeSession(ctx, config.FNID, true, err); recoverErr != nil {
 					return m.fail(recoverErr)
 				} else if recovered {
 					logger.Warn("gateway token invalid; native session recovered, retrying configuration",
@@ -2179,6 +2265,7 @@ func (m *Manager) connectWithOptionalConfiguration(
 			if m.keepCurrentPlan(ctx, plan, networkSnapshot) {
 				direct.Reason = "connected"
 				m.setDirectDiagnostics(direct)
+				m.publishControlRoute(config, networkSnapshot)
 				return nil
 			}
 			if directContext.Err() != nil {
@@ -2226,6 +2313,7 @@ func (m *Manager) connectWithOptionalConfiguration(
 					"ipv6",
 					status,
 				)
+				m.publishControlRoute(config, networkSnapshot)
 			}); err != nil {
 				return err
 			}
@@ -2257,6 +2345,7 @@ func (m *Manager) connectWithOptionalConfiguration(
 	if m.lastPlan != nil && m.lastPlan.Mode == "relay" {
 		plan := clientPlan(config.Configuration, privateKey.String(), "relay", m.lastPlan.Endpoint, allowedIPs, 1280)
 		if m.keepCurrentPlan(ctx, plan, networkSnapshot) {
+			m.publishControlRoute(config, networkSnapshot)
 			return nil
 		}
 	}
@@ -2315,6 +2404,7 @@ func (m *Manager) connectWithOptionalConfiguration(
 			"fn-connect",
 			status,
 		)
+		m.publishControlRoute(config, networkSnapshot)
 	}); err != nil {
 		return err
 	}
@@ -2354,13 +2444,19 @@ func (m *Manager) setDirectDiagnostics(direct model.DirectDiagnostics) {
 // is rejected as InvalidToken, instead of wasting a WebSocket round trip on
 // every reconnect. With force=false it only ensures the gateway cookie is
 // written from the currently stored (potentially still valid) token.
-func (m *Manager) recoverNativeSession(ctx context.Context, fnID string, force bool) (bool, error) {
+func (m *Manager) recoverNativeSession(ctx context.Context, fnID string, force bool, cause ...error) (bool, error) {
 	session, found, err := m.store.LoadNativeSession(fnID)
 	if err != nil || !found {
 		return found, err
 	}
 	if force {
-		session, err = m.authenticator.Recover(ctx, session, m.deviceName)
+		recoveryCtx := logging.WithLogger(ctx, logging.FromContext(ctx, m.logger))
+		rejected := len(cause) > 0 && rejectedFNOSToken(cause[0])
+		if direct, ok := m.authenticator.(rejectedNativeAuthenticator); rejected && ok {
+			session, err = direct.RecoverRejectedToken(recoveryCtx, session, m.deviceName)
+		} else {
+			session, err = m.authenticator.Recover(recoveryCtx, session, m.deviceName)
+		}
 		if err != nil {
 			return true, err
 		}
@@ -2370,6 +2466,9 @@ func (m *Manager) recoverNativeSession(ctx context.Context, fnID string, force b
 	}
 	if err := m.store.SaveNativeGatewayCookies(fnID, session.Token); err != nil {
 		return true, err
+	}
+	if force {
+		logging.FromContext(ctx, m.logger).Info("native auth: CLI session recovered", "fn_id", fnID)
 	}
 	return true, nil
 }
@@ -2533,18 +2632,7 @@ func clientNetworkHealthError(
 		)
 	}
 	if network.LastHandshake == nil {
-		return model.NewError(
-			model.ErrorUnavailable,
-			"WireGuard handshake is unavailable",
-			true,
-		)
-	}
-	if time.Since(*network.LastHandshake) > 180*time.Second {
-		return model.NewError(
-			model.ErrorTimeout,
-			"WireGuard handshake is stale",
-			true,
-		)
+		return model.NewError(model.ErrorUnavailable, "WireGuard handshake is unavailable", true)
 	}
 	if state == model.ClientRelay && !bridgeConnected {
 		return model.NewError(
@@ -2746,6 +2834,9 @@ func (m *Manager) setStatus(
 	interfaceName string,
 	lastError *model.Error,
 ) {
+	if m.control != nil && !controlConnected(state) {
+		m.control.deactivate()
+	}
 	m.mu.Lock()
 	m.status = model.ClientStatus{
 		DNS:                m.status.DNS,
@@ -2781,9 +2872,9 @@ func (m *Manager) recordMaintenanceError(phase string, err error) {
 	}
 }
 
-func (m *Manager) clearMaintenanceError() {
+func (m *Manager) clearMaintenanceError(phases ...string) {
 	m.mu.Lock()
-	if !m.maintenanceError {
+	if !m.maintenanceError || len(phases) > 0 && !slices.Contains(phases, m.maintenancePhase) {
 		m.mu.Unlock()
 		return
 	}

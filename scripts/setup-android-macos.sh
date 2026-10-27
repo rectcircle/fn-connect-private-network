@@ -8,7 +8,7 @@ ACCEPT_LICENSES=0
 usage() {
     cat <<'EOF'
 Usage: bash scripts/setup-android-macos.sh [--skip-smoke] [--accept-licenses]
-  --skip-smoke       Skip assembling the real dual-ABI Debug APK.
+  --skip-smoke       Skip assembling the production-signed dual-ABI Release APK.
   --accept-licenses  Accept Android SDK licenses non-interactively.
 Existing matching tools are reused. Missing JDK/Python use an existing Homebrew.
 Go/Gradle install under ~/.local/opt; SDK defaults to ~/Library/Android/sdk.
@@ -265,7 +265,7 @@ PYPROFILES
 }
 
 download_modules() { (cd "$ROOT/mobile" && "$GO" mod download); }
-smoke() { (cd "$ROOT/mobile/android" && "$GRADLE" --no-daemon --console=plain :app:assembleDebug); }
+smoke() { (cd "$ROOT/mobile/android" && "$GRADLE" --no-daemon --console=plain :app:assembleRelease "-PfncpnBuild=${FNCPN_BUILD_NUMBER:-$(git -C "$ROOT" rev-list --count HEAD)}" -PfncpnLocalValidation=true); }
 
 log "开始：项目=${ROOT}；日志=$LOG"
 # These cross-compilation variables must not leak into dependency/bootstrap commands.
@@ -276,6 +276,6 @@ stage 'Gradle 8.13' setup_gradle
 stage 'Android SDK / Build Tools / NDK' setup_sdk
 stage '直接配置 zsh / bash 用户启动文件' write_environment
 stage 'Go 模块依赖下载（保留现有代理配置）' download_modules
-if [[ $SKIP_SMOKE == 0 ]]; then stage '双架构 Debug APK 构建验证' smoke
+if [[ $SKIP_SMOKE == 0 ]]; then stage '正式签名双架构 Release APK 构建验证' smoke
 else log '跳过：APK 构建验证（--skip-smoke）'; fi
 log '成功：重新打开终端，或加载对应的 ~/.zshrc / ~/.bashrc 后即可构建；未安装 Android Studio/模拟器。'

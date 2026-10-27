@@ -121,10 +121,29 @@ WSS 接通不等于 WireGuard 握手成功；两者必须是独立节点。服�
 创建的新 RemoteClient；若恢复后仍立即出现 `invalid token`，应同时核对重试请求
 实际使用的凭据版本，不能仅根据 recovery 成功日志判断链路已更新。
 
-管理页打开前的 Web token 探测与核心连接状态隔离：仅明确的 `invalid token/401`
-归类为管理页 `AUTH_REQUIRED` 并清除 Web session；DNS、TLS、超时和 5xx 保持
-`UNAVAILABLE`。两类错误都通过 `admin-proxy` IPC 返回，不写入 client
-`status.lastError`，不触发隧道拆除或 CLI token 恢复。
+管理后台使用独立 Web 会话；网络故障保留凭据，明确认证失效时自动恢复，长期授权
+失效才要求重新登录。后台恢复不触发 CLI 恢复或隧道拆除，不写入连接 `status.lastError`。
+会话与选路设计见[架构设计](architecture.md#管理后台会话)。
+
+### 会话恢复与控制选路日志
+
+| 日志或字段 | 判断依据 |
+| --- | --- |
+| `fnOS session recovery attempt` | `session_kind=cli/web` 区分会话；`method=user.authToken/user.tokenLogin` 区分短 token 认证和长期 token 恢复 |
+| `outcome`、`elapsed_ms` | `started/succeeded/failed` 及尝试耗时；失败记录错误类别 `code` |
+| `token_changed`、`long_token_changed` | 仅记录值是否变化，不能据此推断恢复方法 |
+| `native auth: CLI session recovered` / `admin auth: Web session recovered` | RPC 成功后的凭据持久化完成；后续请求成功才证明完整链路恢复 |
+| `fnOS authentication recovery queued` | 恢复已排队，属于 INFO；等待完成后立即重取配置，不作为界面错误 |
+| `fnOS control route selected`、`route=nas`、`origin` | 已选择 NAS Web 直达入口 |
+| `fnOS control route fallback`、`route=fn-connect` | 已回退 FN Connect；RELAY 的 NAS 直达请求底层仍经过中继 |
+
+凭据文件更新时间只能说明发生写入。判断长期 token 恢复必须看
+`method=user.tokenLogin`，不能把普通 WebSocket 认证当作续期。日志不包含 token、
+密钥、密码、OTP 或原始认证响应；正常轮询和活动心跳不逐次输出 INFO。
+
+验收关注三条链路：短 token 失效后自动恢复；断网和休眠唤醒后恢复且保留凭据；撤销
+Browser 授权后明确要求登录。选路分别检查 LOCAL、DIRECT、RELAY，并验证断网后的
+回退与恢复。自动化模拟和单个平台日志不能替代最终候选及历史正式版本兼容验收。
 
 ## 同名设备与身份
 

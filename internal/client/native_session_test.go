@@ -358,8 +358,20 @@ func TestAdminWebLoginReturnsIsolatedToken(t *testing.T) {
 			frame["iv"] == "" || frame["rsa"] == "" || frame["aes"] == "" {
 			t.Fatalf("encrypted login frame = %+v", frame)
 		}
+		encryptedKey, _ := base64.StdEncoding.DecodeString(frame["rsa"].(string))
+		key, err := rsa.DecryptPKCS1v15(rand.Reader, privateKey, encryptedKey)
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		iv, _ := base64.StdEncoding.DecodeString(frame["iv"].(string))
+		secret, err := aesCBCEncrypt(key, iv, []byte("web-only-secret\x00\xff\x80"))
+		if err != nil {
+			t.Error(err)
+			return
+		}
 		response, _ := json.Marshal(map[string]any{
-			"result": "succ", "token": "web-token", "backId": "web-back-id",
+			"result": "succ", "token": "web-token", "backId": "web-back-id", "longToken": "web-long", "secret": secret,
 		})
 		if err := connection.Write(r.Context(), websocket.MessageText, response); err != nil {
 			t.Fatal(err)
@@ -371,7 +383,7 @@ func TestAdminWebLoginReturnsIsolatedToken(t *testing.T) {
 		FNID: "home-nas", Username: "admin", Password: "password",
 		DeviceID: "web-device", DeviceName: "FnCPN Test",
 	})
-	if err != nil || session.Token != "web-token" || session.DeviceID != "web-device" {
+	if err != nil || session.Token != "web-token" || session.DeviceID != "web-device" || session.LongToken != "web-long" || session.Secret != base64.StdEncoding.EncodeToString([]byte("web-only-secret\x00\xff\x80")) {
 		t.Fatalf("Web session = %+v, error = %v", session, err)
 	}
 }

@@ -390,6 +390,10 @@ func (s *ConfigStore) LoadAdminWebSession(
 ) (_ AdminWebSession, found bool, failure error) {
 	s.credentialMu.Lock()
 	defer s.credentialMu.Unlock()
+	return s.loadAdminWebSession(fnID)
+}
+
+func (s *ConfigStore) loadAdminWebSession(fnID string) (_ AdminWebSession, found bool, failure error) {
 	defer func() {
 		if failure != nil {
 			failure = model.WithOperation(failure, "credentials.load_admin_web_session")
@@ -420,6 +424,31 @@ func (s *ConfigStore) LoadAdminWebSession(
 		return AdminWebSession{}, false, errors.New("admin Web session account mismatch")
 	}
 	return session, true, nil
+}
+
+// replaceAdminWebSession commits only if login/logout has not replaced or
+// removed the session while the network recovery was in flight. nil clears it.
+func (s *ConfigStore) replaceAdminWebSession(previous AdminWebSession, next *AdminWebSession) (bool, error) {
+	s.credentialMu.Lock()
+	defer s.credentialMu.Unlock()
+	current, found, err := s.loadAdminWebSession(previous.FNID)
+	if err != nil || !found || current != previous {
+		return false, err
+	}
+	if next == nil {
+		return true, s.secrets.Delete(adminWebSecret, previous.FNID)
+	}
+	if next.FNID != previous.FNID || next.Username != previous.Username || next.DeviceID != previous.DeviceID {
+		return false, errors.New("recovered admin Web session identity mismatch")
+	}
+	if err := validateAdminWebSession(*next); err != nil {
+		return false, err
+	}
+	data, err := json.Marshal(next)
+	if err != nil {
+		return false, err
+	}
+	return true, s.secrets.Put(adminWebSecret, previous.FNID, data)
 }
 
 func (s *ConfigStore) ClearAdminWebSession(fnID string) (failure error) {
@@ -571,6 +600,8 @@ func (s *ConfigStore) SaveAccessCodeCookie(fnID string, cookie Cookie) error {
 }
 
 func (s *ConfigStore) Forget(fnID string) (failure error) {
+	s.credentialMu.Lock()
+	defer s.credentialMu.Unlock()
 	defer func() {
 		if failure != nil {
 			failure = model.WithOperation(failure, "credentials.forget")
@@ -590,6 +621,9 @@ func (s *ConfigStore) Forget(fnID string) (failure error) {
 			s.secrets.Delete(adminWebSecret, account),
 			s.secrets.Delete(privateAPISecret, account),
 		)
+	}
+	if err := os.Remove(s.fnosWebPortsPath(account)); err != nil && !os.IsNotExist(err) {
+		cleanupErrors = append(cleanupErrors, err)
 	}
 	cleanupErrors = append(cleanupErrors, s.Clear())
 	return errors.Join(cleanupErrors...)

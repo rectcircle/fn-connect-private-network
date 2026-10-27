@@ -418,7 +418,7 @@ Java、Go、Gradle、Android 的环境变量和各自 PATH 条目直接写入 `~
 每项依赖使用独立标记区块，重跑更新区块且不重复添加 PATH；保留其他配置，变更前在原目录备份，
 不生成单独的 env 文件。不修改系统代理或 Go 代理配置。建议预留 10–15 GB 磁盘空间。
 
-默认交互接受 SDK 许可证，下载 Go module 后执行双架构 Debug APK 构建验证。
+默认交互接受 SDK 许可证，下载 Go module 后执行正式签名的双架构 Release APK 构建验证（需先配置下述签名材料）。
 `--accept-licenses` 显式接受许可证并免交互；`--skip-smoke` 跳过 APK 构建验证，
 依然安装工具并下载 Go module。首次 Gradle 构建会联网下载 AGP 等依赖。
 初始化安装是显式操作，与下面只使用已有工具链的打包入口分开。
@@ -433,20 +433,20 @@ Java、Go、Gradle、Android 的环境变量和各自 PATH 条目直接写入 `~
 
 ```sh
 cd mobile/android
-gradle --offline :app:assembleDebug
+gradle --offline :app:assembleRelease -PfncpnBuild=递增整数
 ```
 
 以上 Gradle 命令从仓库根目录进入 `mobile/android/`；后续 Gradle 和许可更新命令也在该目录执行。
 
 Gradle 从固定 Fyne module 复制原始 Java driver 到构建目录，不维护 Fyne 分叉或修改已打包 APK。
-构建分别输出 `app-arm64-v8a-debug.apk`、`app-x86_64-debug.apk`，每个 APK 仅含对应架构的单库，
+构建分别输出 `app-arm64-v8a-release.apk`、`app-x86_64-release.apk`，每个 APK 仅含对应架构的单库，
 不生成同时携带两套库的通用 APK。启用 16 KB 页对齐，记录产品版本、commit、工具链和 ABI。
 依赖许可见 `mobile/THIRD_PARTY_NOTICES.md`，随 APK 打包。
 可运行 `python3 ../../scripts/android/notices.py` 按 Android 包图更新许可，不需要 SDK/NDK。
 
 Android versionName 读取根 `internal/version/VERSION`，versionCode 通过 `-PfncpnBuild=递增整数` 指定。
 新增平台复用既有协议、无新增 server 要求时按 PATCH 发布；发布须完成版本与真机验收。
-所有构建（含 Debug、开发版与 Release）均使用同一 FnCPN 正式证书，不再回退到 Debug keystore。
+Android 仅提供非 debuggable 的 Release 构建，固定生产包名 `cn.rectcircle.fncpn`，使用同一 FnCPN 正式证书。
 CI 从 `FNCPN_KEYSTORE`、`FNCPN_STORE_PASSWORD`、`FNCPN_KEY_ALIAS`、`FNCPN_KEY_PASSWORD` 读取；
 本地默认读取下述仓库外凭据文件，可通过 `FNCPN_SIGNING_CREDENTIALS` 指定其他文件。
 环境变量优先；缺少签名配置时构建直接失败，不提交或打印凭据。
@@ -459,8 +459,8 @@ alias 为 `fncpn-release`，证书主体 `CN=rectcircle,C=CN`，RSA 3072 位，�
 仓库 Actions Secrets 已配置 `FNCPN_KEYSTORE_BASE64`、`FNCPN_STORE_PASSWORD`、
 `FNCPN_KEY_ALIAS`、`FNCPN_KEY_PASSWORD`。正式签名 job 需将前者解码到 runner 临时文件，
 将该绝对路径传给 `FNCPN_KEYSTORE`，其余 Secret 作为同名环境变量传入，完成后删除临时密钥库。
-分支推送构建具有调试能力、使用正式证书签名的 APK；Release workflow 通过复用 Android workflow
-构建非 debuggable 的正式包，生产包名为 `cn.rectcircle.fncpn`，两份 APK 合入发布清单。
+分支推送与 Release workflow 均构建正式签名、非 debuggable 的 Release APK；后者通过
+复用 Android workflow 执行候选检查，两份 APK 合入发布清单。
 正式 versionCode 采用 tag commit 的 `git rev-list --count HEAD`，同一候选双 ABI 相同，后续发布单调增加。
 通过版本与真机验收后可在干净源码树运行：
 
@@ -494,24 +494,34 @@ Toast 与信息/确认弹窗由共享 UI 实现，Toast 位于画布中下方。
 日志通过只读 DocumentsProvider 交给系统文件界面，失败回退到文件选择器；导出使用共享
 脱敏 ZIP。后台 Activity 在专用 `:admin` 进程，不复用 Fyne 宿主的 WebView/生命周期。
 
-可调试包可通过启动参数 `--ez fncpn.uiProfile true` 采集一次 45 秒菜单 CPU profile 与
-阶段事件，写入 App 缓存；正常启动不采样，非 debuggable 包忽略该参数。
-诊断文件用于比较冷启动首次菜单与后续点击，不采集输入内容，不纳入发布资产。
-
-### Android 本地真机调试与日志
+### Android 本地安装验证与日志
 
 CI 和本地 Gradle 统一使用固定 FnCPN 正式证书，后续同包名可相互覆盖（versionCode 不得倒退）。
-历史使用旧 Debug 密钥的开发包不能直接覆盖；不要自动卸载或清除数据，需要先安排数据保留/重新登录。
-本地可运行 `gradle :app:assembleDebug :app:assembleDebugAndroidTest -PfncpnBuild=递增整数 -PfncpnDev`，
-安装独立包 `cn.rectcircle.fncpn.dev`（桌面名称“FnCPN 开发版”），保留已安装的 CI 包与数据。
-普通 Debug 包名仍是 `cn.rectcircle.fncpn.debug`，正式包名不变；三种包使用同一受保护的固定发布密钥。
+默认 Release 打包要求干净源码；本地安装验证可显式使用 `-PfncpnLocalValidation=true`，
+仍保持生产包名、正式证书和非 debuggable。此选项在 CI 中被拒绝，APK 中保留真实 `dirty`
+标记；发布清单验证仍拒绝 dirty 产物，不能将本地验证包作为正式候选发布。
 
 ```sh
-adb install -r app/build/outputs/apk/debug/app-arm64-v8a-debug.apk
-adb install -r app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
-adb shell am instrument -w cn.rectcircle.fncpn.dev.test/cn.rectcircle.fncpn.SmokeInstrumentation
-adb exec-out run-as cn.rectcircle.fncpn.dev cat files/logs/client.log > client.log
-adb exec-out run-as cn.rectcircle.fncpn.dev cat files/logs/android.log > android.log
+gradle --offline :app:assembleRelease -PfncpnBuild=递增整数 -PfncpnLocalValidation=true
+adb install -r app/build/outputs/apk/release/app-arm64-v8a-release.apk
+adb logcat -s FnCPN
+```
+
+覆盖安装前核对证书与包名，不自动卸载或清空数据。Go 原始日志及脱敏诊断通过 App 的
+日志/诊断导出入口读取；生产包不依赖 `run-as`。APK 结构及签名校验：
+
+```sh
+python3 ../../scripts/android/verify_apk.py app/build/outputs/apk/release/app-arm64-v8a-release.apk \
+  --abi arm64-v8a --build-number 递增整数 --allow-dirty --output ../../dist/android-local
+```
+
+`--allow-dirty` 仅供本地验证，保留源码状态，不允许 CI 使用；正式候选省略该选项。
+如需运行独立测试 APK，使用同一生产签名和 Release 目标：
+
+```sh
+gradle --offline :app:assembleReleaseAndroidTest -PfncpnBuild=递增整数 -PfncpnLocalValidation=true
+adb install -r app/build/outputs/apk/androidTest/release/app-release-androidTest.apk
+adb shell am instrument -w cn.rectcircle.fncpn.test/cn.rectcircle.fncpn.SmokeInstrumentation
 ```
 
 真机 instrumentation 使用本机 HTTP 页面检查管理 WebView 加载及系统栏/返回栏避让，不需要 NAS 账号。
@@ -525,7 +535,7 @@ Java 日志不记录 RPC 参数、地址、凭据和异常消息。设置页可�
 分享仅临时授予 ZIP 的读取权限，最多保留八份，缓存 24 小时后失效并在下次导出清理；不依赖 Release 的 `run-as`。
 原始 Go 文件供本机开发诊断，不能视作对外匿名报告。
 
-### Android CI（Debug 构建）
+### Android CI（正式签名 Release 构建）
 
 [Android workflow](../.github/workflows/build-android.yml) 在任意分支推送、PR 和手动触发时运行。
 提交需要推送到 GitHub 才会触发，不要求本机安装 Android 工具链。
@@ -533,12 +543,12 @@ Java 日志不记录 RPC 参数、地址、凭据和异常消息。设置页可�
 
 流程先运行共享连接宿主和移动 module 的竞态测试、静态检查及 APK 校验脚本回归；
 通过后，在 Ubuntu runner 配置上文固定版本的 Go、JDK、Gradle、SDK 和 NDK，下载 Go/Gradle
-依赖并执行 `assembleDebug`。CI 首次构建允许在线下载依赖，不使用本地已有缓存场景的 `--offline`。
+依赖并执行 `assembleRelease`。CI 首次构建允许在线下载依赖，不使用本地已有缓存场景的 `--offline`。
 SDK/NDK 的安装步骤只存在于 workflow；本机构建脚本仍拒绝自动安装。
 
-`scripts/android/verify_apk.py` 检查 Debug 包名、产品版本、run number 对应的 versionCode、
+`scripts/android/verify_apk.py` 检查生产包名、非 debuggable 属性、产品版本、commit 计数对应的 versionCode、
 源码 commit、每份 APK 的唯一目标 ABI、JNI/Fyne 入口、16 KB ELF/ZIP 对齐及固定 FnCPN 证书指纹。
-只有校验通过才上传 `fncpn-android-debug-<run>-<attempt>`，内含两份单架构 APK、SHA256SUMS 和每份 APK 的 `.verification.json`。
+只有校验通过才上传 `fncpn-android-release-<run>-<attempt>`，内含两份单架构 APK、SHA256SUMS 和每份 APK 的 `.verification.json`。
 `fncpn-android-logs-<run>-<attempt>` 保留构建/校验日志和 Gradle 报告，失败时也尝试上传；产物保留 14 天。
 
 普通分支流程使用正式证书签名，在 runner 临时目录还原密钥，任务结束清理；不创建 GitHub Release，

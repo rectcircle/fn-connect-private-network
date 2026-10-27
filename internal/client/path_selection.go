@@ -168,6 +168,7 @@ func (m *Manager) establishLocal(ctx context.Context, config LocalConfig, snapsh
 		m.privateAPIConfig = clonePrivateAPIConfiguration(&cfg)
 		m.setDirectDiagnostics(model.DirectDiagnostics{Reason: "local_network", LocalPublicIPv6: snapshot.HasPublicIPv6})
 		m.setStatus(model.ClientLocal, "local", "", nil)
+		m.publishControlRoute(config, snapshot)
 	})
 }
 

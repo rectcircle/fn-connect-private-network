@@ -58,6 +58,7 @@ type connectionCoordinator struct {
 	suspended     bool
 	stopped       bool
 	relayError    error
+	authRecovery  *authenticationRecovery
 }
 
 type connectionResult struct {
@@ -146,6 +147,7 @@ func (m *Manager) suspendConnections() {
 		c.epoch++
 		c.suspended = true
 		c.pending = 0
+		c.authRecovery.finish(context.Canceled)
 		if c.cancel != nil {
 			c.cancel()
 		}
@@ -182,12 +184,25 @@ func (c *connectionCoordinator) networkChanged() {
 	c.signal()
 }
 
-func (m *Manager) scheduleAuthenticationRecovery() bool {
-	if c := m.connectionCoordinator(); c != nil {
-		c.submit(workAuthRecovery)
-		return true
+func (m *Manager) scheduleAuthenticationRecovery(cause error) *authenticationRecovery {
+	c := m.connectionCoordinator()
+	if c == nil {
+		return nil
 	}
-	return false
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.stopped || c.suspended {
+		return nil
+	}
+	if c.authRecovery.pending() {
+		return c.authRecovery
+	}
+	recovery := &authenticationRecovery{done: make(chan struct{}), cause: cause}
+	c.authRecovery = recovery
+	c.pending |= workAuthRecovery
+	c.signal()
+	m.logger.Info("fnOS authentication recovery queued")
+	return recovery
 }
 
 func (m *Manager) authenticationRecoveryInProgress() bool {
@@ -197,36 +212,50 @@ func (m *Manager) authenticationRecoveryInProgress() bool {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return (c.pending|c.active)&workAuthRecovery != 0
+	return c.authRecovery.pending()
+}
+func (m *Manager) connectionsSuspended() bool {
+	c := m.connectionCoordinator()
+	if c == nil {
+		return false
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.suspended || c.stopped
 }
 
-func (m *Manager) recoverGatewayAuthentication(ctx context.Context) {
+func (m *Manager) recoverGatewayAuthentication(ctx context.Context, cause error) error {
 	m.operation.Lock()
 	defer m.operation.Unlock()
 	if ctx.Err() != nil {
-		return
+		return ctx.Err()
 	}
 	config, err := m.store.Load()
-	if err != nil || !canAutoConnect(config, m.Status()) {
-		return
+	if err != nil {
+		return err
 	}
-	recovered, err := m.recoverNativeSession(ctx, config.FNID, true)
+	if !canAutoConnect(config, m.Status()) {
+		return context.Canceled
+	}
+	recovered, err := m.recoverNativeSession(ctx, config.FNID, true, cause)
 	if ctx.Err() != nil {
-		return
+		return ctx.Err()
 	}
 	if err == nil && recovered {
-		return
+		m.clearMaintenanceError("authentication")
+		return nil
 	}
 	if err == nil {
 		err = model.NewError(model.ErrorAuthRequired, "FN Connect authorization is required", false)
 	}
 	if model.AsError(err).Retryable {
 		m.recordMaintenanceError("authentication", err)
-		return
+		return err
 	}
 	_ = m.fail(err)
 	m.bridge.Stop()
 	m.convergeStoppedNetwork(ctx, *config, m.Status())
+	return err
 }
 
 func (m *Manager) runCoordinator(ctx context.Context) {
@@ -241,6 +270,7 @@ func (m *Manager) runCoordinator(ctx context.Context) {
 	defer func() {
 		c.mu.Lock()
 		c.stopped = true
+		c.authRecovery.finish(context.Canceled)
 		if c.cancel != nil {
 			c.cancel()
 		}
@@ -364,10 +394,15 @@ func (m *Manager) runCoordinator(ctx context.Context) {
 			c.cancel = cancel
 			c.activeContext, c.activeEpoch = workerCtx, epoch
 			relayErr := c.relayError
+			var authRecovery *authenticationRecovery
+			if work&workAuthRecovery != 0 {
+				authRecovery = c.authRecovery
+			}
 			c.mu.Unlock()
 			running = true
 			go func() {
-				err := m.runConnectionWork(workerCtx, work, relayErr)
+				err := m.runConnectionWork(workerCtx, work, relayErr, authRecovery)
+				authRecovery.finish(err)
 				cancel()
 				results <- connectionResult{epoch: epoch, err: err}
 			}()
@@ -444,7 +479,7 @@ func privilegedLifecycleWork(event privilegedLifecycleEvent) connectionWork {
 	return work
 }
 
-func (m *Manager) runConnectionWork(ctx context.Context, work connectionWork, relayErr error) error {
+func (m *Manager) runConnectionWork(ctx context.Context, work connectionWork, relayErr error, authentication ...*authenticationRecovery) error {
 	started := time.Now()
 	logger := logging.FromContext(ctx, m.logger)
 	logger.Info("connection evaluation started")
@@ -455,7 +490,19 @@ func (m *Manager) runConnectionWork(ctx context.Context, work connectionWork, re
 		return ctx.Err()
 	}
 	if work&workAuthRecovery != 0 {
-		m.recoverGatewayAuthentication(ctx)
+		var recovery *authenticationRecovery
+		var cause error
+		if len(authentication) > 0 {
+			recovery = authentication[0]
+		}
+		if recovery != nil {
+			cause = recovery.cause
+		}
+		err := m.recoverGatewayAuthentication(ctx, cause)
+		recovery.finish(err)
+		if err != nil {
+			return err
+		}
 	}
 	if work&workManual != 0 {
 		m.operation.Lock()

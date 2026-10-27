@@ -1,6 +1,7 @@
 # fnOS / FN Connect 协议参考
 
-本文记录 fnOS 与 FN Connect 的地址发现、网关认证、WebSocket 会话、访问码及两步验证协议。
+本文记录 fnOS 与 FN Connect 的地址发现、本地 Web / 转发入口、应用 API、登录认证、
+WebSocket 会话、保持登录、访问码及两步验证协议。
 内部接口和不同 fnOS 版本的响应可能变化，本文不代表官方稳定 API 承诺。
 示例中的 ID、token、密钥和设备信息均为占位值。
 
@@ -50,7 +51,9 @@ authx: nonce=<nonce>&timestamp=<timestamp>&sign=<md5>
 ```
 
 响应信息包括局域网 IPv4、公网 IPv4、公网 IPv6、FN 中继域名、fnOS HTTP/HTTPS 端口、
-版本和探测校验值。该请求不依赖 NAS 用户 Cookie，签名计算如下：
+版本和探测校验值。`port.httpPort` / `port.httpsPort` 对应 fnOS Web 入口的端口提示；
+默认 5666/5667 不是固定协议端口，应以发现响应或 NAS 实际配置为准。
+该请求不依赖 NAS 用户 Cookie，签名计算如下：
 
 ```text
 fn-sign = SHA256("trim_connect`" + fnId + "`" + timestamp + "`anna")
@@ -89,7 +92,28 @@ Cookie: mode=relay
 FN Connect 公共入口页或发生跳转，而不是直接到达 NAS。
 
 NAS 应用的网关路径形式为 `/app/<app-name>/...`，支持 HTTP 请求与 WebSocket Upgrade。
-网关使用 fnOS 登录会话认证；访问码开启时，还存在独立的访问码校验层。
+应用入口的身份认证由 fnOS 登录会话机制提供，不能把认证能力理解为 FN Connect
+转发层独有；访问码开启时，远程入口还存在独立的访问码校验层。
+
+## fnOS 本地 Web 入口与应用路由
+
+fnOS 本地 Web 入口与 FN Connect 转发入口均提供 `/app/<app-name>/...` 路由，
+支持 HTTP 和 WebSocket Upgrade。应用的业务接口由对应应用定义，不属于 fnOS 通用 API。
+
+```text
+https://<fn-id>.fnos.net/app/<app-name>/<path>
+http://<nas-ip>:<http-port>/app/<app-name>/<path>
+https://<nas-ip>:<https-port>/app/<app-name>/<path>
+```
+
+两种入口均由 fnOS 校验 `fnos-token` 后转给应用；本地可达不代表免登录。
+`mode=relay` 与远程访问码属于 FN Connect 入口，本地 Web 入口不依赖这些 Cookie。
+浏览器不会自动向 NAS IP 发送 FN Connect 域名下的 host-only Cookie，Secure Cookie
+也不会自动用于 HTTP；两种地址的浏览器 Cookie 作用域不同。
+
+本地 HTTPS 的可用性、HTTP 到 HTTPS 的跳转由 NAS 配置决定；证书验证规则仍适用。
+缺少或失效 token 的请求可能返回 HTTP 200、纯文本 `invalid token`，不能仅以状态码
+判断认证成功。具体响应与访问码挑战见下文。
 
 ## WebSocket RPC 与登录会话
 
@@ -137,7 +161,7 @@ Upgrade: websocket
 | --- | --- |
 | `token` | 短期登录 token |
 | `longToken` | 长期会话恢复 token |
-| `secret` | Base64 编码的请求签名密钥 |
+| `secret` | CLI 原生登录返回 Base64 编码的请求签名密钥；Web 加密登录的响应需先解密，见下文 |
 | `backId` | 请求上下文标识 |
 | `uid` | 用户 ID |
 | 管理员标记 | 当前账号的管理员身份信息 |
@@ -185,6 +209,10 @@ Base64(HMAC-SHA256(Base64Decode(secret), jsonBody)) + jsonBody
 恢复响应可能只返回新的短 token 和 `backId`。省略 `longToken` 或 `secret` 不表示
 原有对应字段已失效。
 
+`user.authToken` 认证现有短 token，`user.tokenLogin` 使用长期授权恢复会话。
+前者不保证能够恢复已过期的短 token；网络超时或应用自身返回的 401 也不能证明
+fnOS 登录 token 已失效。
+
 ### Web 加密登录
 
 Web 登录使用 `util.crypto.getRSAPub` 获取 RSA 公钥及 `si`；也可由 `util.getSI` 获取
@@ -208,6 +236,31 @@ Web 登录使用 `util.crypto.getRSAPub` 获取 RSA 公钥及 `si`；也可由 `
 内层登录方法仍为 `user.login`，Web 会话使用 `deviceType="Browser"`。
 加密握手响应的 `reqid` 可能不同于内层请求的 `reqid`。
 Web 与 CLI 登录可分别签发会话；两者的 token 不应被视为同一个会话标识。
+
+Web 加密登录响应中的 `secret` 是 AES 密文。使用本次登录的 AES key 与 IV 做 CBC
+解密并去除 PKCS#7 填充，得到的是**原始二进制 HMAC 密钥**；然后将这些字节编码为
+Base64 保存。网页对应逻辑为 `AES.decrypt(...).toString(Base64)`，不能把解密结果先当作
+UTF-8 / Base64 文本再解码，否则会拒绝有效密钥或使用错误的签名 key。
+
+### Web 保持登录与活动维护
+
+网页的“保持登录”不仅影响登录请求的 `stay`，还包含本地保存和恢复逻辑：
+
+| 项目 | 网页行为 |
+| --- | --- |
+| `stay` | 登录及 OTP 验证传递保持登录选项 `stay` |
+| `fnos-token` | 短 token，网页使用未指定固定到期时间的会话 Cookie |
+| `fnos-long-token` | 长期 token，网页 Cookie 保存期限为 30 天 |
+| `localStorage["fnos-Secret"]` | 解密后的二进制签名密钥经 Base64 编码保存 |
+| `localStorage["os-keep-login"]` | `"1"` 表示启用自动恢复 |
+| 会话恢复 | 先 `user.authToken`；被拒绝且保持登录开启时，用长期 token 调用 `user.tokenLogin` |
+| 设备身份 | Web 会话使用 `deviceType: "Browser"` 及对应设备身份 |
+| 心跳 | 主 WebSocket 约每 15 秒发送 `{"req":"ping"}`，接收 `{"res":"pong"}` |
+| 活动维护 | 网页在响应处理等链路触发 `user.active`，以 60 秒间隔节流；不是短 token 到期时间 |
+
+网页另有 **1 小时**无鼠标/键盘活动后的前端检查：没有长期 token 且未开启保持登录时，
+后续请求可触发退出。这不是服务端短 token 的 1 小时有效期。30 天也只是网页对长期
+Cookie 的保存期限，不能保证服务端在这段时间内始终接受该 token。
 
 ### 网关 Cookie 与认证响应
 

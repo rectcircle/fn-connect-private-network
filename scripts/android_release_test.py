@@ -20,7 +20,7 @@ class AndroidReleaseTests(unittest.TestCase):
             path.with_name(name+'.verification.json').write_text(json.dumps(record))
 
     def test_rejects_foreign_dirty_debug_or_unsigned_candidates(self):
-        mutations = [lambda x:None, lambda x:x.update(variant='debug'),
+        mutations = [lambda x:None, lambda x:x.update(variant='debug'), lambda x:x.update(localValidation=True),
                      lambda x:x['build'].update(commit='other'),lambda x:x['build'].update(dirty=True),
                      lambda x:x.update(signingCertificateSha256='wrong'),lambda x:x.update(sha256='wrong'),
                      lambda x:x.update(checks=[]),lambda x:x.update(nativeSha256={'wrong':'hash'}),
