@@ -5,7 +5,7 @@ const path = require('node:path');
 const vm = require('node:vm');
 const root = path.resolve(__dirname, '../../..');
 const pin = JSON.parse(fs.readFileSync(path.join(root, 'apps/harmonyos/toolchains.json')));
-const cli = path.join(process.env.HOME, '.local/opt/harmonyos/command-line-tools', pin.cli.version);
+const cli = path.join(process.env.HOME, '.local/opt/harmonyos/command-line-tools', pin[process.platform === 'linux' ? 'linuxCli' : 'cli'].version);
 const ts = require(path.join(cli, 'hvigor/hvigor/node_modules/typescript'));
 let systemLanguage = 'zh-Hans';
 function load(relative) {
