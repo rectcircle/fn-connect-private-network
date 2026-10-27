@@ -39,6 +39,10 @@ def check(root, system, run=subprocess.run):
         result = run(['nix', '--extra-experimental-features', 'nix-command flakes',
                       'build', '--no-link', '--no-update-lock-file', '--rebuild',
                       '--impure', '--expr', expression], cwd=root, env=environment)
+        if result.returncode:
+            raise RuntimeError('UI dependency isolation failed: local source and version changes '
+                               'must not affect external dependency output. Check the Nix packaging; '
+                               'do not accept a new hash for this test.')
     if result.returncode:
         raise RuntimeError('Nix Go dependencies failed verification. For a hash mismatch, run '
                            f'scripts/update-nix-go-hashes.sh --system {system}, review nix/go-hashes.json, then rerun --check.')

@@ -27,6 +27,12 @@ class HashTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, 'update-nix-go-hashes.sh'):
             hashes.check(Path('/source'), 'x86_64-linux', lambda *a, **k: subprocess.CompletedProcess(a, 1))
 
+    def test_local_source_isolation_failure_cannot_be_accepted_as_a_hash_update(self):
+        def run(command, **kwargs):
+            return subprocess.CompletedProcess(command, int('--expr' in command))
+        with self.assertRaisesRegex(RuntimeError, 'do not accept a new hash'):
+            hashes.check(Path('/source'), 'x86_64-linux', run)
+
     def fixture(self, root):
         (root/'nix').mkdir()
         target = root/'nix/go-hashes.json'
