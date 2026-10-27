@@ -11,6 +11,7 @@
 | Linux | 下表列明的 systemd 常规发行版 | Core/UI 双包；已有容器矩阵及 Debian 13 arm64 验证，其他发行版实机集成仍待验收 |
 | Nix / NixOS | x86_64-linux、aarch64-linux | Flake 源码构建、NixOS 模块；双架构构建和前端启动已验证，NixOS 实机集成待验收 |
 | iOS / iPadOS | iOS 15.0 起的构建目标；ARM64 设备与本机架构模拟器 | 1.1.5 新增未签名 IPA；设备证书重签自测通过，最终草稿验收见验证记录 |
+| HarmonyOS | API20+，ARM64；手机/折叠屏/平板/PC/2in1 | 未签名 HAP，需自行签名；云真机功能测试通过，智慧屏不支持；发布门槛见验证记录 |
 | Android | 当前配置 Android 8.0 / API 26 起，arm64-v8a、x86_64 | 提供正式签名 APK；移动端开发自测完成，最终草稿仍需同 commit 核验 |
 
 Linux 目标以 [targets.json](../packaging/linux/targets.json) 为唯一机器可读清单，以下保留 2026-10-21 核对结果，不自动承诺未来版本：
@@ -107,3 +108,31 @@ Duo 布局在模拟器验证；不据此承诺真实 Duo 或全部 iPad 多窗�
 发布资产为未签名 IPA，不能直接安装；使用带 Packet Tunnel 权限的配套材料重签。
 安装：[中文](ios-installation.zh-CN.md) / [English](ios-installation.en.md)。
 最终版本证据见 [验收记录](validation.md)，构建见 [开发文档](development.md#iosipados-开发构建与模拟器)。
+
+## HarmonyOS
+
+手机（含不同展开比例的折叠屏）、平板、PC/2in1 使用同一 ARM64 HAP，最低 API20。
+官方 CLI/SDK 固定26.0.0.851，采用社区 Go 的固定快照
+`b637b8617624655906b737977f50de5280bf7f65`（go1.27.2-hmos-devel），不是官方 Go 平台支持。
+使用 `GOOS=openharmony`、cgo、SDK Clang/sysroot 和外部链接；不能用普通 GOOS=linux 替代。
+该快照采用 TLSDESC，禁用异步抢占/CPU profiling，不支持 race/MSan/ASan；发布前仍需压力和
+生命周期验证。工具选择以 [固定源码说明](https://github.com/ZxillyFork/go-hmos/blob/b637b8617624655906b737977f50de5280bf7f65/doc/openharmony.md)
+及 `apps/harmonyos/toolchains.json` 为准，不追随移动分支。
+
+系统 VPN 使用 VpnExtensionAbility 的 fd 与 socket protect，不使用 Linux /dev/net/tun 或 netlink。
+设备还需具备 NetManager.Vpn、AssetStore 等能力并完成授权；不支持时明确阻止连接，
+不会降级成模拟器模式。智慧屏暂不纳入支持，不声明 tv 设备、不提供 TV 构建或候选包；
+后续具备真实测试环境后再评估 API26 系统 VPN、遥控交互与待机恢复。
+
+手机控制中心当前未找到适用于普通三方应用、等价 Android TileService 的公开 API；
+PC quickBarManager 与鸿蒙智联设备入口不能替代手机连接开关，故本版不提供该入口。
+设备 API 依据[VPN 增强管理](https://developer.huawei.com/consumer/cn/doc/doccenter-references/api/js-apis-net-vpnextension)，
+窗口设计依据[PC 适配指南](https://developer.huawei.com/consumer/cn/multidevice/pc/adapt)与
+[子窗口指南](https://developer.huawei.com/consumer/cn/doc/HarmonyOS-Guides/subwindow-guide)。
+
+用户已反馈手机/折叠屏/平板/PC 当前测试可用；该反馈不代替发布产物核验、更多网络与长期生命周期验收。
+
+公开分发提供 release 构建模式的未签名 HAP，暂未上架应用市场。用户可尝试使用自己的
+实名认证开发者账号，通过 HapSign 或 HAP Resigner 获取设备绑定调试签名并安装，通常需要电脑。
+功能已通过云真机调试验证；维护者暂无华为实体设备，跨账号同包名申请 Test Profile 及自行安装
+的完整链路尚未验证，不承诺普通设备直接点击 HAP 即可安装。具体步骤见根 README。

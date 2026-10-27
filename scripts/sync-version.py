@@ -17,6 +17,17 @@ updates = {
 wails_config = root / 'ui/wails.json'
 if wails_config.exists():
     updates[wails_config] = (r'("productVersion"\s*:\s*")[^"]+(")', rf'\g<1>{version}\g<2>')
+harmony_app = root / 'apps/harmonyos/AppScope/app.json5'
+if harmony_app.exists():
+    number = (root / 'apps/harmonyos/BUILD_NUMBER').read_text().strip()
+    if not re.fullmatch(r'[1-9][0-9]*', number) or int(number) > 2147483647:
+        raise SystemExit('HarmonyOS BUILD_NUMBER must be a positive 32-bit integer')
+    # Fold both fields into a single replacement to preserve --check semantics.
+    updates[harmony_app] = (r'("version(?:Name|Code)"\s*:\s*)("[^"\n]*"|[0-9]+)',
+        lambda match: match[1] + (str(number) if 'versionCode' in match[1] else '"' + version + '"'))
+    for qualifier in ['base', 'en_US']:
+        resource = root / f'apps/harmonyos/entry/src/main/resources/{qualifier}/element/string.json'
+        updates[resource] = (r'("name"\s*:\s*"product_version",\s*"value"\s*:\s*")[^"]+("\s*)', rf'\g<1>{version}\g<2>')
 # All package metadata uses the same numeric product version.
 plist_path = root / 'packaging/macos/Info.plist'
 
@@ -36,7 +47,7 @@ for path, (pattern, replacement) in updates.items():
         after, product_count = re.subn(r'(<key>FnCPNProductVersion</key>\s*<string>)[^<]+(</string>)', rf'\g<1>{version}\g<2>', after)
         if product_count != 1:
             raise SystemExit('Missing product version in Info.plist')
-    if count != 1:
+    if count != (2 if path == harmony_app else 1):
         raise SystemExit(f'Missing or duplicate version field: {path}')
     if before != after:
         if args.check:

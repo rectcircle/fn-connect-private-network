@@ -504,7 +504,7 @@ func (v *clientView) execute(operation func(context.Context) error) {
 			v.syncBackGesture()
 			if err != nil {
 				if v.editing {
-					v.message.SetText(err.Error())
+					v.message.SetText(loginErrorMessage(err))
 					v.message.Show()
 				} else {
 					v.diagnosticBody.Importance = widget.DangerImportance

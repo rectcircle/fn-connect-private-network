@@ -1,0 +1,66 @@
+name: HarmonyOS
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        type: string
+        required: true
+      ref:
+        description: Full candidate commit SHA
+        type: string
+        required: true
+  workflow_call:
+    inputs:
+      version:
+        type: string
+        required: true
+      ref:
+        type: string
+        required: true
+permissions:
+  contents: read
+jobs:
+  build:
+    # macOS ARM64 runner with manually imported official CLI. No signing identity required.
+    runs-on: harmonyos-26
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.ref }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.27.1'
+      - name: Verify immutable candidate and prepared official CLI
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+          RELEASE_COMMIT: ${{ inputs.ref }}
+        run: |
+          test "$(uname -s)" = Darwin
+          test "$(uname -m)" = arm64
+          python3 scripts/check-release-candidate.py
+          python3 scripts/harmonyos/setup_macos.py --check
+      - name: Prepare pinned community Go and run checks
+        run: |
+          bash scripts/setup-harmonyos-macos.sh
+          bash scripts/check-harmonyos.sh
+          python3 scripts/harmonyos_release_test.py
+      - name: Build unsigned system VPN candidate
+        run: |
+          bash scripts/build-harmonyos.sh --release
+          bash scripts/package-harmonyos.sh --release
+      - name: Verify unsigned publication candidate
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+          RELEASE_COMMIT: ${{ inputs.ref }}
+        run: |
+          PYTHONPATH=scripts python3 -c 'import os; from harmonyos_release import candidates; candidates("dist", os.environ["RELEASE_VERSION"], os.environ["RELEASE_COMMIT"])'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: harmonyos-release-candidates-${{ inputs.ref }}
+          path: |
+            dist/harmonyos/*-harmonyos-arm64-release-unsigned.hap
+            dist/harmonyos/build-manifest-release.json
+          if-no-files-found: error

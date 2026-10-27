@@ -17,6 +17,7 @@ export function describeFailure(error,L=identity) {
  if(!error)return '';
  let summary=factorMessages[error.remoteCode];
  if(error.code==='VERSION_INCOMPATIBLE') summary=L(error.upgradeTarget==='client'?'版本不兼容，请升级客户端。':'版本不兼容，请升级服务端。')+` ${L('客户端 {0}，服务端 {1}',error.clientVersion||'?',error.serverVersion||'?')}`;
+ else if(['UNAVAILABLE','TIMEOUT'].includes(error.code)&&error.operation==='native_session.connect') summary=L('服务不可用。请检查网络连接、NAS 上的 FN Connect 是否已启用，以及 FN Connect ID 是否正确。');
  else summary=L(summary||error.message||error.code||'操作失败，请重试或查看诊断详情。');
  const details=[error.code,error.message,error.operation,error.httpStatus&&`HTTP ${error.httpStatus}`,error.remoteCode,error.detail,error.requestId].filter(Boolean).join(': ');
  return `${summary}\n${L('详细信息')}: ${details}`+(error.releaseURL?`\n${L('版本下载：{0}',error.releaseURL)}`:'');

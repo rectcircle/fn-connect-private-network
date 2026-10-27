@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"github.com/rectcircle/fn-connect-private-network/mobile/internal/support"
+	"github.com/rectcircle/fn-connect-private-network/internal/support"
 	"io"
 	"os"
 	"path/filepath"

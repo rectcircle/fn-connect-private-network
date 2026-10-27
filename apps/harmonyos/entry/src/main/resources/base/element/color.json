@@ -1,0 +1,48 @@
+{
+  "color": [
+    {
+      "name": "page_background",
+      "value": "#F4F6FA"
+    },
+    {
+      "name": "foreground",
+      "value": "#171B21"
+    },
+    {
+      "name": "secondary",
+      "value": "#6F7985"
+    },
+    {
+      "name": "primary",
+      "value": "#0066FF"
+    },
+    {
+      "name": "surface",
+      "value": "#FFFFFF"
+    },
+    {
+      "name": "start_background",
+      "value": "#F4F6FA"
+    },
+    {
+      "name": "success",
+      "value": "#248A3D"
+    },
+    {
+      "name": "danger",
+      "value": "#B3261E"
+    },
+    {
+      "name": "divider",
+      "value": "#CCD2DB"
+    },
+    {
+      "name": "control_background",
+      "value": "#EBEEF3"
+    },
+    {
+      "name": "on_primary",
+      "value": "#FFFFFF"
+    }
+  ]
+}

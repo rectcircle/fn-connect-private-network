@@ -306,6 +306,7 @@ std::wstring FailureMessage(const JsonObject& failure) {
     if (failure.Size() == 0) return {};
     const auto code = JsonString(failure, L"code");
     const auto operation = JsonString(failure, L"operation");
+    if ((code == L"UNAVAILABLE" || code == L"TIMEOUT") && operation == L"native_session.connect") return L("服务不可用。请检查网络连接、NAS 上的 FN Connect 是否已启用，以及 FN Connect ID 是否正确。");
     if (code == L"AUTH_REQUIRED") return operation.find(L"native_session.authenticate") != std::wstring::npos ? L("用户名或密码无效，请重试") : L("登录已失效，请重新输入密码");
     if (code == L"FAILED_PRECONDITION") {
         const auto remote = JsonString(failure, L"remoteCode");

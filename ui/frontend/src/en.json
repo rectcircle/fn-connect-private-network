@@ -317,5 +317,6 @@
   "技术详情": "Technical details",
   "未找到当前连接可用的地址": "No address available for the current connection",
   "解析失败，请展开技术详情查看原因。": "Resolution failed. Expand technical details for the cause.",
-  "上一步": "Back"
+  "上一步": "Back",
+  "服务不可用。请检查网络连接、NAS 上的 FN Connect 是否已启用，以及 FN Connect ID 是否正确。": "Service unavailable. Check your network connection, whether FN Connect is enabled on the NAS, and whether the FN Connect ID is correct."
 }

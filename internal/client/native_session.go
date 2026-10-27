@@ -770,10 +770,14 @@ func nativeAuthenticationError(message string, response map[string]any) error {
 
 func nativeTransportError(operation string, err error) error {
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-		return model.WithOperation(model.AsError(err), "native_session."+operation)
+		failure := model.AsError(err)
+		if operation == "connect" && errors.Is(err, context.DeadlineExceeded) {
+			failure.Message = "Service unavailable. Check your network connection, whether FN Connect is enabled on the NAS, and whether the FN Connect ID is correct."
+		}
+		return model.WithOperation(failure, "native_session."+operation)
 	}
 	return model.WithOperation(model.NormalizeError(
-		err, model.ErrorUnavailable, "fnOS authentication service is unavailable", true,
+		err, model.ErrorUnavailable, "Service unavailable. Check your network connection, whether FN Connect is enabled on the NAS, and whether the FN Connect ID is correct.", true,
 	), "native_session."+operation)
 }
 

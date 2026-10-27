@@ -206,6 +206,23 @@ HTTP 生成 `X-Request-ID`；服务端日志的 `http_request_id` 标识当前 H
 fnOS 生命周期失败也写 stderr 和应用中心的临时错误文件，不跨属主写业务日志。
 日志轮转上限 10 MiB，保留 5 份。macOS 安装阶段脚本输出由系统安装器收集。
 
+### HarmonyOS 日志与导出
+
+应用私有 `logs/client.log` 记录共享客户端事件，`logs/privileged.log` 记录平台调用事件，
+最多各保留两代轮转备份；日志页只列实际存在且非空的文件。预览/复制限制最近64KiB，
+默认滚到末尾，异步剪贴板完成后显示 Toast。完整脱敏诊断 ZIP 复用共享 `internal/support`，
+包含 support.json、snapshot.json、README.txt 和存在的日志；不会把 ZIP 挤入256KiB IPC帧。
+
+“打开目录”将完整日志复制到系统 DOWNLOAD 返回的目录（通常为 `Download/cn.rectcircle.fncpn/`）
+内的 `fncpn-logs-<时间戳>` 子目录，再拉起华为文件管理应用；它是日志副本，不暴露私有身份或凭据。
+文件管理器对目录提示的支持取决于系统，拉起失败保留导出并提示位置。
+
+云真机可从平台导出 HiLog；本地连接设备可用官方 `hdc -t <target> shell hilog -x`。
+筛选 `FnCPNStartup`（页面/窗口初始化）、`FnCPNUI`、`FnCPNAdmin`（独立后台会话检查）和
+`FnCPNNetwork`（DNS、protect、VPN建立/清理）标签。系统业务错误保留 code/message，
+避免 `[object Object]`。底层技术细节保留原文用于排障，用户操作提示提供中英翻译。
+
+
 ## 脱敏与正常退出
 
 - 不记录请求/响应完整 Header、Cookie、凭据文件、私钥、WireGuard UAPI 或报文内容。

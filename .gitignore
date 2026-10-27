@@ -15,3 +15,15 @@
 __pycache__/
 
 /ios/**/xcuserdata/
+
+/apps/harmonyos/.hvigor/
+/apps/harmonyos/oh_modules/
+/apps/harmonyos/entry/oh_modules/
+/apps/harmonyos/entry/build/
+/apps/harmonyos/entry/.cxx/
+/apps/harmonyos/entry/libs/
+/apps/harmonyos/local.properties
+/apps/harmonyos/entry/.preview/
+
+/apps/harmonyos/entry/src/main/resources/rawfile/THIRD_PARTY_NOTICES.md
+/apps/harmonyos/entry/src/main/resources/rawfile/COMMUNITY_GO_LICENSE

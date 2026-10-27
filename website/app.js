@@ -42,8 +42,8 @@ Object.assign(translations, {
   "Mac、Windows、Android 按架构选择安装包；Linux 使用自动安装脚本，按桌面环境安装 UI 或无头 Core。": "Choose a package for your Mac, Windows PC or Android device. On Linux, the installer selects the desktop UI or headless Core.",
   "Mac 与 Windows 原生客户端，Android 提供 Fyne 移动界面，Linux 提供桌面 UI 和无头 Core。桌面端支持简体中文与英文，命令行也能查看状态与控制连接。": "Native apps for Mac and Windows, a Fyne mobile UI for Android, and a desktop UI or headless Core for Linux. The command line also controls connections and shows status.",
   "管理员先在 NAS 上安装并配置 FnCPN。每位成员在自己的电脑或 Android 手机安装客户端，用各自的 fnOS 账号授权连接，无需共享账号密码。请按实际需要设置 LAN 访问范围；私有网络连接不能替代 NAS 与内网应用自身的账号权限。": "An administrator installs FnCPN on the NAS. Each member installs the client on their computer or Android phone and signs in with their own fnOS account. Configure LAN access as needed; the network connection does not replace application permissions.",
-  "适合自己、家人或团队成员，用各自的 fnOS 账号授权 Mac / Windows / Linux / Android 访问 NAS 和已启用的 LAN 网段；每台设备需要安装客户端。": "For you, family or team members to authorize Mac, Windows, Linux, Android, iPhone or iPad devices with their own fnOS accounts. Each device needs the client to access the NAS and enabled LAN subnets.",
-  "无论是自己的文件、家人的 NAS，还是团队的共享资源，都能从 Mac、Windows、Linux、Android、iPhone 或 iPad 连接 fnOS NAS 和局域网。无需自建中转服务器，无需为每个服务逐一配置端口暴露，也无需手动配置密钥与路由。让熟悉的访问方式，不受地点限制。": "Access your files, family NAS and team resources from Mac, Windows, Linux, Android, iPhone or iPad. Connect to fnOS and your LAN without building a relay, exposing services one by one, or configuring keys and routes by hand."
+  "适合自己、家人或团队成员，用各自的 fnOS 账号授权 Mac / Windows / Linux / Android / HarmonyOS 访问 NAS 和已启用的 LAN 网段；每台设备需要安装客户端。": "For you, family or team members to authorize Mac, Windows, Linux, Android, iPhone, iPad or HarmonyOS devices with their own fnOS accounts. Each device needs the client to access the NAS and enabled LAN subnets.",
+  "无论是自己的文件、家人的 NAS，还是团队的共享资源，都能从 Mac、Windows、Linux、Android、iPhone、iPad 或鸿蒙设备 连接 fnOS NAS 和局域网。无需自建中转服务器，无需为每个服务逐一配置端口暴露，也无需手动配置密钥与路由。让熟悉的访问方式，不受地点限制。": "Access your files, family NAS and team resources from Mac, Windows, Linux, Android, iPhone, iPad or HarmonyOS devices. Connect to fnOS and your LAN without building a relay, exposing services one by one, or configuring keys and routes by hand."
 });
 Object.assign(translations, {
  'iOS 15.0+ 构建目标 · ARM64':'iOS 15.0+ build target · ARM64',
@@ -53,6 +53,15 @@ Object.assign(translations, {
  '维护者已验证 DxSign、KravaSign；其他证书服务未验证。下载前请先阅读签名与安装教程。':'The maintainer has verified DxSign and KravaSign; other certificate services are untested. Read the signing and installation guide before downloading.',
  '仅对应版本公开后可下载；草稿不对公众开放。':'Downloads are available once the corresponding version is public; drafts are not public.',
  '签名与安装教程 ↗':'Signing and installation guide ↗'
+});
+Object.assign(translations, {
+ '手机（含折叠屏）、平板、PC / 二合一；智慧屏暂不支持。': 'Phones (including foldables), tablets and PCs / 2-in-1s. TVs are not supported.',
+ "下载未签名 HAP ↗": "Download unsigned HAP \u2197",
+ '1.1.6 起纳入发布清单；仅对应版本公开后可下载，草稿不对公众开放。': 'Included in release inventories from 1.1.6. Downloads become available after publication; drafts are not public.',
+ "暂未上架华为应用市场；登录和 VPN 连接等功能已通过华为云真机调试验证。": "Not yet listed on Huawei AppGallery. Features including sign-in and VPN connections have been tested on Huawei cloud devices.",
+ "未签名 HAP 不能直接安装。可尝试使用自己的实名认证华为开发者账号，通过 HapSign 自行签名安装，通常需要电脑和设备调试授权。": "Unsigned HAPs cannot be installed directly. Try signing with HapSign using your own identity-verified Huawei developer account; a computer and device debugging authorization are usually required.",
+ "维护者暂无华为实体设备，跨账号同包名的自行签名安装流程尚未验证，用户可自行尝试并反馈。": "The maintainer has no physical Huawei device. Cross-account signing of the same package name remains unverified; users may try it and report results.",
+ '鸿蒙安装与升级说明 ↗': 'HarmonyOS installation and upgrade guide ↗'
 });
 const downloadTabs = [...document.querySelectorAll('[data-download-platform]')];
 const downloadTabBar = document.querySelector('.download-tabs');
@@ -165,7 +174,7 @@ function setLanguage(language) {
   }
   const svgLabels = document.querySelectorAll('.network-svg[aria-label]');
   svgLabels.forEach(node => node.setAttribute('aria-label', language === 'en' ? 'Laptop connected through an encrypted tunnel to a dual bay fnOS NAS on a local network' : '笔记本通过加密隧道进入本地局域网，连接内网中的双盘位 fnOS NAS，连接示意'));
-  document.querySelectorAll('meta[name="description"],meta[property="og:description"]').forEach(meta => meta.content = language === 'en' ? 'Connect from Mac, Windows, Linux, Android, iPhone or iPad to your fnOS NAS and home network with automatic LAN, IPv6, and FN Connect relay paths.' : 'FnCPN 让个人、家人和团队从 Mac、Windows、Linux、Android、iPhone 或 iPad 自动连接 fnOS NAS 和局域网，支持局域网直达、IPv6 直连与 FN Connect 中继。');
+  document.querySelectorAll('meta[name="description"],meta[property="og:description"]').forEach(meta => meta.content = language === 'en' ? 'Connect from Mac, Windows, Linux, Android, iPhone or iPad to your fnOS NAS and home network with automatic LAN, IPv6, and FN Connect relay paths.' : 'FnCPN 让个人、家人和团队从 Mac、Windows、Linux、Android、iPhone、iPad 或鸿蒙设备 自动连接 fnOS NAS 和局域网，支持局域网直达、IPv6 直连与 FN Connect 中继。');
   if (activeRoute) selectRoute(activeRoute);
 }
 document.querySelectorAll('a[href^="#"]').forEach(a => a.addEventListener('click', () => {siteNav.classList.remove('is-open'); menuToggle.setAttribute('aria-expanded','false');}));

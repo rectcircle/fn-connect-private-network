@@ -176,9 +176,16 @@ jobs:
     with:
       version: ${{ inputs.version }}
       ref: ${{ inputs.commit }}
+  harmonyos-build:
+    needs: candidate
+    if: ${{ !inputs.publish }}
+    uses: ./.github/workflows/build-harmonyos.yml
+    with:
+      version: ${{ inputs.version }}
+      ref: ${{ inputs.commit }}
   release:
     if: ${{ !inputs.publish }}
-    needs: [windows-build, linux-build, nix-check, android-build, ios-build, fnos-check]
+    needs: [windows-build, linux-build, nix-check, android-build, ios-build, harmonyos-build, fnos-check]
     runs-on: macos-15
     env:
       DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
@@ -235,6 +242,10 @@ jobs:
         with:
           name: ios-release-candidates-${{ inputs.commit }}
           path: dist/ios
+      - uses: actions/download-artifact@v4
+        with:
+          name: harmonyos-release-candidates-${{ inputs.commit }}
+          path: dist/harmonyos
       - name: Build release draft
         if: ${{ !inputs.publish }}
         run: ./scripts/build-all.sh

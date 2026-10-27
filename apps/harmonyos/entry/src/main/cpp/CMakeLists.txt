@@ -1,0 +1,5 @@
+cmake_minimum_required(VERSION 3.16)
+project(fncpnbridge)
+set(CMAKE_CXX_STANDARD 17)
+add_library(fncpnbridge SHARED bridge.cpp)
+target_link_libraries(fncpnbridge PUBLIC libace_napi.z.so libhilog_ndk.z.so dl)

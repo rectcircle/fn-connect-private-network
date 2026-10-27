@@ -1,0 +1,72 @@
+{
+  "module": {
+    "name": "entry",
+    "type": "entry",
+    "mainElement": "EntryAbility",
+    "deviceTypes": [
+      "phone",
+      "tablet",
+      "2in1"
+    ],
+    "deliveryWithInstall": true,
+    "installationFree": false,
+    "pages": "$profile:main_pages",
+    "abilities": [
+      {
+        "name": "EntryAbility",
+        "srcEntry": "./ets/entryability/EntryAbility.ets",
+        "exported": true,
+        "label": "$string:app_name",
+        "icon": "$media:icon",
+        "startWindowIcon": "$media:icon",
+        "startWindowBackground": "$color:start_background",
+        "skills": [
+          {
+            "entities": [
+              "entity.system.home"
+            ],
+            "actions": [
+              "action.system.home"
+            ]
+          }
+        ],
+        "supportWindowMode": [
+          "fullscreen",
+          "split",
+          "floating"
+        ]
+      },
+      {
+        "name": "AdminAbility",
+        "srcEntry": "./ets/adminability/AdminAbility.ets",
+        "exported": false,
+        "launchType": "singleton",
+        "label": "$string:app_name",
+        "icon": "$media:icon",
+        "supportWindowMode": [
+          "fullscreen",
+          "split",
+          "floating"
+        ],
+        "startWindowIcon": "$media:icon",
+        "startWindowBackground": "$color:start_background"
+      }
+    ],
+    "extensionAbilities": [
+      {
+        "name": "VpnAbility",
+        "srcEntry": "./ets/vpnability/VpnAbility.ets",
+        "type": "vpn",
+        "exported": false
+      }
+    ],
+    "requestPermissions": [
+      {
+        "name": "ohos.permission.INTERNET"
+      },
+      {
+        "name": "ohos.permission.GET_NETWORK_INFO"
+      }
+    ]
+  }
+}

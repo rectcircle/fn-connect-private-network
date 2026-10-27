@@ -48,6 +48,11 @@ private func additionalCredentialMessage(_ failure: [String: Any]) -> String? {
 }
 
 private func failureSummary(_ failure: [String: Any]) -> String {
+    if ["UNAVAILABLE", "TIMEOUT"].contains(failure["code"] as? String ?? ""),
+       failure["operation"] as? String == "native_session.connect" {
+        return L("服务不可用。请检查网络连接、NAS 上的 FN Connect 是否已启用，以及 FN Connect ID 是否正确。")
+    }
+
     if failure["code"] as? String == "VERSION_INCOMPATIBLE" {
         let target = failure["upgradeTarget"] as? String
         let instruction = target == "client" ? L("版本不兼容，请升级客户端。") : L("版本不兼容，请升级服务端。")
@@ -439,6 +444,11 @@ private func loginFailureMessage(_ failure: [String: Any]?) -> String {
     guard let failure else { return "" }
 
     if let message = additionalCredentialMessage(failure) { return message }
+
+    if ["UNAVAILABLE", "TIMEOUT"].contains(failure["code"] as? String ?? ""),
+       failure["operation"] as? String == "native_session.connect" {
+        return L("服务不可用。请检查网络连接、NAS 上的 FN Connect 是否已启用，以及 FN Connect ID 是否正确。")
+    }
 
     switch failure["code"] as? String ?? "" {
     case "AUTH_REQUIRED":

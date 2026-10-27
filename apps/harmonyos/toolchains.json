@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "hostGoVersion": "go1.27.1",
+  "downloadPage": "https://developer.huawei.com/consumer/cn/download/",
+  "cli": {
+    "version": "26.0.0.851",
+    "sha256": "4c7f0eabd5c96a5a54f5e892c1cf8cf580154d6100d0d1fa6be23e189e33b771",
+    "architecture": "arm64",
+    "archive": "commandline-tools-mac-arm64-26.0.0.851.zip",
+    "status": "Installed and native C compilation verified on macOS arm64",
+    "downloadMode": "authenticated-browser"
+  },
+  "goPort": {
+    "repository": "https://github.com/ZxillyFork/go-hmos.git",
+    "installCommit": "b637b8617624655906b737977f50de5280bf7f65",
+    "version": "go1.27.2-hmos-devel",
+    "status": "Experimental community toolchain; target runtime not verified"
+  }
+}

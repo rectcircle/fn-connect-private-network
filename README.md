@@ -1,12 +1,13 @@
 # FN Connect Private Network
 
-从 Mac、Windows、Linux、Android、iPhone 或 iPad 连接 fnOS NAS 和家庭局域网。FnCPN 自动选择局域网直达、IPv6 直连或 FN Connect 中继，无需手动配置密钥与路由。
+从 Mac、Windows、Linux、Android、iPhone、iPad 或鸿蒙设备连接 fnOS NAS 和家庭局域网。FnCPN 自动选择局域网直达、IPv6 直连或 FN Connect 中继，无需手动配置密钥与路由。
 
 ## 使用条件
 
 - Apple Silicon 或 Intel Mac，macOS 13 或更新版本。
 - Windows 客户端：Windows 10 22H2（build 19045）或更新的 ARM64/x64 系统，不支持 32 位或 Windows Server。Windows 10 和原生 x64 已由用户完成验收。
 - Linux 客户端：Debian 12/13、Ubuntu 22.04/24.04/26.04/26.10、Fedora 43/44、openSUSE Leap 16.0/Tumbleweed（amd64/arm64），以及官方 Arch Linux（amd64）；需要 systemd。NixOS 使用 [Flake 模块](docs/development.md#nix-flake-与-nixos)，不支持 Alpine。
+- HarmonyOS 原生客户端：API20+、ARM64，支持手机（含折叠屏）、平板、PC/二合一；提供未签名 HAP，需用户自行调试签名安装，智慧屏暂不支持。
 - iOS/iPadOS 客户端：构建目标 iOS 15.0 起，ARM64；仅提供未签名 IPA，需具备 Packet Tunnel 权限的签名材料。安装教程：[中文](docs/ios-installation.zh-CN.md) / [English](docs/ios-installation.en.md)。
 - Android 客户端：Android 8.0 / API 26 起，ARM64 与 x86_64；大多数手机选择 ARM64。
 - 已启用 FN Connect 的 fnOS NAS，支持 x86_64 和 ARM64。
@@ -29,6 +30,7 @@ FnCPN 在自身的 fnOS HTTPS/WSS 连接中使用系统信任及内置、指纹�
 | Windows ARM64 | `fncpn-<version>-windows-arm64-unsigned.msi` |
 | iPhone / iPad | `fncpn-<version>-ios-arm64-unsigned.ipa`（需自行签名） |
 | Android ARM64 | `fncpn-<version>-android-arm64-v8a.apk` |
+| HarmonyOS ARM64 | `fncpn-<version>-harmonyos-arm64-release-unsigned.hap`（需自行签名） |
 | Android x86_64 | `fncpn-<version>-android-x86_64.apk` |
 | Windows x64 | `fncpn-<version>-windows-x64-unsigned.msi` |
 | Debian / Ubuntu | `fncpn-{core,ui}-<version>-linux-{amd64,arm64}.deb` |
@@ -58,6 +60,39 @@ Android APK 从 **1.1.4** 起提供；草稿构建完成后需登录有权限的
 Android 只允许一个当前 VPN，与其他 VPN 冲突；主页面返回进入后台，菜单“退出”会断开并暂停自动连接。
 系统强制停止后需手动打开 App；不承诺开机自启、始终开启/锁定模式或厂商省电限制下永久在线。
 诊断页可复制状态、通过系统文件管理器查看日志，菜单可导出经过过滤的诊断 ZIP。
+
+### HarmonyOS：安装与升级
+
+**鸿蒙版暂未上架华为应用市场。应用功能已通过华为云真机调试验证，包括登录和 VPN 连接。**
+支持 API20+、ARM64 的手机（含折叠屏）、平板、PC/二合一；智慧屏暂不支持。
+
+从 **1.1.6 起**提供普通系统 VPN 模式的未签名 HAP：
+`fncpn-<version>-harmonyos-arm64-release-unsigned.hap`。对应版本公开后可从
+[GitHub Releases](https://github.com/rectcircle/fn-connect-private-network/releases) 或官网夸克镜像下载，
+并对照同版本 `SHA256SUMS-<version>` 校验。未签名包不能直接安装，不要选择 `application-tunnel` 模拟器包。
+
+有意愿的用户可尝试自行调试签名安装：
+
+1. 注册并实名认证华为开发者账号。
+2. 手机开启开发者模式和 USB 调试，连接电脑，并确认调试授权。
+3. 使用 [HapSign](https://github.com/guantw/HapSign) 选择未签名 HAP，按提示登录自己的华为账号，
+   申请设备绑定的调试证书和 Profile，在本地签名并通过 HDC 安装。Windows 便携版内置所需工具，
+   不必另装完整 DevEco Studio；其他平台要求请查看工具文档。
+   [HAP Resigner](https://github.com/toads/hap-resigner) 可作为替代工具。
+4. 安装后填写 FN Connect ID 和 fnOS 账号，按提示完成访问码／OTP 和系统 VPN 授权。
+5. 更新时重新签名，并保持相同包名、签名身份及包含当前设备的有效 Profile；保留签名材料，
+   不要先卸载。更换包名或签名身份不承诺保留原有数据。
+
+**自行签名安装尚未验证**：维护者暂无华为实体设备，尚未验证普通用户使用其他开发者账号
+自行签名安装的完整流程，尤其是跨账号为同一已注册包名申请调试 Profile 的兼容性。
+上述工具使用 Test Profile 链路尝试申请，不要求用户先改包名，但不代表华为服务端一定允许。
+用户可自行验证，并通过 Issue 反馈机型、系统版本、签名工具版本及脱敏后的错误信息；
+请勿上传账号令牌、密码或私钥。这项限制针对自行签名安装流程，不代表应用功能未经测试。
+
+构建与维护者本地签名见[开发文档](docs/development.md#harmonyos-开发构建与签名)。
+
+普通退出后再次进入会按原连接意图恢复；显式断开会暂停自动连接。
+日志与诊断入口见[诊断说明](docs/diagnostics.md#harmonyos-日志与导出)。
 
 ### Linux：自动安装
 

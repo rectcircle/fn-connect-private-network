@@ -284,6 +284,7 @@ inline std::wstring L(std::wstring_view source) {
         {L"请输入 fnOS 访问码", L"Enter your fnOS access code"},
         {L"请输入 6 位 OTP", L"Enter a 6-digit OTP"},
         {L"上一步", L"Back"},
+        {L"服务不可用。请检查网络连接、NAS 上的 FN Connect 是否已启用，以及 FN Connect ID 是否正确。", L"Service unavailable. Check your network connection, whether FN Connect is enabled on the NAS, and whether the FN Connect ID is correct."},
     };
     const auto found = catalog.find(source);
     return std::wstring(found == catalog.end() ? source : found->second);
@@ -567,6 +568,7 @@ inline const wchar_t* L(const char* source) {
         {"请输入 fnOS 访问码", {L"Enter your fnOS access code", L"请输入 fnOS 访问码"}},
         {"请输入 6 位 OTP", {L"Enter a 6-digit OTP", L"请输入 6 位 OTP"}},
         {"上一步", {L"Back", L"上一步"}},
+        {"服务不可用。请检查网络连接、NAS 上的 FN Connect 是否已启用，以及 FN Connect ID 是否正确。", {L"Service unavailable. Check your network connection, whether FN Connect is enabled on the NAS, and whether the FN Connect ID is correct.", L"服务不可用。请检查网络连接、NAS 上的 FN Connect 是否已启用，以及 FN Connect ID 是否正确。"}},
     };
     const auto found = catalog.find(source);
     if (found == catalog.end()) return L"";

@@ -15,3 +15,8 @@ test('mobile devices select their own installer; unknown systems do not select a
   assert.equal(detectDownloadPlatform({platform:'MacIntel',maxTouchPoints:5}),'ios');
   assert.equal(detectDownloadPlatform(),null);
 });
+test('HarmonyOS markers take precedence over Android compatibility tokens', () => {
+  assert.equal(detectDownloadPlatform({userAgent:'Mozilla/5.0 (Linux; Android; HarmonyOS 6.0)'}),'harmonyos');
+  assert.equal(detectDownloadPlatform({userAgentData:{platform:'OpenHarmony'}}),'harmonyos');
+  assert.equal(detectDownloadPlatform({userAgent:'Linux; Android 15'}),'android');
+});

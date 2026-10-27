@@ -11,6 +11,7 @@ import tempfile
 from linux_support import release_packages
 from android_release import validate_inventory as validate_android_inventory
 from ios_release import validate_inventory as validate_ios_inventory, verify_ipa
+from harmonyos_release import validate_inventory as validate_harmonyos_inventory, verify_hap
 from rpm_signing import signing_identity
 from release_assets import assets, download_asset, upload_asset, find_release
 
@@ -93,7 +94,10 @@ def publish(directory, repository, make_public=False):
             raise SystemExit('Release inventory is missing matching RPM signing evidence')
     validate_android_inventory(manifest, version)
     validate_ios_inventory(manifest, version)
+    validate_harmonyos_inventory(manifest, version)
     for name in sources:
+        if name.endswith(".hap"):
+            verify_hap(sources[name], version, manifest["build"]["harmonyos"]["buildNumber"])
         if name.endswith(".ipa"):
             verify_ipa(sources[name], version, manifest["build"]["ios"]["buildNumber"])
     commit = run('git', 'rev-parse', 'HEAD')

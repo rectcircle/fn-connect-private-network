@@ -14,6 +14,7 @@ import zipfile
 from release_assets import find_release, download_release
 from linux_support import release_packages
 from ios_release import packages as ios_packages, validate_inventory as validate_ios_inventory, verify_ipa
+from harmonyos_release import packages as harmonyos_packages, validate_inventory as validate_harmonyos_inventory, verify_hap
 from android_release import packages as android_packages, validate_inventory as validate_android_inventory
 
 REPOSITORY = 'rectcircle/fn-connect-private-network'
@@ -154,6 +155,10 @@ def inventory(directory, tag, release, commit):
         required.update(name for _, _, _, name in release_packages(version))
     required.update(android_packages(version))
     required.update(ios_packages(version))
+    required.update(harmonyos_packages(version))
+    validate_harmonyos_inventory(manifest, version)
+    for name in harmonyos_packages(version):
+        verify_hap(directory / name, version, manifest["build"]["harmonyos"]["buildNumber"])
     validate_ios_inventory(manifest, version)
     for name in ios_packages(version):
         verify_ipa(directory / name, version, manifest["build"]["ios"]["buildNumber"])

@@ -5,6 +5,7 @@ from linux_support import TARGETS, BUNDLES, package_name as linux_package_name
 from rpm_signing import signing_identity
 from android_release import candidates as android_candidates
 from ios_release import candidates as ios_candidates
+from harmonyos_release import candidates as harmonyos_candidates
 root, version, revision, arch = sys.argv[1:]
 root = pathlib.Path(root)
 target = root / f"release-{version}.json"
@@ -98,6 +99,8 @@ if tuple(map(int, version.split('.'))) >= (1, 1, 4):
 
 ios_artifacts, ios_build = ios_candidates(root, version, revision)
 artifacts.extend(ios_artifacts)
+harmonyos_artifacts, harmonyos_build = harmonyos_candidates(root, version, revision)
+artifacts.extend(harmonyos_artifacts)
 
 def tool(*command):
     try:
@@ -121,6 +124,8 @@ if tuple(map(int, version.split('.'))) >= (1, 1, 2):
     metadata['build']['linuxTargets'] = list(TARGETS)
     metadata['build']['linuxBundles'] = list(BUNDLES)
     metadata['build']['nixSystems'] = ['x86_64-linux', 'aarch64-linux']
+if harmonyos_build:
+    metadata['build']['harmonyos'] = harmonyos_build
 if ios_build:
     metadata['build']['ios'] = ios_build
 if android_build is not None:

@@ -1,0 +1,5 @@
+cmake_minimum_required(VERSION 3.16)
+project(harmonybridge)
+set(CMAKE_CXX_STANDARD 17)
+add_library(harmonybridge SHARED bridge.cpp)
+target_link_libraries(harmonybridge PUBLIC libace_napi.z.so dl)

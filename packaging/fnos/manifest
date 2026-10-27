@@ -1,7 +1,7 @@
 appname=fncpn
-version=1.1.5
+version=1.1.6
 display_name=CPN - 连接私网
-desc=<p>让任意设备一键连接到 NAS 所在的私有网络。</p><p>Connect any device to the private network of your NAS with one click.</p><p><a href="https://github.com/rectcircle/fn-connect-private-network/releases/tag/v1.1.5" target="_blank" rel="noopener noreferrer">下载当前版本客户端 / Download current version</a></p><p><a href="https://fncpn.rectcircle.cn" target="_blank" rel="noopener noreferrer">官方网站 / Official website</a></p><p><a href="https://fncpn.rectcircle.cn/?donate=1" target="_blank" rel="noopener noreferrer">打赏作者 / Tip the author</a></p>
+desc=<p>让任意设备一键连接到 NAS 所在的私有网络。</p><p>Connect any device to the private network of your NAS with one click.</p><p><a href="https://github.com/rectcircle/fn-connect-private-network/releases/tag/v1.1.6" target="_blank" rel="noopener noreferrer">下载当前版本客户端 / Download current version</a></p><p><a href="https://fncpn.rectcircle.cn" target="_blank" rel="noopener noreferrer">官方网站 / Official website</a></p><p><a href="https://fncpn.rectcircle.cn/?donate=1" target="_blank" rel="noopener noreferrer">打赏作者 / Tip the author</a></p>
 source=thirdparty
 platform=x86
 maintainer=rectcircle

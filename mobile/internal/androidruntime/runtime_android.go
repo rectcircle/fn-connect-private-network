@@ -27,7 +27,7 @@ import (
 	"github.com/rectcircle/fn-connect-private-network/internal/logging"
 	"github.com/rectcircle/fn-connect-private-network/internal/model"
 	"github.com/rectcircle/fn-connect-private-network/mobile/internal/androidvpn"
-	"github.com/rectcircle/fn-connect-private-network/mobile/internal/support"
+	"github.com/rectcircle/fn-connect-private-network/internal/support"
 	"github.com/rectcircle/fn-connect-private-network/mobile/internal/uifeedback"
 	"github.com/rectcircle/fn-connect-private-network/mobile/internal/uiperf"
 	"golang.org/x/sys/unix"

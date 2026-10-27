@@ -304,6 +304,122 @@ scripts/update-nix-go-hashes.sh --check --system x86_64-linux
 失败会恢复原文件。`--check` 永不修改哈希或 flake.lock，失败必须修正并提交后才能通过 CI。
 CI 自身不自动接受新哈希或提交修改。更新 flake.lock、Go、Node 或图形依赖后仍须完整双架构验收。
 
+## HarmonyOS 开发、构建与签名
+
+工程位于 `apps/harmonyos/`，原生 ArkUI + N-API + 共享 Go 客户端。支持手机（含折叠屏）、
+平板、PC/2in1，最低 API20，仅构建 ARM64；智慧屏暂不支持。普通产品使用系统 VPN，
+模拟器产品使用真实授权和应用内隧道。二者不能混作系统 VPN 验收。
+
+### macOS 命令行环境
+
+无需 DevEco Studio。通过[华为下载中心](https://developer.huawei.com/consumer/cn/download/)登录下载
+macOS ARM64 Command Line Tools ZIP；下载地址需要鉴权，脚本不代替登录、不保存 token/Cookie。
+版本与官方 SHA256、社区 Go commit 固定在 `apps/harmonyos/toolchains.json`。
+
+```sh
+bash scripts/setup-harmonyos-macos.sh --cli-archive ~/Downloads/commandline-tools-mac-arm64-26.0.0.851.zip
+# 已安装时复用 CLI 与固定社区 Go；不再需要 --with-go
+bash scripts/setup-harmonyos-macos.sh
+python3 scripts/harmonyos/setup_macos.py --check
+bash scripts/check-harmonyos.sh
+```
+
+依赖安装到通用目录 `~/.local/opt/harmonyos/command-line-tools/<version>` 和
+`~/.local/opt/harmonyos/go/<version>-<commit>`，缓存为 `~/.cache/harmonyos/downloads/`。
+其他项目可复用；不替换主机 Go/Node，不修改 shell 启动文件或全局 GOOS/CC/GOROOT。
+脚本对 ZIP 执行摘要及路径/符号链接安全校验，以临时目录完成安装后提交；不同版本并存，
+已有安装登记不匹配时拒绝覆盖。安装日志在 `.dev/logs/`，环境报告在 `.dev/harmonyos/environment.json`。
+工具准备成功不等于设备验收。
+
+### 应用构建与发布签名
+
+公开分发只提供 release 构建模式的**未签名**系统 VPN 包：
+
+```sh
+bash scripts/build-harmonyos.sh --release
+bash scripts/package-harmonyos.sh --release
+```
+
+输出 `dist/harmonyos/fncpn-<版本>-harmonyos-arm64-release-unsigned.hap` 和
+`build-manifest-release.json`，清单记录版本、源码 commit/dirty、CLI/Go、构建模式和未签名状态。
+打包校验版本、设备声明、系统 VPN Extension、ARM64 原生库、许可证和构建摘要。
+release 构建模式不等于发布证书签名；未签名 HAP 不能直接安装。
+用户可使用自己的开发者账号，通过 HapSign 的 Test Profile 链路尝试自行签名，操作与验证边界见根 README。
+应用功能已通过云真机调试验证；维护者暂无华为实体设备，跨账号同包名自行签名安装尚未验证。
+
+维护者本地真机验证仍可选择签名，凭据保存在仓库外：
+
+```sh
+export HARMONYOS_KEYSTORE="$HOME/.harmonyos/signing/release.p12"
+export HARMONYOS_KEY_ALIAS=release
+export HARMONYOS_APP_CERT="$HOME/.harmonyos/signing/release.cer"
+export HARMONYOS_PROFILE="$HOME/.harmonyos/signing/profiles/fncpn-release.p7b"
+bash scripts/package-harmonyos.sh --release --sign
+```
+
+该命令交互读取密码并执行官方 `verify-app`；签名结果只用于本地验证，不进入公开或镜像清单。
+不要提交私钥、密码、证书或 Profile。密钥库和 CSR 可使用 `keytool` 生成；CSR 包含
+申请者 DN（CN/O/OU/L/ST/C），私钥保留在密钥库中。签名材料与安装设备、用途须匹配。
+HAP 是模块安装包；APP 可包含多个模块，不能直接互换扩展名。
+
+### HarmonyOS CI、官网与夸克分发
+
+官网提供 HarmonyOS 中英下载页签；显式 HarmonyOS/OpenHarmony UA 优先于 Android 兼容标记，
+未暴露系统标记的浏览器仍可手动选择。HAP 安装和覆盖升级说明维护在根 README。
+当前未上架 AppGallery，下载入口指向对应公开 Release，不把草稿描述为公众可安装版本。
+
+`build-harmonyos.yml` 支持手动触发或由统一 Release 调用，需要带 `harmonyos-26` 标签的
+macOS ARM64 自托管 runner。开发者先从官方页面授权下载 CLI，再用环境脚本导入固定版本；
+工作流不保存下载 token、不重新分发 SDK，也不需要证书、Profile、签名密码或钥匙串权限。
+
+统一 Release 等待鸿蒙 job，收集同一 commit 的未签名 HAP 与构建清单。公开和夸克镜像均要求
+1.1.6+ 的未签名普通系统 VPN release 产品，拒绝 signed、dirty、模拟器、debug、版本/构建号或
+SHA256 不一致的候选，并检查 HAP 签名块，防止把签名产物误标成未签名。
+HAP 内包含第三方声明与固定社区 Go LICENSE。夸克镜像沿用公开 Release 原始字节与哈希，
+不签名、不改包，不镜像私钥、证书、Profile、签名包或模拟器包。
+
+当前工作流接入不等于 runner 已配置或线上发布已通过。运行前先完成 Nix 等既有门槛，
+再按干净 commit 构建草稿。公开和夸克上传仍由既有人工发布入口触发。
+
+### 模拟器与独立能力探针
+
+首次安装镜像前查看并明确接受厂商许可；脚本不默认接受。
+
+```sh
+emulator="$HOME/.local/opt/harmonyos/command-line-tools/26.0.0.851/emulator/Emulator"
+"$emulator" -license
+"$emulator" -imageList -deviceType phone
+"$emulator" -install -deviceType phone -osVersion 'HarmonyOS 7.0.0(26.0.0)'
+"$emulator" -create HarmonyOS_Development -deviceType phone -osVersion 'HarmonyOS 7.0.0(26.0.0)'
+"$emulator" -start HarmonyOS_Development
+bash scripts/build-harmonyos.sh --application-tunnel
+bash scripts/package-harmonyos.sh --application-tunnel
+```
+
+安装 `dist/harmonyos/fncpn-<版本>-harmonyos-arm64-application-tunnel-unsigned.hap`；使用官方
+`hdc list targets` 确认设备，再通过 `hdc -t <target> install <hap>` 安装。允许未签名安装的模拟器
+不代表真机同样允许。应用标题显示“应用内调试”，真实登录、挑战、中继与 WireGuard 均复用
+共享 Manager，只将显式使用 netstack 的本 App 请求送入隧道，不接管浏览器或其他应用。
+该产品使用私有目录 `application-tunnel/`，与普通模式隔离配置和日志；两种产品应用 ID 相同，
+覆盖安装不主动清空用户数据。返回系统 VPN 模式须重新安装默认产品。
+
+独立探针源码在 `apps/harmonyos/diagnostics/`，工程生成到 `.dev/harmonyos/hap-smoke/`，
+包名 `cn.rectcircle.fncpn.harmonysmoke`，不混入正式应用。
+
+```sh
+bash scripts/build-harmonyos-smoke.sh
+python3 scripts/harmonyos/run_smoke.py --device <hdc-target> --https https://example.com --wss wss://echo.websocket.org
+# 设备先安装诊断 HAP；具备系统 VPN 授权组件时才能执行
+python3 scripts/harmonyos/run_vpn_probe.py --device <hdc-target> --cycles 2
+```
+
+runtime 探针测试异步 N-API、外部线程、goroutine/定时器/GC 与 HTTPS/WSS，活动 Go runtime
+不可 dlclose。VPN 探针仅接管 `198.18.0.1/32`，本地地址 `198.18.0.2/32`、MTU1400，
+通过 UDP53535 回显核对 TUN 与 protect；测试网络不得使用该诊断地址。
+系统 raw fd 与 Go dup fd 分别持有，先停读/关闭副本，再释放系统资源。
+结果分别在 `.dev/harmonyos/runtime/` 和 `vpn-probe/`，缺少授权组件记录 blocked，
+不能解释为授权被拒绝或绕过系统授权。外部 echo 服务不可用时可替换为受控测试服务。
+
 ## iOS 开发环境准备
 
 需要 macOS、Xcode 27.1、Go 1.27.1；iPhone/iPad 共用 `ios/FnCPN.xcodeproj`。
@@ -627,14 +743,14 @@ python3 scripts/sync-localizations.py --check
 node --test internal/server/web/index.test.cjs
 ```
 
-脚本生成 macOS `.lproj/Localizable.strings` 和管理页内嵌词典，并检查缺失翻译和参数一致性。
+脚本生成 macOS `.lproj/Localizable.strings`、HarmonyOS `Messages.ets` 和管理页内嵌词典，并检查缺失翻译和参数一致性。
 生成文件需一起提交；macOS 打包会复制两种语言资源。`go test ./...` 包含资源同步检查及
 macOS 中英文/回退运行测试；`FNCPN_LAYOUT_CHECK=1 go test ./packaging -count=1` 检查两种语言的窗口布局。
 
 ## 产品版本与正式发布准备
 
 唯一产品版本源为 `internal/version/VERSION`；修改后运行
-`python3 scripts/sync-version.py` 同步 fnOS manifest、macOS plist、Wails 及生成的 iOS 工程版本。
+`python3 scripts/sync-version.py` 同步 fnOS manifest、macOS plist、Wails、HarmonyOS 元数据/界面版本及生成的 iOS 工程版本。
 Go CLI 默认构建也会嵌入这个版本，不再报告 `dev`。
 远程兼容性只检查 MAJOR 相同且 client MINOR 不大于 server MINOR，PATCH 不参与。
 稳定的 `/version` 入口、HTTP/relay 响应版本和带身份校验的局域网探测支持升级后重新检查。
@@ -721,7 +837,7 @@ GitHub Secrets 是 CI 使用副本，网页/API 不提供原值下载。必要�
 本地首发环境可能不同，发布清单记录实际工具版本；两端同一 commit 不等于构建字节可复现。
 
 1. 更新 `internal/version/VERSION`（纯数字 `MAJOR.MINOR.PATCH`）、同步模板、更新 CHANGELOG，提交代码。
-2. 推送候选 commit 后运行 `gh workflow run release.yml --ref main -f version=1.1.5 -f commit="$(git rev-parse HEAD)"`（替换版本号）。流水线固定完整 SHA 检查、构建并上传草稿，不创建 tag、不自动公开。
+2. 推送候选 commit 后运行 `gh workflow run release.yml --ref main -f version=1.1.6 -f commit="$(git rev-parse HEAD)"`（替换版本号）。流水线固定完整 SHA 检查、构建并上传草稿，不创建 tag、不自动公开。
 3. 草稿出错可修复、提交新 commit 后按新 SHA 重建及替换；版本 tag 在草稿期间必须不存在。Review 使用 `https://github.com/rectcircle/fn-connect-private-network/compare/v<上一正式版本>...<候选完整SHA>`。公开后兼容修复应升 PATCH。
 4. 候选验收后，推荐运行 `python3 scripts/quark-release.py dispatch v1.0.10`（替换为待发布版本），先检查本地夸克授权并通过 `gh secret set` 同步 Secret，再触发公开发布。仅需 GitHub 发布时仍可运行 `gh workflow run release.yml --ref main -f version=1.0.10 -f commit=<草稿清单中的完整SHA> -f publish=true`，但必须预先准备夸克 Secret，否则后续镜像 job 会失败。独立的 publish job 下载原草稿产物复核并公开，不依赖构建 job，不安装编译工具、不重建或重新上传资产；也可使用本地已验收的原始产物运行 `python3 scripts/publish-release.py dist --publish`，避免将另一批未经确认的构建视为已验收。
 5. 草稿及其资产均按 Release ID 操作，更新草稿时显式保留 `tag_name`，支持尚无 Git tag 的草稿；下载入口使用 `python3 scripts/download-release.py v<版本> dist`。Release 说明从 CHANGELOG 对应版本条目提取；尚未登记版本时使用 Unreleased，公开前应完成版本条目。发布脚本下载远端所有资产逐字节复核后，在候选 commit 创建版本 tag，再公开；如创建 tag 后公开失败，重试仅允许复用相同 commit 的 tag；已公开版本只允许校验一致的幂等重试，不覆盖。

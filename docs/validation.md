@@ -3,11 +3,72 @@
 本文件只保留版本级验收结论与支持边界，不记录日常部署或逐次排障。
 操作命令见[开发文档](development.md)，判定依据见[版本契约](versioning-and-compatibility.md)。
 
-## 1.1.5 发布准备（2026-10-26，未提交、未发布）
+## 1.1.6 合入检查与 HarmonyOS 候选（2026-10-27，未发布）
+
+新增 HarmonyOS 平台沿用既有认证、版本准入和网络协议；PATCH 不要求服务端更新。
+本轮为工作树合入前检查，不是正式发布或完整历史版本验收。
+
+- 固定 CLI/社区 Go 已完成 ARM64 共享库、ArkTS、N-API 与普通/模拟器 HAP 构建；本地 dirty 候选的外部签名及官方验签已通过，尚无干净 commit 的正式发布产物。
+- 主机自动回归覆盖 IPC 帧、共享客户端、支持报告脱敏、DNS、TUN替换/回滚与真实 WireGuard 加密 UDP 往返；
+  主机 TUN/protect 回调不能替代设备系统权限验证。
+- HarmonyOS7 ARM64 模拟器已验证外部线程/并发、定时器/GC、HTTPS200、WSS握手与应用启动。
+  此镜像缺少 `com.huawei.hmos.vpndialog`，系统 VPN 只能在具备授权组件的真机/云设备上验收。
+- 用户经云设备测试已反馈系统 VPN 连接、NAS访问、私有DNS、登录/菜单/日志与多设备UI当前可用；
+  PC首次状态刷新、管理后台独立窗口修正后也反馈测试通过。该反馈未逐项证明所有协议/网络组合。
+- 范围为手机/折叠屏/平板/PC/2in1 API20+ ARM64；智慧屏暂不支持。
+- 当前 release + app_gallery Profile 无设备 UDID 绑定。普通零售设备开启开发者模式后是否可直接安装此包，尚未实测；现有云设备结果不替代该项。不预先改为指定设备发布或收集用户 UDID。
+
+### 构建环境遗留门槛
+
+本次 Go 依赖与产品版本变更会影响 Nix vendoring 输出；必须在锁定的 Linux Nix builder 上运行
+`scripts/update-nix-go-hashes.sh --system x86_64-linux` 并复核两个真实哈希，再运行 `--check`。
+当前 macOS 环境没有 Nix 或 Linux builder，本次未更新 `nix/go-hashes.json`，此项仍是合入前门槛。
+HarmonyOS 已接入发布资产汇总、公开与夸克镜像校验；构建工作流要求配置好 `harmonyos-26` 自托管 macOS ARM64 runner、官方 CLI；CI 仅提供未签名 HAP，不需要外部签名材料。此 runner 的线上构建与发布尚未执行，本地候选不等于已发布资产。
+
+### 仍需发布验收的场景
+
+| 场景 | 发布门槛 |
+| --- | --- |
+| 安装与双语 | 最终同commit签名HAP安装；中文/英文、深浅色、字号放大、输入法与复制反馈 |
+| 授权 | 密码、访问码、OTP、信任设备、取消、重新登录、更换NAS与权限不足 |
+| 网络与DNS | LOCAL/DIRECT/RELAY各路径、TCP/UDP、IP/私有域、DNS隔离、系统加密DNS策略、IPv6与切网 |
+| 生命周期 | 锁屏/后台、扩展销毁、进程重启、网络/服务端恢复、授权撤销、VPN冲突和失败清理 |
+| 多设备 | 折展/半折叠/分屏不丢连接；PC缩放、键鼠、独立后台复用/关闭与身份失效 |
+| 兼容与升级 | 真实历史server准入与拒绝方向、重连重检；覆盖安装保留身份/配置/连接意图、AssetStore持久化 |
+| 候选证据 | 干净commit、摘要/签名/工具链与安装日志；社区Go长期压力及系统策略测试 |
+
+未执行的场景不得标记通过；云平台若限制VPN/UDP或后台，应换适合的测试环境。
+严格加密DNS政策尚需设备验证，不把使用物理DNS等同于已经满足该政策。
+
+### 草稿验收门槛
+
+1. 确认 `internal/version/VERSION`、平台模板及 Changelog 均为 1.1.6；iOS build number
+   来自 `ios/BUILD_NUMBER`，App 与扩展相同；记录干净候选的完整 commit。
+2. Windows、Linux、Nix、Android、iOS、fnOS 及统一发布 job 全部成功。
+   iOS 使用 Xcode 27.1；不将桌面 Xcode 16.4 构建当作移动端证据。
+3. 核对 `release-1.1.6.json`、SHA256SUMS 与下载的每份资产，包含两架构 APK 和
+   `fncpn-1.1.6-ios-arm64-unsigned.ipa`。IPA 无签名、描述文件或私钥；两 target 的版本、
+   ARM64/device Mach-O、Packet Tunnel 声明与许可证通过结构检查。
+4. 对最终 Android APK、重签后的 iOS IPA 覆盖安装，确认身份与配置保留、登录与附加验证、
+   LOCAL / DIRECT / RELAY、私网 DNS、Safari/浏览器访问 NAS、断开与恢复、系统 VPN 关闭。
+   同签名身份升级与更换团队/标识的行为分开记录。
+5. 移动端重点回归：首次菜单、中英文、键盘 Next/Go 与遮挡、横屏表单独立滚动、
+   冷启动及退出重开、后台 loading/会话/外部链接、日志文件界面与诊断 ZIP 脱敏。
+   Duo 覆盖相机在左/右/下的姿态、折叠/展开、图标直达与展开菜单两种登录返回。
+6. 根核心变更覆盖桌面 daemon 正常关闭与连接意图保留；按版本契约执行历史正式版本的
+   连接与升级组合。至少明确记录同 MINOR PATCH 领先及拒绝更高 MINOR/不同 MAJOR 的提示。
+7. README、官网及中英文安装教程链接可用；旧 latest 不含 IPA 时不得误导为可直接安装。
+   公开前记录验收人、设备/系统、候选 commit、产物哈希和最终结论。
+
+草稿可在同版本下替换未公开产物；公开之后不得覆盖。检查完成不会自动创建 tag 或公开。
+
+## 1.1.5 开发阶段基线（2026-10-26）
+
+以下保留 iOS 阶段的验证依据，当前发布编号及产物核验按 1.1.6 执行。
 
 ### 开发验证与最终候选
 
-| 项目 | 当前结论 | 发布前要求 |
+| 项目 | 当时结论 | 后续要求 |
 |---|---|---|
 | Android 移动端 | 维护者确认本轮开发自测完成；PJZ110 已验证主要登录、网络及交互 | 最终正式签名 APK 覆盖安装、确认连接与数据保留 |
 | iPhone | 已使用 DxSign、KravaSign 材料重签，安装及连接验证通过；本轮开发自测完成 | 对最终 unsigned IPA 重签安装，确认 App/扩展均来自同一候选 |
@@ -24,28 +85,6 @@
 
 本地 `--allow-dirty` IPA 只用于 review，其 manifest 不接受为发布候选。开发自测结论
 不能代替最终 Release 安装包与完整源码 commit 的对应证明。
-
-### 草稿验收门槛
-
-1. 确认 `internal/version/VERSION`、平台模板及 Changelog 均为 1.1.5；iOS build number
-   来自 `ios/BUILD_NUMBER`，App 与扩展相同；记录干净候选的完整 commit。
-2. Windows、Linux、Nix、Android、iOS、fnOS 及统一发布 job 全部成功。
-   iOS 使用 Xcode 27.1；不将桌面 Xcode 16.4 构建当作移动端证据。
-3. 核对 `release-1.1.5.json`、SHA256SUMS 与下载的每份资产，包含两架构 APK 和
-   `fncpn-1.1.5-ios-arm64-unsigned.ipa`。IPA 无签名、描述文件或私钥；两 target 的版本、
-   ARM64/device Mach-O、Packet Tunnel 声明与许可证通过结构检查。
-4. 对最终 Android APK、重签后的 iOS IPA 覆盖安装，确认身份与配置保留、登录与附加验证、
-   LOCAL / DIRECT / RELAY、私网 DNS、Safari/浏览器访问 NAS、断开与恢复、系统 VPN 关闭。
-   同签名身份升级与更换团队/标识的行为分开记录。
-5. 移动端重点回归：首次菜单、中英文、键盘 Next/Go 与遮挡、横屏表单独立滚动、
-   冷启动及退出重开、后台 loading/会话/外部链接、日志文件界面与诊断 ZIP 脱敏。
-   Duo 覆盖相机在左/右/下的姿态、折叠/展开、图标直达与展开菜单两种登录返回。
-6. 根核心变更覆盖桌面 daemon 正常关闭与连接意图保留；按版本契约执行历史正式版本的
-   连接与升级组合。至少明确记录同 MINOR PATCH 领先及拒绝更高 MINOR/不同 MAJOR 的提示。
-7. README、官网及中英文安装教程链接可用；旧 latest 不含 IPA 时不得误导为可直接安装。
-   公开前记录验收人、设备/系统、候选 commit、产物哈希和最终结论。
-
-草稿可在同版本下替换未公开产物；公开之后不得覆盖。检查完成不会自动创建 tag 或公开。
 
 ### 明确的支持边界
 

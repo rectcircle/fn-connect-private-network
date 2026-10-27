@@ -96,5 +96,6 @@
   "重试": "Retry",
   "隧道地址": "Tunnel address",
   "需要登录": "Sign-in required",
-  "验证码": "Verification code"
+  "验证码": "Verification code",
+  "服务不可用。请检查网络连接、NAS 上的 FN Connect 是否已启用，以及 FN Connect ID 是否正确。": "Service unavailable. Check your network connection, whether FN Connect is enabled on the NAS, and whether the FN Connect ID is correct."
 }

@@ -97,6 +97,33 @@ UI 只展示状态和提交命令，不直接配置网络。业务核心通过�
 server 普通进程承载 HTTP/WSS、设备与配置，root 进程负责 WireGuard、转发和防火墙。
 新增平台实现这些边界即可复用核心，不要求使用桌面 IPC 或启动桌面 daemon 可执行文件。
 
+## HarmonyOS 承载与多窗口
+
+`apps/harmonyos/entry` 承载 ArkUI 页面、组件、窗口控制和系统适配；`apps/harmonyos/go`
+提供共享库与私有 Unix socket，`internal/platform/harmonyos` 负责 TUN、WireGuard、分流 DNS
+和物理网络绑定。UI → 异步 N-API → Go IPC 客户端 → 私有 `control.sock` → VPN 扩展中的
+clienthost/Manager；UI 不启动第二个连接状态机。扩展通过 N-API 主线程回调调用系统 VPN、
+网络事件和 AssetStore，避免同步阻塞 ArkTS 主线程。
+
+数据面为系统 TUN → Go WireGuard → 经 protect 的物理 UDP socket → NAS；中继复用共享核心。
+私有 DNS 由平台适配处理，控制面 HTTPS/WSS、直连和 DNS 上游不得回环进入 VPN。
+原始系统 TUN fd 与 Go dup fd 独立管理；替换时先脱离并关闭 Go 副本，再销毁和重建系统接口，
+失败按事务清理/回滚，避免重复 VPN 和泄漏描述符。身份配置在私有目录，凭据通过 AssetStore。
+本地桥接版本为独立的 1，组件随 HAP 成套升级，不新增远程协议或 server 要求。
+
+手机、折叠屏、平板、PC/2in1 共用组件与业务状态。840vp 起且正文宽度充足时默认嵌入256vp侧栏，
+窄窗口使用抽屉；字体放大时回退，侧栏展开收起带动画并推动正文。登录内容达到640vp时可双栏，
+连接/诊断按更高阈值排列；缩放、折展、分屏不重建连接。半折叠保守避让到上/左安全窗格。
+手机保留 Android/iOS 的三行 slogan、登录表单、主次按钮和菜单结构；英文布局通过输入类型请求，
+普通应用不能强制切换第三方输入法的中英文状态。登录失败留在表单，错误位于按钮上方。
+
+PC/2in1 管理后台用内部 singleton `AdminAbility` 独立主窗口，加载共享本地代理 URL；
+重复打开通过 onNewWant 更新窗口 LocalStorage，页面显式使用共享存储，关闭不影响 VPN。
+账号/NAS 改变或授权失效会关闭旧管理窗口；不复制凭据、不直连 NAS 公网地址。
+窗口先加载页面，标题栏/最小尺寸等可选设置失败独立容错并记录启动日志。
+普通退出保留连接意图，显式断开才暂停自动恢复；模拟器产品仅运行真实应用内隧道。
+
+
 ## Go 业务包设计
 
 `fncpn` Go 程序承载除原生 UI 以外的全部核心业务逻辑，不只是供 UI 调用的工具库。各平台 UI 仅负责展示、收集登录输入和用户操作，并调用本地 IPC；fnOS 管理页通过网关 HTTP API 操作服务端。
