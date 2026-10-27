@@ -5,6 +5,7 @@ import hashlib
 import importlib.util
 import io
 import json
+import subprocess
 from pathlib import Path
 import tempfile
 import unittest
@@ -77,6 +78,20 @@ class FakeQuark:
 
 
 class MirrorTest(unittest.TestCase):
+    def test_failure_reports_operation_and_safe_codes_without_vendor_credentials(self):
+        result = subprocess.CompletedProcess(['node'], 1,
+            '{"type":"result","code":401,"message":"access-secret https://private/?token=secret"}\n',
+            'ECONNRESET refresh-secret')
+        with patch.object(mirror.subprocess, 'run', return_value=result):
+            with self.assertRaises(RuntimeError) as raised:
+                mirror.checked(['node', 'cli', 'upload'], operation='Quark upload')
+        message = str(raised.exception)
+        self.assertIn('Quark upload', message)
+        self.assertIn('code=401', message)
+        self.assertIn('ECONNRESET', message)
+        for secret in ('access-secret', 'refresh-secret', 'https://', 'token=secret'):
+            self.assertNotIn(secret, message)
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
