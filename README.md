@@ -30,7 +30,7 @@ FnCPN 在自身的 fnOS HTTPS/WSS 连接中使用系统信任及内置、指纹�
 | Windows ARM64 | `fncpn-<version>-windows-arm64-unsigned.msi` |
 | iPhone / iPad | `fncpn-<version>-ios-arm64-unsigned.ipa`（需自行签名） |
 | Android ARM64 | `fncpn-<version>-android-arm64-v8a.apk` |
-| HarmonyOS ARM64 | `fncpn-<version>-harmonyos-arm64-release-unsigned.hap`（需自行签名） |
+| HarmonyOS ARM64 | `fncpn-<version>-harmonyos-arm64-unsigned.hap`（需自行签名） |
 | Android x86_64 | `fncpn-<version>-android-x86_64.apk` |
 | Windows x64 | `fncpn-<version>-windows-x64-unsigned.msi` |
 | Debian / Ubuntu | `fncpn-{core,ui}-<version>-linux-{amd64,arm64}.deb` |
@@ -67,7 +67,7 @@ Android 只允许一个当前 VPN，与其他 VPN 冲突；主页面返回进入
 支持 API20+、ARM64 的手机（含折叠屏）、平板、PC/二合一；智慧屏暂不支持。
 
 从 **1.1.7 起**提供普通系统 VPN 模式的未签名 HAP：
-`fncpn-<version>-harmonyos-arm64-release-unsigned.hap`。对应版本公开后可从
+`fncpn-<version>-harmonyos-arm64-unsigned.hap`。对应版本公开后可从
 [GitHub Releases](https://github.com/rectcircle/fn-connect-private-network/releases) 或官网夸克镜像下载，
 并对照同版本 `SHA256SUMS-<version>` 校验。未签名包不能直接安装，不要选择 `application-tunnel` 模拟器包。
 

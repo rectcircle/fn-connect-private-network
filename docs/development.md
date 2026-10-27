@@ -365,7 +365,7 @@ bash scripts/build-harmonyos.sh --release
 bash scripts/package-harmonyos.sh --release
 ```
 
-输出 `dist/harmonyos/fncpn-<版本>-harmonyos-arm64-release-unsigned.hap` 和
+输出 `dist/harmonyos/fncpn-<版本>-harmonyos-arm64-unsigned.hap` 和
 `build-manifest-release.json`，清单记录版本、源码 commit/dirty、CLI/Go、构建模式和未签名状态。
 打包校验版本、设备声明、系统 VPN Extension、ARM64 原生库、许可证和构建摘要。
 release 构建模式不等于发布证书签名；未签名 HAP 不能直接安装。

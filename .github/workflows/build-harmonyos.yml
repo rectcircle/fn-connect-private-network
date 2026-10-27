@@ -72,6 +72,6 @@ jobs:
         with:
           name: harmonyos-release-candidates-${{ inputs.ref }}
           path: |
-            dist/harmonyos/*-harmonyos-arm64-release-unsigned.hap
+            dist/harmonyos/*-harmonyos-arm64-unsigned.hap
             dist/harmonyos/build-manifest-release.json
           if-no-files-found: error

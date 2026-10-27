@@ -138,7 +138,8 @@ def publish(directory, repository, make_public=False):
             api_json(f"repos/{repository}/releases/{release['id']}", {
                 'tag_name': tag, 'target_commitish': commit, 'body': release_notes(version)})
         remote_assets = assets(repository, release['id'], run)
-        legacy = {f'FnCPN-{version}-arm64-unsigned.pkg',
+        legacy = {f'fncpn-{version}-harmonyos-arm64-release-unsigned.hap',
+                  f'FnCPN-{version}-arm64-unsigned.pkg',
                   f'FnCPN-{version}-arm64-unsigned.msi', f'FnCPN-{version}-x64-unsigned.msi',
                   f'fncpn-{version}-arm.fpk', f'fncpn-{version}-x86.fpk'}
         for asset in remote_assets:

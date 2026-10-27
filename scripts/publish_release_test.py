@@ -57,6 +57,7 @@ class PublicationTest(unittest.TestCase):
                         remote[name] = (out / name).read_bytes()
                 elif draft is True:
                     remote[f'FnCPN-{version}-arm64-unsigned.msi'] = b'legacy'
+                    remote[f'fncpn-{version}-harmonyos-arm64-release-unsigned.hap'] = b'old draft name'
                 downloaded = []
                 uploaded = []
                 publications = []

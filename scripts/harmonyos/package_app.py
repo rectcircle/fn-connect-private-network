@@ -36,7 +36,8 @@ def main():
         raise SystemExit('Build release candidate first: bash scripts/build-harmonyos.sh --release')
     root=ROOT/'dist/harmonyos';root.mkdir(parents=True,exist_ok=True)
     suffix=('-application-tunnel' if args.application_tunnel else '')+('-release' if args.release else '')
-    output=root/f'fncpn-{version}-harmonyos-arm64{suffix}-unsigned.hap'
+    package_suffix='-application-tunnel' if args.application_tunnel else ''
+    output=root/f'fncpn-{version}-harmonyos-arm64{package_suffix}-unsigned.hap'
     shutil.copyfile(source,output)
     checks = []
     if args.release and not args.application_tunnel:

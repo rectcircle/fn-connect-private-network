@@ -42,6 +42,7 @@ def fixture(root, version='1.1.7', commit='a'*40):
 class HarmonyReleaseTest(unittest.TestCase):
     def test_version_boundary_and_clean_candidate(self):
         self.assertEqual(packages('1.1.6'), [])
+        self.assertEqual(packages('1.1.7'), ['fncpn-1.1.7-harmonyos-arm64-unsigned.hap'])
         with tempfile.TemporaryDirectory() as root:
             path, build = fixture(root)
             rows, actual = candidates(root, '1.1.7', 'a'*40)

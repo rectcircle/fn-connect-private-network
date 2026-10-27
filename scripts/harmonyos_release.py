@@ -8,7 +8,7 @@ CHECKS = {'release-arm64', 'system-vpn', 'version', 'notices', 'unsigned-package
 
 
 def packages(version):
-    return [f'fncpn-{version}-harmonyos-arm64-release-unsigned.hap'] if tuple(map(int, version.split('.'))) >= (1, 1, 7) else []
+    return [f'fncpn-{version}-harmonyos-arm64-unsigned.hap'] if tuple(map(int, version.split('.'))) >= (1, 1, 7) else []
 
 
 def verify_hap(path, version, build_number, *, unsigned=True):
