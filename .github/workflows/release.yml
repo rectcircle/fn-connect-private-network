@@ -73,7 +73,7 @@ jobs:
           if (& git status --porcelain) { throw 'Release requires a clean checkout' }
           python scripts/sync-version.py --check
           if ($LASTEXITCODE -ne 0) { throw 'Generated product versions are stale' }
-          python scripts/sync-localizations.py --check
+          python -X warn_default_encoding -W error::EncodingWarning scripts/sync-localizations.py --check
           if ($LASTEXITCODE -ne 0) { throw 'Generated localization catalogs are stale' }
           python scripts/sync-native-localizations.py --check
           if ($LASTEXITCODE -ne 0) { throw 'Generated native localization catalog is stale' }

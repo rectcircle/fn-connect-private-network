@@ -5,7 +5,7 @@ git diff --check
 python3 scripts/nix_go_hashes_test.py
 python3 scripts/fnos_systemd_test.py
 python3 scripts/sync-version.py --check
-python3 scripts/sync-localizations.py --check
+python3 -X warn_default_encoding -W error::EncodingWarning scripts/sync-localizations.py --check
 python3 scripts/sync-native-localizations.py --check
 python3 scripts/rpm_signing_test.py
 python3 scripts/install_linux_test.py

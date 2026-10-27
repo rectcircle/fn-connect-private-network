@@ -21,9 +21,9 @@
 ### 构建环境遗留门槛
 
 Go 依赖变更后的 Core vendor 哈希已由首轮 Linux x64 与 ARM64 CI 实际计算并交叉核对一致，
-已更新 `nix/go-hashes.json`；完整 Nix 依赖重建与源码隔离检查仍待下一轮 CI 通过。
+已更新 `nix/go-hashes.json`；完整 Nix 依赖重建、源码隔离检查及两种架构的实际包构建均已在后续 CI 通过。
 当前 macOS 环境无 Linux Nix builder，不将主机脚本测试视为 Nix 实际构建通过。
-HarmonyOS 已接入发布资产汇总、公开与夸克镜像校验；构建工作流已改用 GitHub 托管 Ubuntu 24.04 x64、26.0.0.821 Linux CLI 社区镜像（固定 SHA256）及原固定 commit 社区 Go；只提供未签名 HAP，不需要外部签名材料。本地 macOS 保留 26.0.0.851。Linux 安装逻辑已通过离线测试，Linux 完整 HAP 构建与线上发布尚未执行；本地候选不等于已发布资产。
+HarmonyOS 已接入发布资产汇总、公开与夸克镜像校验；构建工作流已改用 GitHub 托管 Ubuntu 24.04 x64、26.0.0.821 Linux CLI 社区镜像（固定 SHA256）及原固定 commit 社区 Go；只提供未签名 HAP，不需要外部签名材料。本地 macOS 保留 26.0.0.851。Linux 安装逻辑已通过离线测试；Linux 完整 HAP 构建、未签名结构核验及 CI artifact 上传已通过。线上草稿汇总仍待全平台检查通过，不等于已公开发布。
 
 ### 仍需发布验收的场景
 

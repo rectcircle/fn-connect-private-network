@@ -29,7 +29,7 @@ def generated_files():
     for source in harmony.rglob('*.ets'):
         if source.name == 'Messages.ets':
             continue
-        code = '\n'.join(line for line in source.read_text().splitlines() if not line.lstrip().startswith('//'))
+        code = '\n'.join(line for line in source.read_text(encoding='utf-8').splitlines() if not line.lstrip().startswith('//'))
         keys += [match[1] for match in re.findall(r"(['\"])([^'\"\n]*[\u4e00-\u9fff][^'\"\n]*)\1", code)
                  if not match[1].startswith('menu-')]
     missing = sorted(set(keys) - messages.keys())
