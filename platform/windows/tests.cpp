@@ -137,7 +137,7 @@ int main(int argc, char** argv) {
             g_configured = false; g_viewLogin = true; g_busy = false; Layout(window);
             if (std::string(argv[1]) == "--preview-details") {
                 auto* demo = new RefreshResult{};
-                demo->fnId = L"rectcircle-mi-nuc"; demo->state = L"DIRECT"; demo->label = L("IPv6 直连");
+                demo->fnId = L"home-nas"; demo->state = L"DIRECT"; demo->label = L("IPv6 直连");
                 demo->path = L"IPv6 / UDP"; demo->address = L"10.253.203.3/32";
                 demo->network = L"FnCPN · MTU 1280"; demo->handshake = L"14s";
                 demo->privilege = L("活动"); demo->privilegedAvailable = true; demo->administrator = true;

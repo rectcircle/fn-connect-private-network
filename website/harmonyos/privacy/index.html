@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <meta name="description" content="FnCPN 鸿蒙版隐私政策：本地数据处理、NAS 与 FN Connect 通信、权限及联系方式。">
+  <title>FnCPN 鸿蒙版隐私政策</title>
+  <style>
+    :root{color-scheme:light dark;--bg:#f5f7fb;--paper:#fff;--text:#202731;--muted:#596575;--line:#dce3ed;--blue:#0668ed}
+    *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:16px/1.85 system-ui,-apple-system,"PingFang SC","Microsoft YaHei",sans-serif}
+    main{max-width:860px;margin:40px auto;padding:40px 48px;background:var(--paper);border:1px solid var(--line);border-radius:16px}
+    header{display:flex;justify-content:space-between;align-items:center;gap:16px;border-bottom:1px solid var(--line);padding-bottom:16px}.brand{font-weight:750;font-size:20px}
+    button{font:inherit;color:var(--blue);background:transparent;border:1px solid var(--line);border-radius:8px;padding:5px 12px;cursor:pointer}button:focus-visible,a:focus-visible{outline:2px solid var(--blue);outline-offset:3px}
+    h1{font-size:30px;line-height:1.4;margin:28px 0 12px}h2{font-size:21px;line-height:1.5;margin:30px 0 10px}p{margin:12px 0}li{margin:7px 0}ul{padding-left:24px}.date,footer{color:var(--muted);font-size:14px}.summary{border-left:3px solid var(--blue);padding:12px 18px;background:var(--bg);border-radius:0 8px 8px 0}a{color:var(--blue);overflow-wrap:anywhere}footer{border-top:1px solid var(--line);margin-top:30px;padding-top:16px}[hidden]{display:none!important}
+    @media(max-width:600px){main{margin:0;padding:24px 20px;border:0;border-radius:0}h1{font-size:26px}}
+    @media(prefers-color-scheme:dark){:root{--bg:#151a22;--paper:#1c232d;--text:#e8edf4;--muted:#aebbc9;--line:#354052;--blue:#79b2ff}}
+  </style>
+</head>
+<body>
+<main>
+  <header><span class="brand">FnCPN</span><button type="button" id="language" aria-label="Switch to English" hidden>English</button></header>
+  <article id="zh">
+    <h1>FnCPN 鸿蒙版隐私政策</h1>
+    <p class="date">更新日期：2026 年 10 月 28 日 · 生效日期：2026 年 10 月 28 日</p>
+    <p>FnCPN 由孙奔（开源项目维护者 rectcircle，以下简称“我们”）提供，是用于连接您拥有或获授权访问的飞牛 NAS 及其所在私有网络的开源工具。本政策适用于 FnCPN 鸿蒙版，说明应用如何处理信息及您可以采取的管理措施。</p>
+    <div class="summary"><strong>核心说明</strong><p>我们不通过 FnCPN 将您的账号凭据、设备标识、网络配置、访问内容、连接记录或诊断日志自动上传或存储到开发者运营的服务器。应用没有开发者运营的账号或业务后台。实现连接仍需要在您的设备本地处理信息，并与您指定的 NAS 以及 fnOS／FN Connect 相关服务通信。</p></div>
+    <h2>1. 实现功能所需的信息</h2>
+    <ul>
+      <li><strong>登录与认证：</strong>处理您主动输入的 FN Connect ID、fnOS 用户名、密码，以及按需输入的访问码、动态验证码和信任设备选项，用于定位目标 NAS 并完成其认证流程。</li>
+      <li><strong>维持连接：</strong>处理认证流程产生的会话凭据、应用生成的设备身份与密钥、设备名称、系统／应用版本、IP 地址、网络接口与路由、DNS 配置及连接状态，用于设备注册、网络配置、连接恢复和故障排查。</li>
+      <li><strong>私有网络访问：</strong>在您授权系统 VPN 后，应用按配置处理路由范围内的网络数据包，并通过直连或中继等方式送往目标网络；管理后台功能按您的操作加载目标 NAS 页面。</li>
+      <li><strong>本地诊断：</strong>在本地记录运行状态和错误信息。日志或诊断报告可能包含设备名称、NAS 标识、地址、版本和连接信息；应用提供脱敏措施，但不能保证排除所有可识别信息。</li>
+    </ul>
+    <p>上述处理用于提供您主动使用的连接功能，不用于广告、用户画像或行为统计。不提供必要的认证信息或不授权 VPN 时，相关登录或系统网络连接功能将无法使用。</p>
+    <h2>2. 数据存储地点与期限</h2>
+    <p>配置、设备身份、会话凭据和运行日志保存在您的设备上；应用根据用途使用应用私有存储及系统安全存储能力。为维持登录与恢复连接，相关数据可能在您关闭应用后继续保留。日志按应用的轮转策略管理；您主动导出的日志或诊断文件会保存在您选择或确认的本地位置，需由您自行管理。</p>
+    <p>您的 NAS 及 fnOS／FN Connect 服务可能处理或保存认证、设备注册及连接所需的信息。其存储地点、保存期限和删除规则由相应设备管理者或服务提供方决定，我们不将其描述为开发者服务器存储，也不能代其承诺具体期限。</p>
+    <h2>3. 第三方服务与主动反馈</h2>
+    <p>FnCPN 是独立开源项目，与华为、飞牛及 FN Connect 无隶属或背书关系。NAS 认证、发现和远程连接涉及 fnOS／FN Connect 服务，请同时了解其隐私规则。您主动打开外部官网、下载平台、捐赠页面或 NAS 页面时，相应网站可能按其政策处理网络请求信息。</p>
+    <p>应用不自动上传日志或诊断文件。如果您通过邮件、GitHub Issue 等渠道主动发送反馈，我们及所选平台会收到您提交的内容。请先删除密码、令牌、私钥和不希望公开的设备或网络信息；不要将这些信息发布在公开 Issue 中。反馈信息仅用于沟通和处理问题，按处理所需期限保留；如需删除，请通过下方邮箱联系，第三方平台上的内容还需按其规则管理。</p>
+    <h2>4. 系统能力与授权</h2>
+    <p>应用使用网络访问、网络状态读取和系统 VPN 能力来建立并维护连接。VPN 授权由系统提示确认；您可通过应用断开连接，并在系统提供的 VPN 设置中管理授权。复制按钮仅在您主动点击时向剪贴板写入相应内容；导出功能仅在您主动操作时生成本地文件。</p>
+    <h2>5. 您如何管理信息</h2>
+    <p>您可以在应用中断开连接、重新登录或更换 NAS，通过日志入口查看和导出日志，并自行删除已导出的文件。自动恢复连接遵循您的连接意图；主动断开可暂停自动连接。需要进一步清理本机配置或凭据时，可使用系统提供的应用数据管理、卸载等方式，并核对系统安全存储或备份的保留规则。NAS 端设备登记和相关数据应由您联系 NAS 管理员管理。</p>
+    <p>FnCPN 不提供独立的开发者账号，因此不存在 FnCPN 开发者账号注销流程；fnOS／FN Connect 账号的管理应通过其提供方进行。您可就个人信息访问、更正、删除及其他适用权利联系我们；对于仅保存在您设备或 NAS 的数据，我们通常无法直接访问或代为删除。</p>
+    <h2>6. 未成年人</h2>
+    <p>本应用不面向未成年人提供专门服务。未成年人请在监护人指导下使用，仅访问拥有合法授权的设备与网络。请勿通过反馈渠道提交未成年人的不必要个人信息。</p>
+    <h2>7. 政策更新</h2>
+    <p>如信息处理方式发生变化，我们将更新本页面及更新日期，并按变化性质通过适当方式告知您；依法需要取得同意时，将取得相应同意后再进行相关处理。</p>
+    <h2>8. 联系我们</h2>
+    <p>提供者：孙奔（rectcircle）<br>隐私联系邮箱：<a href="mailto:rectcircle96@gmail.com">rectcircle96@gmail.com</a></p>
+    <p>如有隐私问题、意见或权利请求，请联系上述邮箱，我们会在核实请求后尽快回复。请勿在邮件中发送密码、令牌或私钥。</p>
+  </article>
+  <article id="en" lang="en" hidden>
+    <h1>FnCPN for HarmonyOS Privacy Policy</h1>
+    <p class="date">Updated and effective: October 28, 2026</p>
+    <p>FnCPN is an open-source tool provided by Sun Ben (project maintainer rectcircle, “we”) to connect to a fnOS NAS and private network that you own or are authorized to access. This policy applies to the HarmonyOS app.</p>
+    <div class="summary"><strong>Key points</strong><p>FnCPN does not automatically upload or store your credentials, device identifiers, network configuration, traffic content, connection records or diagnostic logs on developer-operated servers. We do not operate a FnCPN account or application backend. The app still needs to process information on your device and communicate with your selected NAS and fnOS / FN Connect services to provide connections.</p></div>
+    <h2>1. Information needed for app features</h2>
+    <ul>
+      <li><strong>Sign-in:</strong> your FN Connect ID, fnOS username and password, and any required access code, one-time code or trusted-device choice are used to locate and authenticate with your NAS.</li>
+      <li><strong>Connections:</strong> session credentials, app-generated device identity and keys, device name, system and app versions, IP addresses, interfaces, routes, DNS configuration and connection state support registration, network setup, reconnection and troubleshooting.</li>
+      <li><strong>Private network access:</strong> after system VPN authorization, the app processes packets covered by its configured routes and forwards them to the target network using direct or relay connections. The administration feature loads NAS pages when you use it.</li>
+      <li><strong>Diagnostics:</strong> operational and error logs are recorded locally. Logs and reports may include device names, NAS identifiers, addresses, versions and connection information. Redaction cannot guarantee that all identifying information is removed.</li>
+    </ul>
+    <p>This processing supports the features you choose to use, not advertising, profiling or behavioral analytics. Without necessary credentials or VPN authorization, the corresponding sign-in or system network connection features cannot work.</p>
+    <h2>2. Storage and retention</h2>
+    <p>Configuration, device identity, session credentials and logs are stored on your device using app-private storage and system secure-storage capabilities as appropriate. Information may remain after closing the app to maintain sessions and connection intent. Logs are managed by the app’s rotation policy. Exported files remain in the local location you select or confirm and must be managed by you.</p>
+    <p>Your NAS and fnOS / FN Connect services may process or retain information required for authentication, device registration and connectivity. Their operators determine storage locations, retention and deletion rules; these are not developer-operated servers and we cannot promise retention periods on their behalf.</p>
+    <h2>3. Third parties and voluntary feedback</h2>
+    <p>FnCPN is independent and is not affiliated with or endorsed by Huawei, fnOS or FN Connect. Review the applicable service providers’ privacy rules. External websites, download services, donation pages and NAS pages you open may process network request information under their own policies.</p>
+    <p>The app does not automatically upload logs or reports. If you send email, open a GitHub issue or voluntarily submit diagnostics, we and your chosen platform receive the submitted content. Remove passwords, tokens, private keys and identifying details first, particularly from public issues. Feedback is used to communicate and resolve problems and retained as needed for that purpose. Contact us to request deletion; third-party content is also subject to that platform’s controls.</p>
+    <h2>4. System capabilities and authorization</h2>
+    <p>Network access, network-state information and system VPN capabilities are used for connectivity. The system requests VPN authorization. Disconnect in the app and manage authorization through available system VPN settings. Copy buttons write content to the clipboard only when pressed. Export operations generate local files only when requested.</p>
+    <h2>5. Managing your information</h2>
+    <p>You can disconnect, sign in again, change NAS, view or export logs and delete exported files. Reconnection follows your connection intent; explicitly disconnecting pauses automatic connections. For further local cleanup, use available system app-data or uninstall controls and review secure-storage and backup retention rules. Contact your NAS administrator to manage NAS-side registrations and data.</p>
+    <p>There is no separate developer-operated FnCPN account to close. Manage fnOS / FN Connect accounts with their providers. Contact us about access, correction, deletion or other applicable rights. We generally cannot directly access or delete data held only on your device or NAS.</p>
+    <h2>6. Minors</h2>
+    <p>The app is not specifically directed at minors. Minors should use it with guardian guidance and access only authorized devices and networks. Do not submit unnecessary information about minors in feedback.</p>
+    <h2>7. Updates</h2>
+    <p>We will update this page and its date when processing changes, provide appropriate notice, and obtain consent before new processing where legally required.</p>
+    <h2>8. Contact</h2>
+    <p>Provider: Sun Ben (rectcircle)<br>Privacy contact: <a href="mailto:rectcircle96@gmail.com">rectcircle96@gmail.com</a></p>
+    <p>Contact us with privacy questions or rights requests. We will verify requests and respond as soon as practicable. Do not email passwords, tokens or private keys.</p>
+  </article>
+  <footer>FnCPN · HarmonyOS</footer>
+</main>
+<script>
+  const button = document.getElementById('language');
+  function showLanguage(lang) {
+    const english = lang === 'en';
+    document.getElementById('zh').hidden = english;
+    document.getElementById('en').hidden = !english;
+    document.documentElement.lang = english ? 'en' : 'zh-CN';
+    document.title = english ? 'FnCPN for HarmonyOS Privacy Policy' : 'FnCPN 鸿蒙版隐私政策';
+    button.textContent = english ? '中文' : 'English';
+    button.setAttribute('aria-label', english ? '切换为中文' : 'Switch to English');
+  }
+  showLanguage(new URLSearchParams(location.search).get('lang') === 'en' ? 'en' : 'zh');
+  button.hidden = false;
+  button.addEventListener('click', () => {
+    const lang = document.documentElement.lang === 'en' ? 'zh' : 'en';
+    const url = new URL(location.href);url.searchParams.set('lang', lang);
+    history.replaceState(null, '', url);showLanguage(lang);
+  });
+</script>
+</body>
+</html>

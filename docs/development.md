@@ -426,6 +426,9 @@ bash scripts/package-harmonyos.sh --application-tunnel
 `hdc list targets` 确认设备，再通过 `hdc -t <target> install <hap>` 安装。允许未签名安装的模拟器
 不代表真机同样允许。应用标题显示“应用内调试”，真实登录、挑战、中继与 WireGuard 均复用
 共享 Manager，只将显式使用 netstack 的本 App 请求送入隧道，不接管浏览器或其他应用。
+截图时可同时传入 `--application-tunnel --release` 构建与打包：保留真实登录和应用内隧道，
+隐藏标题调试标记、调试菜单及说明文字；默认 debug 模拟器构建继续显示这些入口。
+该截图包不进入公开发布清单。
 该产品使用私有目录 `application-tunnel/`，与普通模式隔离配置和日志；两种产品应用 ID 相同，
 覆盖安装不主动清空用户数据。返回系统 VPN 模式须重新安装默认产品。
 

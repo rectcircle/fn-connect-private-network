@@ -77,6 +77,7 @@ struct Index {
   @State probeResult: string = '';
   private client: Client = new Client('', false);
   @State uiDebug: boolean = AppStorage.get<boolean>('uiDebug') === true;
+  @State showDebugUI: boolean = AppStorage.get<boolean>('showDebugUI') === true;
   private formScroll: Scroller = new Scroller();
   private logScroll: Scroller = new Scroller();
   private logScrollPending: boolean = false;
@@ -502,10 +503,10 @@ struct Index {
       this.menuItem('管理后台', $r('app.media.menu_computer'), () => { if (!this.busy) { this.openAdmin(); } })
       this.menuItem('官网 · 捐赠', $r('app.media.menu_help'), () => { this.closeMenu(); this.openBrowser('https://fncpn.rectcircle.cn/#donate').catch((error: Error) => { this.message = (error as Error).message || String(error); }); })
       this.menuItem('导出诊断与日志', $r('app.media.menu_download'), () => { this.exportReport(); })
-      if (this.uiDebug) { this.menuItem('应用内网络调试', $r('app.media.menu_computer'), () => { this.closeMenu(); this.probeTarget = this.nasAddress !== '—' ? 'http://' + this.nasAddress + '/' : ''; this.probeResult = ''; this.networkDebug = true; }) }
+      if (this.showDebugUI) { this.menuItem('应用内网络调试', $r('app.media.menu_computer'), () => { this.closeMenu(); this.probeTarget = this.nasAddress !== '—' ? 'http://' + this.nasAddress + '/' : ''; this.probeResult = ''; this.networkDebug = true; }) }
       Divider().color($r('app.color.divider')).strokeWidth(1).width('100%').margin({ top: 8, bottom: 8 })
       this.menuItem('退出', $r('app.media.menu_logout'), () => { this.exit(); })
-      if (this.uiDebug) { Text(tr('应用内隧道 · 真实登录与通信')).fontSize(12).fontColor($r('app.color.secondary')).padding(16) }
+      if (this.showDebugUI) { Text(tr('应用内隧道 · 真实登录与通信')).fontSize(12).fontColor($r('app.color.secondary')).padding(16) }
     }.alignItems(HorizontalAlign.Start).padding({ left: 12, right: 12 }).backgroundColor($r('app.color.surface')).width('100%').constraintSize({ minHeight: '100%' })
   }
   @Builder connectionSummary() {
@@ -556,7 +557,7 @@ struct Index {
           .accessibilityLevel(this.embedded() ? 'auto' : 'no-hide-descendants')
           .border({ width: { right: this.embedded() ? 1 : 0 }, color: $r('app.color.divider') })
       Column() {
-        BrandHeader({ back: !!this.adminURL || this.logsOpen || (this.loginPage && this.loginFromMenu), debug: this.uiDebug, busy: this.busy, tv: this.tv, navigate: () => { this.navigate(); } })
+        BrandHeader({ back: !!this.adminURL || this.logsOpen || (this.loginPage && this.loginFromMenu), debug: this.showDebugUI, busy: this.busy, tv: this.tv, navigate: () => { this.navigate(); } })
         if (this.adminURL) {
           Web({ src: this.adminURL, controller: this.adminController }).layoutWeight(1).javaScriptAccess(true).fileAccess(false).domStorageAccess(true).transition(TransitionEffect.move(TransitionEdge.END).combine(TransitionEffect.OPACITY))
         } else if (this.logsOpen) {
@@ -595,7 +596,7 @@ struct Index {
                   }.alignItems(VerticalAlign.Top).width('100%')
                 } else { this.connectionSummary(); this.diagnosticPanel(); }
               }
-              if (this.uiDebug) { Text(tr('模拟器应用内隧道调试：真实登录与通信，仅本 App 请求进入隧道；系统 VPN 需真机验证。')).fontSize(12).fontColor($r('app.color.secondary')).width('100%') }
+              if (this.showDebugUI) { Text(tr('模拟器应用内隧道调试：真实登录与通信，仅本 App 请求进入隧道；系统 VPN 需真机验证。')).fontSize(12).fontColor($r('app.color.secondary')).width('100%') }
             }.width('100%').padding({ left: 20, right: 20, top: 16, bottom: 32 }).constraintSize({ maxWidth: this.tv ? 1600 : 1200 })
           }.layoutWeight(1).width('100%').align(Alignment.Top)
         }

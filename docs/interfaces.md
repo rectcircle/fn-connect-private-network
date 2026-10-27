@@ -90,7 +90,7 @@ FnCPN 只接管独立后缀，不接管客户端原有 `.local` 或家庭 DNS �
 - FN Connect ID 转小写后必须满足 DNS label 约束；不合法时使用 `id-` 加原 ID 的 SHA-256
   前 20 位十六进制作为 label，保证稳定、可复现，不直接拼接任意用户输入。
   用户界面始终展示实际后缀。FN Connect ID 变化时默认后缀随之更新，自定义后缀不自动改变。
-- 后缀本身（如 `rectcircle-mi-nuc.fncpn`）直接解析到 NAS，与 `<NAS hostname>.<后缀>` 一样返回 NAS LAN IPv4 地址。
+- 后缀本身（如 `home-nas.fncpn`）直接解析到 NAS，与 `<NAS hostname>.<后缀>` 一样返回 NAS LAN IPv4 地址。
 - `abc.<后缀>` 优先查询 NAS 家庭 DNS；短名称按系统 search domains 展开后再查询裸名称。
   无上游、无记录（NXDOMAIN/NODATA）或上游不可用时，尝试 mDNS `abc.local`。
   不固定来源；普通 DNS 缓存过期后重新按上述顺序查询。同名设备需明确使用 `.local` 入口时不走家庭 DNS。

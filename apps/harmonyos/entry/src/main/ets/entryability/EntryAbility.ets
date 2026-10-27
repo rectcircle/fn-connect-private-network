@@ -33,6 +33,7 @@ export default class EntryAbility extends UIAbility {
     AppStorage.setOrCreate<number>('fontScale', this.context.config.fontSizeScale ?? 1);
     AppStorage.setOrCreate<number>('foldRight', 0); AppStorage.setOrCreate<number>('foldBottom', 0);
     AppStorage.setOrCreate<boolean>('uiDebug', ['simulator'].includes(BuildProfile.PRODUCT_NAME));
+    AppStorage.setOrCreate<boolean>('showDebugUI', BuildProfile.DEBUG && BuildProfile.PRODUCT_NAME === 'simulator');
   }
   async onWindowStageCreate(stage: window.WindowStage): Promise<void> {
     const application = AppStorage.get<boolean>('uiDebug') === true;
