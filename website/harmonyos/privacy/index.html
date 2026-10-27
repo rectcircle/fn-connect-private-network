@@ -6,16 +6,7 @@
   <meta name="robots" content="noindex, nofollow">
   <meta name="description" content="FnCPN 鸿蒙版隐私政策：本地数据处理、NAS 与 FN Connect 通信、权限及联系方式。">
   <title>FnCPN 鸿蒙版隐私政策</title>
-  <style>
-    :root{color-scheme:light dark;--bg:#f5f7fb;--paper:#fff;--text:#202731;--muted:#596575;--line:#dce3ed;--blue:#0668ed}
-    *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:16px/1.85 system-ui,-apple-system,"PingFang SC","Microsoft YaHei",sans-serif}
-    main{max-width:860px;margin:40px auto;padding:40px 48px;background:var(--paper);border:1px solid var(--line);border-radius:16px}
-    header{display:flex;justify-content:space-between;align-items:center;gap:16px;border-bottom:1px solid var(--line);padding-bottom:16px}.brand{font-weight:750;font-size:20px}
-    button{font:inherit;color:var(--blue);background:transparent;border:1px solid var(--line);border-radius:8px;padding:5px 12px;cursor:pointer}button:focus-visible,a:focus-visible{outline:2px solid var(--blue);outline-offset:3px}
-    h1{font-size:30px;line-height:1.4;margin:28px 0 12px}h2{font-size:21px;line-height:1.5;margin:30px 0 10px}p{margin:12px 0}li{margin:7px 0}ul{padding-left:24px}.date,footer{color:var(--muted);font-size:14px}.summary{border-left:3px solid var(--blue);padding:12px 18px;background:var(--bg);border-radius:0 8px 8px 0}a{color:var(--blue);overflow-wrap:anywhere}footer{border-top:1px solid var(--line);margin-top:30px;padding-top:16px}[hidden]{display:none!important}
-    @media(max-width:600px){main{margin:0;padding:24px 20px;border:0;border-radius:0}h1{font-size:26px}}
-    @media(prefers-color-scheme:dark){:root{--bg:#151a22;--paper:#1c232d;--text:#e8edf4;--muted:#aebbc9;--line:#354052;--blue:#79b2ff}}
-  </style>
+  <link rel="stylesheet" href="./privacy.css">
 </head>
 <body>
 <main>
@@ -86,24 +77,6 @@
   </article>
   <footer>FnCPN · HarmonyOS</footer>
 </main>
-<script>
-  const button = document.getElementById('language');
-  function showLanguage(lang) {
-    const english = lang === 'en';
-    document.getElementById('zh').hidden = english;
-    document.getElementById('en').hidden = !english;
-    document.documentElement.lang = english ? 'en' : 'zh-CN';
-    document.title = english ? 'FnCPN for HarmonyOS Privacy Policy' : 'FnCPN 鸿蒙版隐私政策';
-    button.textContent = english ? '中文' : 'English';
-    button.setAttribute('aria-label', english ? '切换为中文' : 'Switch to English');
-  }
-  showLanguage(new URLSearchParams(location.search).get('lang') === 'en' ? 'en' : 'zh');
-  button.hidden = false;
-  button.addEventListener('click', () => {
-    const lang = document.documentElement.lang === 'en' ? 'zh' : 'en';
-    const url = new URL(location.href);url.searchParams.set('lang', lang);
-    history.replaceState(null, '', url);showLanguage(lang);
-  });
-</script>
+<script src="./privacy.js" defer></script>
 </body>
 </html>
