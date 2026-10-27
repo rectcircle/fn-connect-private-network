@@ -282,14 +282,15 @@ UI 授权入口只启动已声明实例，不再执行 `systemctl enable`。
 ### 维护和验证
 
 `check-nix.yml` 在每次普通 push/PR 中执行 Flake 求值和两个原生 Linux 架构的 Core/UI
-`goModules` 固定哈希检查，随后强制重建依赖输出，防止已缓存的固定输出掩盖本地替换模块
-源码变化。草稿构建再执行完整 Core/UI、模块检查和虚拟显示中的真实前端启动。
+`goModules` 固定哈希检查并强制重建，避免缓存掩盖依赖变化；额外修改本地业务源码与
+版本文件后重建 UI 依赖，验证它们不会进入外部依赖哈希。草稿构建再执行完整 Core/UI、模块检查和虚拟显示中的真实前端启动。
 Release workflow 的 `nix-dependencies` 是所有平台构建的前置门槛，未通过时不启动各平台打包。
 这些检查不代替 NixOS 实机的 polkit、systemd、resolved、桌面和网络验收。
 Nix 开发依赖只进入 CI，不在 Debian 验证虚拟机安装 Nix。
 
-更新 Go 依赖、根模块源码或嵌入的版本文件都可能改变 UI vendor 哈希：UI 使用
-`replace => ..`，vendoring 会复制项目代码。不要只在 go.mod/go.sum 改动时更新。
+UI 使用 Nix `proxyVendor` 缓存外部 module 下载，离线编译时从候选源码读取
+`replace => ..` 的共享核心。普通业务源码和版本文件不影响 UI 依赖哈希；更新 Go module
+依赖或构建工具链时仍需核对。Core 保留现有 vendor 校验。
 在有 Linux Nix builder 的环境（或配置了对应远程 builder）执行：
 
 ```sh

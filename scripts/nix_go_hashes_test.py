@@ -14,11 +14,14 @@ class HashTests(unittest.TestCase):
             calls.append(command)
             return subprocess.CompletedProcess(command, 0)
         hashes.check(Path('/source'), 'aarch64-linux', run)
-        self.assertEqual(len(calls), 2)
+        self.assertEqual(len(calls), 3)
         for part in ('core', 'ui'):
             self.assertIn(f'.#packages.aarch64-linux.{part}.goModules', calls[0])
         self.assertIn('--no-update-lock-file', calls[0])
         self.assertIn('--rebuild', calls[1])
+        self.assertIn('--rebuild', calls[2])
+        self.assertIn('internal/client/manager.go', calls[2][-1])
+        self.assertIn('internal/version/VERSION', calls[2][-1])
 
     def test_check_failure_is_actionable(self):
         with self.assertRaisesRegex(RuntimeError, 'update-nix-go-hashes.sh'):
@@ -32,7 +35,7 @@ class HashTests(unittest.TestCase):
 
     def runner(self, fail_part=None, fail_check=False):
         def run(command, **kwargs):
-            if '--expr' not in command:
+            if '--expr' not in command or '--rebuild' in command:
                 return subprocess.CompletedProcess(command, int(fail_check))
             expr = command[-1]
             part = 'core' if '.core.goModules' in expr else 'ui'
