@@ -7,7 +7,7 @@ import shlex
 import subprocess
 import tempfile
 
-from setup_macos import ROOT, clean_env
+from setup_macos import ROOT, clean_env, cli_root, cli_pin
 
 
 def run(args, **kwargs):
@@ -55,7 +55,7 @@ def _prepare(cli_root=None):
             source.rename(target)
     go = target / 'bin/go'
     run([go, 'version'], env=env)
-    cli = cli_root or Path.home() / '.local/opt/harmonyos/command-line-tools' / pin['cli']['version']
+    cli = cli_root or cli_root()
     native = cli / 'sdk/default/openharmony/native'
     work = ROOT / '.dev/harmonyos/go-smoke'
     work.mkdir(parents=True, exist_ok=True)

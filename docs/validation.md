@@ -23,7 +23,7 @@
 本次 Go 依赖与产品版本变更会影响 Nix vendoring 输出；必须在锁定的 Linux Nix builder 上运行
 `scripts/update-nix-go-hashes.sh --system x86_64-linux` 并复核两个真实哈希，再运行 `--check`。
 当前 macOS 环境没有 Nix 或 Linux builder，本次未更新 `nix/go-hashes.json`，此项仍是合入前门槛。
-HarmonyOS 已接入发布资产汇总、公开与夸克镜像校验；构建工作流要求配置好 `harmonyos-26` 自托管 macOS ARM64 runner、官方 CLI；CI 仅提供未签名 HAP，不需要外部签名材料。此 runner 的线上构建与发布尚未执行，本地候选不等于已发布资产。
+HarmonyOS 已接入发布资产汇总、公开与夸克镜像校验；构建工作流已改用 GitHub 托管 Ubuntu 24.04 x64、26.0.0.821 Linux CLI 社区镜像（固定 SHA256）及原固定 commit 社区 Go；只提供未签名 HAP，不需要外部签名材料。本地 macOS 保留 26.0.0.851。Linux 安装逻辑已通过离线测试，Linux 完整 HAP 构建与线上发布尚未执行；本地候选不等于已发布资产。
 
 ### 仍需发布验收的场景
 

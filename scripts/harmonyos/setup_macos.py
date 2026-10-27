@@ -16,6 +16,19 @@ import zipfile
 ROOT = Path(__file__).resolve().parents[2]
 
 
+def cli_pin():
+    pins = json.loads((ROOT / 'apps/harmonyos/toolchains.json').read_text())
+    if platform.system() == 'Linux':
+        if platform.machine() not in ('x86_64', 'AMD64'):
+            raise ValueError('Linux CLI requires an x86_64 host')
+        return pins['linuxCli']
+    return pins['cli']
+
+
+def cli_root():
+    return Path.home() / '.local/opt/harmonyos/command-line-tools' / cli_pin()['version']
+
+
 def clean_env():
     env = dict(os.environ)
     for key in ('GOOS', 'GOARCH', 'CGO_ENABLED', 'CC', 'CXX', 'SDKROOT', 'GOROOT'):
@@ -146,8 +159,8 @@ def main():
     parser.add_argument('--cli-version')
     parser.add_argument('--cli-root', type=Path, help='Inspect an existing official CLI installation')
     args = parser.parse_args()
-    if platform.system() != 'Darwin':
-        parser.error('macOS required')
+    if platform.system() not in ('Darwin', 'Linux'):
+        parser.error('macOS or Linux required')
     if args.check and args.cli_archive:
         parser.error('--check does not install archives')
     base = Path.home() / '.local/opt/harmonyos/command-line-tools'
@@ -155,7 +168,7 @@ def main():
               'stages': {}, 'ready': False, 'cliReady': False}
     cli = args.cli_root
     if args.cli_archive:
-        pin = json.loads((ROOT / 'apps/harmonyos/toolchains.json').read_text())['cli']
+        pin = cli_pin()
         if platform.machine() == pin['architecture']:
             args.cli_sha256 = args.cli_sha256 or pin['sha256']
             args.cli_version = args.cli_version or pin['version']
@@ -164,9 +177,8 @@ def main():
         cli = install(args.cli_archive.resolve(), args.cli_sha256, args.cli_version,
                       base, Path.home() / '.cache/harmonyos/downloads')
     if cli is None:
-        installs = sorted(base.glob('*/.harmonyos-install.json'))
-        if len(installs) == 1:
-            cli = installs[0].parent
+        if cli_root().is_dir():
+            cli = cli_root()
     try:
         if cli is None:
             raise ValueError('Provide official CLI archive + version + SHA256, or --cli-root')

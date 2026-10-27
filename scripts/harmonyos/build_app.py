@@ -7,20 +7,20 @@ from pathlib import Path
 import subprocess
 import zipfile
 import shutil
-from setup_macos import ROOT, clean_env
+from setup_macos import ROOT, clean_env, cli_root, cli_pin
 from go_toolchain import inspect_installation
 
 
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--application-tunnel', action='store_true', help='Build simulator variant: real authentication and application-only tunnel, no system VPN')
-    parser.add_argument('--release', action='store_true', help='Build release mode for signed device candidates')
+    parser.add_argument('--release', action='store_true', help='Build release mode for unsigned device candidates')
     args=parser.parse_args()
     product='simulator' if args.application_tunnel else 'default'
     target_name='default'
     app=ROOT/'apps/harmonyos'
     pin=json.loads((app/'toolchains.json').read_text())
-    cli=Path.home()/'.local/opt/harmonyos/command-line-tools'/pin['cli']['version']
+    cli=cli_root()
     native=cli/'sdk/default/openharmony/native'
     env=clean_env()
     env.update(DEVECO_SDK_HOME=str(cli/'sdk'),DEVECO_NODE_HOME=str(cli/'tool/node'),PATH=str(cli/'tool/node/bin')+os.pathsep+env.get('PATH',''))

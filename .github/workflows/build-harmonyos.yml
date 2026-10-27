@@ -21,8 +21,8 @@ permissions:
   contents: read
 jobs:
   build:
-    # macOS ARM64 runner with manually imported official CLI. No signing identity required.
-    runs-on: harmonyos-26
+    # Linux x64 builds ARM64 HAPs; no Huawei login or signing identity required.
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v5
@@ -33,18 +33,29 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version: '1.27.1'
-      - name: Verify immutable candidate and prepared official CLI
+      - name: Verify immutable candidate
         env:
           RELEASE_VERSION: ${{ inputs.version }}
           RELEASE_COMMIT: ${{ inputs.ref }}
         run: |
-          test "$(uname -s)" = Darwin
-          test "$(uname -m)" = arm64
           python3 scripts/check-release-candidate.py
-          python3 scripts/harmonyos/setup_macos.py --check
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Install Linux native dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgl1 libglib2.0-0 libusb-1.0-0 ninja-build
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.local/opt/harmonyos/command-line-tools
+            ~/.local/opt/harmonyos/go
+          key: harmonyos-linux-x64-${{ runner.os }}-${{ hashFiles('apps/harmonyos/toolchains.json', 'scripts/harmonyos/setup_linux.py', 'scripts/harmonyos/go_toolchain.py') }}
       - name: Prepare pinned community Go and run checks
         run: |
-          bash scripts/setup-harmonyos-macos.sh
+          python3 scripts/harmonyos/setup_linux.py
           bash scripts/check-harmonyos.sh
           python3 scripts/harmonyos_release_test.py
       - name: Build unsigned system VPN candidate

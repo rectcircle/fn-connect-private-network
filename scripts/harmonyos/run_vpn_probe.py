@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 import subprocess
 import time
-from setup_macos import ROOT
+from setup_macos import ROOT, cli_root, cli_pin
 
 
 def main():
@@ -15,7 +15,7 @@ def main():
     if not 1 <= args.cycles <= 10:
         parser.error('--cycles must be between 1 and 10')
     pin = json.loads((ROOT / 'apps/harmonyos/toolchains.json').read_text())
-    hdc = Path.home() / '.local/opt/harmonyos/command-line-tools' / pin['cli']['version'] / 'sdk/default/openharmony/toolchains/hdc'
+    hdc = cli_root() / 'sdk/default/openharmony/toolchains/hdc'
     output = ROOT / '.dev/harmonyos/vpn-probe'
     output.mkdir(parents=True, exist_ok=True)
     def call(*command):

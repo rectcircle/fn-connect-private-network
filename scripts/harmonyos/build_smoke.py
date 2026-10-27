@@ -6,7 +6,7 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
-from setup_macos import ROOT, clean_env
+from setup_macos import ROOT, clean_env, cli_root, cli_pin
 from go_toolchain import inspect_installation
 
 
@@ -21,7 +21,7 @@ def main():
     version=(ROOT/'internal/version/VERSION').read_text().strip()
     pin=json.loads((ROOT / 'apps/harmonyos/toolchains.json').read_text())
     go=inspect_installation()['go']
-    cli=Path.home()/'.local/opt/harmonyos/command-line-tools'/pin['cli']['version']
+    cli=cli_root()
     project=ROOT/'.dev/harmonyos/hap-smoke'
     source=ROOT/'apps/harmonyos/diagnostics'
     project.mkdir(parents=True,exist_ok=True)

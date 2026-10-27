@@ -7,7 +7,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import zipfile
-from setup_macos import ROOT
+from setup_macos import ROOT, cli_root, cli_pin
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from harmonyos_release import verify_hap, CHECKS
@@ -51,7 +51,7 @@ def main():
         if missing:raise SystemExit('Missing signing configuration: '+', '.join(missing))
         for name in ['HARMONYOS_KEYSTORE','HARMONYOS_APP_CERT','HARMONYOS_PROFILE']:
             if not Path(os.environ[name]).is_file():raise SystemExit('Signing file missing: '+name)
-        cli=Path.home()/'.local/opt/harmonyos/command-line-tools'/pin['cli']['version']
+        cli=cli_root()
         jar=cli/'sdk/default/openharmony/toolchains/lib/hap-sign-tool.jar'
         signed=output.with_name(output.name.replace('-unsigned',''))
         subprocess.run(['java','-jar',jar,'sign-app','-mode','localSign',
@@ -64,7 +64,7 @@ def main():
         output=signed
     manifest={'productVersion':version,'buildNumber':number,'commit':subprocess.check_output(['git','rev-parse','HEAD'],cwd=ROOT,text=True).strip(),
               'dirty':bool(subprocess.check_output(['git','status','--porcelain'],cwd=ROOT,text=True).strip()),
-              'cli':pin['cli']['version'],'go':pin['goPort'],'abi':'arm64-v8a','product':product,'applicationTunnel':args.application_tunnel,'signed':args.sign,'buildMode':build_info.get('buildMode','unknown'),
+              'cli':cli_pin()['version'],'go':pin['goPort'],'abi':'arm64-v8a','product':product,'applicationTunnel':args.application_tunnel,'signed':args.sign,'buildMode':build_info.get('buildMode','unknown'),
               'checks':checks if not args.sign else sorted((CHECKS - {'unsigned-package'}) | {'official-signature-verification'}),
               'filename':output.name,'sha256':hashlib.sha256(output.read_bytes()).hexdigest()}
     (root/('build-manifest'+suffix+'.json')).write_text(json.dumps(manifest,indent=2)+'\n')

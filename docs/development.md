@@ -332,6 +332,30 @@ bash scripts/check-harmonyos.sh
 已有安装登记不匹配时拒绝覆盖。安装日志在 `.dev/logs/`，环境报告在 `.dev/harmonyos/environment.json`。
 工具准备成功不等于设备验收。
 
+### Linux x64 命令行环境与 CI
+
+Linux 构建使用 CLI **26.0.0.821**；本地 macOS ARM64 保留 **26.0.0.851**。
+按宿主系统选择 `toolchains.json` 中的固定包，不改变目标 API20+ / ARM64。
+Linux 包来自 [ErBWs/ohos-sdk](https://github.com/ErBWs/ohos-sdk/releases/tag/26.0.0.821)
+社区镜像，脚本合并 `.aa/.ab` 分卷并校验仓库锁定的 SHA256；该摘要来自镜像发布元数据，
+不宣称为华为官方签名或官方独立校验。安装使用临时目录、安全 tar 解压与身份登记，拒绝覆盖不匹配安装。
+
+Ubuntu 24.04 x64 需要 Python 3.12+、JDK 21、主机 Go 1.27.1、Git 与以下原生依赖：
+
+```sh
+sudo apt-get update
+sudo apt-get install -y libgl1 libglib2.0-0 libusb-1.0-0 ninja-build
+python3 scripts/harmonyos/setup_linux.py
+bash scripts/check-harmonyos.sh
+bash scripts/build-harmonyos.sh --release
+bash scripts/package-harmonyos.sh --release
+# 只检查，不下载或安装
+python3 scripts/harmonyos/setup_linux.py --check
+```
+
+初始化自动从固定 commit 构建社区 Go 并验证 ARM64 c-shared 探针；既有安装可复用。
+无需 DevEco Studio、华为账号登录、模拟器或签名材料。未签名 HAP 仍须用户另行签名才能安装。
+
 ### 应用构建与发布签名
 
 公开分发只提供 release 构建模式的**未签名**系统 VPN 包：
@@ -369,9 +393,10 @@ HAP 是模块安装包；APP 可包含多个模块，不能直接互换扩展名
 未暴露系统标记的浏览器仍可手动选择。HAP 安装和覆盖升级说明维护在根 README。
 当前未上架 AppGallery，下载入口指向对应公开 Release，不把草稿描述为公众可安装版本。
 
-`build-harmonyos.yml` 支持手动触发或由统一 Release 调用，需要带 `harmonyos-26` 标签的
-macOS ARM64 自托管 runner。开发者先从官方页面授权下载 CLI，再用环境脚本导入固定版本；
-工作流不保存下载 token、不重新分发 SDK，也不需要证书、Profile、签名密码或钥匙串权限。
+`build-harmonyos.yml` 支持手动触发或由统一 Release 调用，使用 GitHub 托管
+`ubuntu-24.04` x64 runner，无需自托管 Mac。工作流自动安装 JDK21、原生依赖和上述固定 Linux CLI，
+从现有固定源码 commit 编译社区 Go；工具缓存键包含版本锁与安装脚本。
+不需要华为账号、证书、Profile、密码或钥匙串权限；SDK 不进入产品发布资产。
 
 统一 Release 等待鸿蒙 job，收集同一 commit 的未签名 HAP 与构建清单。公开和夸克镜像均要求
 1.1.7+ 的未签名普通系统 VPN release 产品，拒绝 signed、dirty、模拟器、debug、版本/构建号或
@@ -379,7 +404,7 @@ SHA256 不一致的候选，并检查 HAP 签名块，防止把签名产物误�
 HAP 内包含第三方声明与固定社区 Go LICENSE。夸克镜像沿用公开 Release 原始字节与哈希，
 不签名、不改包，不镜像私钥、证书、Profile、签名包或模拟器包。
 
-当前工作流接入不等于 runner 已配置或线上发布已通过。运行前先完成 Nix 等既有门槛，
+当前工作流接入不等于 Linux 完整 HAP 构建或线上发布已通过。运行前先完成 Nix 等既有门槛，
 再按干净 commit 构建草稿。公开和夸克上传仍由既有人工发布入口触发。
 
 ### 模拟器与独立能力探针

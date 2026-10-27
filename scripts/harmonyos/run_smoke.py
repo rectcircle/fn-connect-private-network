@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 import subprocess
 import time
-from setup_macos import ROOT
+from setup_macos import ROOT, cli_root, cli_pin
 
 BUNDLE = 'cn.rectcircle.fncpn.harmonysmoke'
 
@@ -34,7 +34,7 @@ def main():
     if args.wss and not args.wss.startswith('wss://'):
         parser.error('--wss requires WSS')
     pin = json.loads((ROOT / 'apps/harmonyos/toolchains.json').read_text())
-    hdc = Path.home() / '.local/opt/harmonyos/command-line-tools' / pin['cli']['version'] / 'sdk/default/openharmony/toolchains/hdc'
+    hdc = cli_root() / 'sdk/default/openharmony/toolchains/hdc'
     hap = ROOT / '.dev/harmonyos/hap-smoke/entry/build/default/outputs/default/entry-default-unsigned.hap'
     output = ROOT / '.dev/harmonyos/runtime'
     output.mkdir(parents=True, exist_ok=True)
