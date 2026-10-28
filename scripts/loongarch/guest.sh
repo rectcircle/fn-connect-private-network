@@ -39,21 +39,34 @@ ln -sf /run/systemd/resolve/stub-resolv.conf /etc/resolv.conf
 /validation/fncpn version
 run_test() {
   # Go's test runner otherwise returns success for a misspelled/missing test.
-  "$1" -test.list "^$2$" | grep -Fx "$2"
+  "$1" -test.list "^$2$" | grep -Fx "$2" || return 1
   "$1" -test.v -test.timeout=180s -test.run "^$2$"
 }
+failed=0
+check_step() {
+  local name=$1
+  shift
+  if "$@"; then
+    printf '%s\tpassed\n' "$name" >> "$out/steps.tsv"
+  else
+    failed=1
+    printf '%s\tfailed\n' "$name" >> "$out/steps.tsv"
+  fi
+}
 # qemu-user cannot translate getsockopt(SO_BINDTODEVICE); do not drop coverage.
-run_test /validation/client.test TestLinuxLocalProbeBindsPhysicalInterface
+check_step local-socket run_test /validation/client.test TestLinuxLocalProbeBindsPhysicalInterface
 # These tests execute the real project engines and crash-recovery logic.
-FNCPN_KERNEL_TESTS=1 run_test /validation/linux.test TestKernelClientCapability
-FNCPN_KERNEL_TESTS=1 run_test /validation/privileged.test TestKernelDNSBridgeCapability
-FNCPN_NETFILTER_TEST=1 run_test /validation/linux.test TestDockerForwardingIntegration
+FNCPN_KERNEL_TESTS=1 check_step kernel-client run_test /validation/linux.test TestKernelClientCapability
+FNCPN_KERNEL_TESTS=1 check_step dns-bridge run_test /validation/privileged.test TestKernelDNSBridgeCapability
+FNCPN_NETFILTER_TEST=1 check_step netfilter run_test /validation/linux.test TestDockerForwardingIntegration
 # Separate test exercises the real resolved service (the existing bridge test
 # deliberately mocks its D-Bus calls), plus WireGuard traffic and reconnect.
-/validation/probe -test.v -test.timeout=180s
+check_step network-and-resolved /validation/probe -test.v -test.timeout=180s
 if [ -x /validation/fncpn-ui ]; then
-  python3 /validation/scripts/linux-ui-smoke.py /validation/fncpn-ui "$out" "$(cat /validation/version)" "$(cat /validation/commit)"
+  check_step ui python3 /validation/scripts/linux-ui-smoke.py /validation/fncpn-ui "$out" "$(cat /validation/version)" "$(cat /validation/commit)"
 else
   echo 'UI binary missing: the experiment cannot pass.'
-  exit 1
+  failed=1
+  printf 'ui\tfailed\n' >> "$out/steps.tsv"
 fi
+exit "$failed"

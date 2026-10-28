@@ -90,6 +90,16 @@ func TestWireGuardTrafficAndReconnect(t *testing.T) {
 	remote("ip", "link", "set", "lo", "up")
 	remote("ip", "-6", "addr", "add", "2606:4700:ffff::2/64", "dev", "validation1", "nodad")
 	remote("ip", "link", "set", "validation1", "up")
+	restoreUnderlay := func() {
+		// With keep_addr_on_down=0 Linux removes static global IPv6 addresses
+		// on administrative DOWN. This fixture has no NetworkManager to put
+		// them back: restore the underlay before testing WireGuard recovery.
+		command(t, "ip", "link", "set", "validation0", "up")
+		command(t, "ip", "-6", "addr", "replace", "2606:4700:ffff::1/64", "dev", "validation0", "nodad")
+		remote("ip", "-6", "addr", "replace", "2606:4700:ffff::2/64", "dev", "validation1", "nodad")
+		command(t, "ping", "-6", "-c", "1", "-W", "3", "2606:4700:ffff::2")
+	}
+	restoreUnderlay()
 	remote("ip", "link", "add", "wg-peer", "type", "wireguard")
 	remote("ip", "addr", "add", "10.254.250.1/24", "dev", "wg-peer")
 	key, err := wgtypes.GeneratePrivateKey()
@@ -119,6 +129,22 @@ func TestWireGuardTrafficAndReconnect(t *testing.T) {
 	t.Cleanup(func() { process.Process.Kill(); process.Wait() })
 	engine := linuxplatform.NewSystemClientEngine(nil, t.TempDir())
 	t.Cleanup(func() { engine.Close(context.Background()) })
+	// Capture before the cleanup callbacks remove the test links and keys.
+	t.Cleanup(func() {
+		if !t.Failed() {
+			return
+		}
+		for _, args := range [][]string{
+			{"ip", "-6", "address"}, {"ip", "-6", "route"}, {"ip", "-6", "neigh"},
+			{"wg", "show", "all", "endpoints"}, {"wg", "show", "all", "latest-handshakes"},
+			{"wg", "show", "all", "transfer"},
+		} {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			out, err := exec.CommandContext(ctx, args[0], args[1:]...).CombinedOutput()
+			cancel()
+			t.Logf("diagnostic %v: %s (%v)", args, out, err)
+		}
+	})
 	ctx := peer.WithIdentity(t.Context(), peer.Identity{UID: 1000, PID: os.Getpid()})
 	plan := model.ClientPlan{Mode: "direct", PrivateKey: key.String(), ClientAddress: "10.254.250.2/32", ServerPublicKey: serverKey.PublicKey().String(), Endpoint: "[2606:4700:ffff::2]:51820", AllowedIPs: []string{"10.254.250.0/24"}, MTU: 1280}
 	if err = engine.Apply(ctx, plan); err != nil {
@@ -154,7 +180,7 @@ func TestWireGuardTrafficAndReconnect(t *testing.T) {
 	if check() == nil {
 		t.Fatal("request succeeded with underlay down")
 	}
-	command(t, "ip", "link", "set", "validation0", "up")
+	restoreUnderlay()
 	eventually(t, check)
 	name := engine.Status().Interface
 	if err = engine.Close(ctx); err != nil {
