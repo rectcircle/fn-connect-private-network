@@ -57,6 +57,14 @@ def validate_loongarch_publication(manifest):
         raise ValueError('LoongArch runtime acceptance is required before publication; rebuild with loongarch_full_validation=true')
 
 
+def experimental_matrix(selected='both'):
+    if selected not in ('both', 'rpm', 'archlinux'):
+        raise ValueError('Unknown experimental package format: ' + selected)
+    return {'include': [{'target': name, 'image': profile['image']}
+                        for name, profile in EXPERIMENTAL_TARGETS.items()
+                        if selected == 'both' or profile['format'] == selected]}
+
+
 def build_matrix():
     entries = []
     for bundle, definition in BUNDLES.items():

@@ -11,7 +11,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from linux_support import ROOT, TARGETS, BUNDLES, EXPERIMENTAL_TARGETS, build_matrix, ci_matrix, package_name, package_profile, release_packages, target_profile, validate_loongarch_publication
+from linux_support import ROOT, TARGETS, BUNDLES, EXPERIMENTAL_TARGETS, experimental_matrix, build_matrix, ci_matrix, package_name, package_profile, release_packages, target_profile, validate_loongarch_publication
 
 
 def module(name):
@@ -67,6 +67,14 @@ class LinuxSupportTest(unittest.TestCase):
         self.assertEqual(len(names),len(set(names)))
         self.assertEqual(len(names),12)
         self.assertEqual(len(build_matrix()["include"]),5)
+
+    def test_experimental_format_can_be_retried_independently(self):
+        self.assertEqual(len(experimental_matrix()['include']), 2)
+        for selected in ('rpm', 'archlinux'):
+            entries = experimental_matrix(selected)['include']
+            self.assertEqual(len(entries), 1)
+            self.assertEqual(package_profile(entries[0]['target'])['format'], selected)
+        with self.assertRaises(ValueError): experimental_matrix('unsupported')
 
     def test_experimental_loongarch_formats_are_not_release_targets(self):
         for target, expected in [('fedora-remix43-loong64', 'loongarch64'), ('archlinux-loong64', 'loong64')]:

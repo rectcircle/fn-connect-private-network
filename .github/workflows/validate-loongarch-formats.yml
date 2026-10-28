@@ -2,6 +2,11 @@ name: Validate LoongArch RPM and Arch builds
 on:
   workflow_dispatch:
     inputs:
+      target:
+        description: Candidate package format
+        type: choice
+        options: [both, rpm, archlinux]
+        default: both
       ref:
         description: Source branch or commit (validation only)
         type: string
@@ -9,7 +14,7 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: loongarch-formats-${{ inputs.ref || github.ref }}
+  group: loongarch-formats-${{ inputs.target }}-${{ inputs.ref || github.ref }}
   cancel-in-progress: true
 jobs:
   targets:
@@ -21,13 +26,17 @@ jobs:
         with:
           ref: ${{ inputs.ref }}
       - id: targets
+        env:
+          SELECTED_FORMAT: ${{ inputs.target }}
         run: |
           python3 - <<'PY'
-          import json, os
+          import json, os, sys
           from pathlib import Path
-          entries = json.loads(Path('packaging/linux/targets.json').read_text())['experimentalTargets']
+          sys.path.insert(0, 'scripts')
+          from linux_support import experimental_matrix
+          matrix = experimental_matrix(os.environ['SELECTED_FORMAT'])
           with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
-              output.write('matrix=' + json.dumps({'include': [{'target': p['id'], 'image': p['image']} for p in entries]}) + '\n')
+              output.write('matrix=' + json.dumps(matrix) + '\n')
           PY
   build:
     needs: targets
@@ -73,9 +82,10 @@ jobs:
           docker run -d --platform linux/loong64 --name fncpn-format -e TARGET -v "$GITHUB_WORKSPACE:/workspace" -v "$RUNNER_TEMP/format-tools:/opt/tools:ro" "$IMAGE" sleep infinity
           docker exec fncpn-format mkdir -p /opt
           docker cp "$RUNNER_TEMP/go.tar.gz" fncpn-format:/opt/go.tar.gz
-          docker exec fncpn-format tar -xzf /opt/go.tar.gz -C /opt
       - name: Verify dependency availability
         run: docker exec fncpn-format bash /workspace/scripts/loongarch/probe-format.sh bootstrap
+      - name: Extract official Go after bootstrap tools are installed
+        run: docker exec fncpn-format tar -xzf /opt/go.tar.gz -C /opt
       - name: Verify native C and official Go toolchains
         run: docker exec fncpn-format bash /workspace/scripts/loongarch/probe-format.sh toolchain
       - name: Build and inspect matching Core and UI packages

@@ -273,7 +273,9 @@ python3 scripts/check-linux-packages.py dist/linux/deb-loong64/loong64 deb-loong
 
 ### LoongArch RPM / Arch 验证入口
 
-`Validate LoongArch RPM and Arch builds` 仅手动运行，不参与日常 CI 或发布。固定 digest 的候选镜像来自
+`Validate LoongArch RPM and Arch builds` 仅手动运行，不参与日常 CI 或发布。
+`target` 可选 both、rpm、archlinux；失败时只重试对应格式，不重复占用另一项验证资源。
+最小镜像先安装基础工具和构建依赖，再解压官方 Go，避免假定镜像已自带 tar。固定 digest 的候选镜像来自
 [Fedora Remix LoongArch](https://github.com/fedora-remix-loongarch/releases-info) 与
 [pkgforge Arch Loong64 镜像](https://github.com/pkgforge-dev/docker-archlinux)。它们是社区构建，不能视为现有 Fedora/openSUSE 官方基线的架构扩展已获验证。
 候选定义在 `targets.json` 的 `experimentalTargets`，不进入正式 targets、bundles、安装器或发布资产清单。
