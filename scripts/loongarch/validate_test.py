@@ -3,8 +3,10 @@
 import hashlib
 import importlib.util
 import json
+import io
 from pathlib import Path
 import sys
+import tarfile
 import tempfile
 import unittest
 
@@ -14,6 +16,31 @@ spec.loader.exec_module(validation)
 
 
 class EvidenceTests(unittest.TestCase):
+    def test_guest_evidence_requires_a_success_marker(self):
+        for marker in (None, b'1\n', b'0\n'):
+            with self.subTest(marker=marker), tempfile.TemporaryDirectory() as temporary:
+                archive = Path(temporary) / 'results.tar.gz'
+                with tarfile.open(archive, 'w:gz') as stream:
+                    if marker is not None:
+                        member = tarfile.TarInfo('exit-code')
+                        member.size = len(marker)
+                        stream.addfile(member, io.BytesIO(marker))
+                destination = Path(temporary) / 'system'
+                if marker == b'0\n':
+                    validation.read_guest_results(archive, destination, 0)
+                    with self.assertRaises(RuntimeError):
+                        validation.read_guest_results(archive, destination, 1)
+                else:
+                    with self.assertRaises(RuntimeError):
+                        validation.read_guest_results(archive, destination, 0)
+
+    def test_truncated_guest_evidence_fails(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            archive = Path(temporary) / 'results.tar.gz'
+            archive.write_bytes(b'partial results')
+            with self.assertRaises(tarfile.ReadError):
+                validation.read_guest_results(archive, Path(temporary) / 'system', 0)
+
     def test_incomplete_run_cannot_report_success(self):
         with tempfile.TemporaryDirectory() as temporary:
             report = validation.Report(temporary, required=['build', 'runtime'])

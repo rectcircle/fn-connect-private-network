@@ -220,6 +220,8 @@ QEMU 用户态对 `getsockopt(SO_BINDTODEVICE)` 返回 EINVAL；对应的
 该测试不被删除或忽略，完整 VM 必须找到并通过这个测试，实验才能成功。
 
 VM 无外部网卡，网络夹具全部位于 guest 的 veth/netns 内；不修改 runner 的路由或 DNS，
+结果通过独立 virtio serial 端口回传压缩日志和退出码，不依赖宿主重新挂载新内核写过的根文件系统。
+缺失、损坏的结果包、缺少成功退出码或 QEMU 非正常退出均判定失败。
 无需部署 fnOS、提供账号或配置仓库 secrets。WireGuard peer 仅为数据面夹具，不能代替真实 fnOS 登录、OTP、
 控制面选路或会话恢复验收。全流程超时或缺少 UI/完成标记都会失败，失败时保留日志。
 

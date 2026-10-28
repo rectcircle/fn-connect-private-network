@@ -8,6 +8,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import tarfile
 import tempfile
 import time
 import urllib.request
@@ -78,6 +79,16 @@ def download(url, destination, sha256):
         temporary.unlink(missing_ok=True)
 
 
+def read_guest_results(archive, destination, code):
+    # Read the independent virtio channel, never mount a filesystem last written
+    # by a newer guest kernel. Missing/incomplete archives and exit codes fail.
+    with tarfile.open(archive, 'r:gz') as result:
+        result.extractall(destination, filter='data')
+    status = destination / 'exit-code'
+    if code or not status.is_file() or status.read_text().strip() != '0':
+        raise RuntimeError('Guest did not complete all checks; see serial.log and system/guest.log')
+
+
 def compile_tests():
     environment = dict(os.environ, GOOS='linux', GOARCH='loong64', CGO_ENABLED='0')
     packages = subprocess.check_output(['go', 'list', './...'], cwd=ROOT, env=environment, text=True).splitlines()
@@ -134,11 +145,13 @@ def system_vm(container, temporary):
     unit = temporary / 'fncpn-validation.service'
     unit.write_text('[Unit]\nAfter=local-fs.target dbus.service\nWants=dbus.service\n'
                     '[Service]\nType=oneshot\nEnvironment=FNCPN_LOONGARCH_VM=1\n'
+                    'StandardOutput=journal+console\nStandardError=inherit\n'
                     'ExecStart=/bin/bash /validation/guest.sh\nTimeoutStartSec=1200\n'
                     '[Install]\nWantedBy=multi-user.target\n')
     subprocess.run(['docker', 'cp', str(unit), f'{container}:/etc/systemd/system/fncpn-validation.service'], check=True)
     subprocess.run(['docker', 'exec', container, 'bash', '-ec',
                     'systemctl enable fncpn-validation.service; '
+                    'systemctl mask console-getty.service serial-getty@ttyS0.service getty@tty1.service; '
                     'rm -rf /opt/go /root/.cache /root/go; '
                     'rm -f /etc/machine-id; touch /etc/machine-id; '
                     'ls /boot/vmlinuz-* /boot/initrd.img-*'], check=True)
@@ -167,11 +180,14 @@ def system_vm(container, temporary):
         mounted = False
         subprocess.run(['docker', 'rm', '-f', container], check=True)
         # TCG only: no nested virtualization, firmware variables, or host net changes.
+        results = OUT / 'guest-results.tar.gz'
         command = ['qemu-system-loongarch64', '-machine', 'virt', '-accel', 'tcg',
                    '-m', '4096', '-smp', '2', '-bios', str(firmware),
                    '-kernel', str(kernel), '-initrd', str(initrd),
                    '-append', 'root=/dev/vda rw rootwait console=ttyS0 systemd.unit=multi-user.target',
                    '-drive', f'file={disk},format=raw,if=none,id=root', '-device', 'virtio-blk-pci,drive=root',
+                   '-device', 'virtio-serial-pci', '-chardev', f'file,id=results,path={results}',
+                   '-device', 'virtserialport,chardev=results,name=fncpn.results',
                    '-nic', 'none', '-display', 'none', '-serial', 'stdio', '-monitor', 'none', '-no-reboot']
         with (OUT / 'serial.log').open('w') as log:
             process = subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
@@ -181,13 +197,7 @@ def system_vm(container, temporary):
                 os.killpg(process.pid, signal.SIGKILL)
                 process.wait()
                 raise RuntimeError('VM timed out; see serial.log')
-        subprocess.run(['sudo', 'mount', '-o', 'loop,ro', str(disk), str(mount)], check=True)
-        mounted = True
-        subprocess.run(['sudo', 'cp', '-a', str(mount / 'validation/out'), str(OUT / 'system')], check=True)
-        subprocess.run(['sudo', 'chown', '-R', f'{os.getuid()}:{os.getgid()}', str(OUT / 'system')], check=True)
-        result = OUT / 'system/exit-code'
-        if code or not result.exists() or result.read_text().strip() != '0':
-            raise RuntimeError('Guest did not complete all checks; see serial.log and system/guest.log')
+        read_guest_results(results, OUT / 'system', code)
     finally:
         if mounted:
             subprocess.run(['sudo', 'umount', str(mount)], check=True)

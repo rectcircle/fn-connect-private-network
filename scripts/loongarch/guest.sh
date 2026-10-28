@@ -3,7 +3,7 @@
 set -euo pipefail
 out=/validation/out
 mkdir -p "$out"
-exec > >(tee "$out/guest.log" /dev/ttyS0) 2>&1
+exec > >(tee "$out/guest.log") 2>&1
 finish() {
   code=$?
   trap - EXIT
@@ -13,6 +13,15 @@ finish() {
   resolvectl status > "$out/resolved.log" || true
   nft list ruleset > "$out/nftables.log" || true
   printf '%s\n' "$code" > "$out/exit-code"
+  # Freeze the log files before archiving, so tar never reads its own output.
+  # This channel is a character device connected to a host file, not a NIC.
+  if [ -c /dev/virtio-ports/fncpn.results ]; then
+    mkdir -p /validation/export
+    cp -a "$out/." /validation/export/
+    tar -C /validation/export -czf /dev/virtio-ports/fncpn.results . || true
+  else
+    echo 'Missing virtio results port; host must reject this run.'
+  fi
   sync
   systemctl poweroff --no-block
 }
@@ -20,6 +29,9 @@ trap finish EXIT
 test "$(uname -m)" = loongarch64
 test "$(cat /proc/1/comm)" = systemd
 uname -a
+modprobe virtio_console
+udevadm settle --timeout=30
+test -c /dev/virtio-ports/fncpn.results
 modprobe wireguard
 modprobe nf_tables
 systemctl start systemd-resolved
