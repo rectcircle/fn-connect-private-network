@@ -6,19 +6,23 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 CATALOG = json.loads((ROOT / 'packaging/linux/targets.json').read_text())
 TARGETS = {target['id']: target for target in CATALOG['targets']}
 BUNDLES = CATALOG['bundles']
+EXPERIMENTAL_TARGETS = {p['id']: dict(TARGETS[p['base']], **p, experimental=True)
+                        for p in CATALOG.get('experimentalTargets', [])}
 EXTENSIONS = {'deb': 'deb', 'rpm': 'rpm', 'archlinux': 'pkg.tar.zst'}
 
 
 def target_profile(name, architecture=None):
-    if name not in TARGETS:
+    if name not in TARGETS and name not in EXPERIMENTAL_TARGETS:
         raise ValueError(f'Unknown Linux target {name!r}; choose: {", ".join(TARGETS)}')
-    profile = TARGETS[name]
+    profile = TARGETS[name] if name in TARGETS else EXPERIMENTAL_TARGETS[name]
     if architecture and architecture not in profile['architectures']:
         raise ValueError(f'{name} does not support architecture {architecture}')
     return profile
 
 
 def package_profile(name, architecture=None):
+    if name in EXPERIMENTAL_TARGETS:
+        return dict(target_profile(name, architecture), bundle=name, baseline=name)
     profile = None if name in BUNDLES else target_profile(name, architecture)
     bundle = name if profile is None else profile.get('bundle', profile['format'])
     definition = BUNDLES[bundle]

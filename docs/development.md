@@ -271,6 +271,19 @@ python3 scripts/check-linux-packages.py dist/linux/deb-loong64/loong64 deb-loong
 本地无需 Docker 的检查入口：`python3 scripts/loongarch/validate_test.py`、
 `python3 scripts/linux_support_test.py`、`python3 scripts/install_linux_test.py`、`python3 scripts/release_manifest_test.py`。
 
+### LoongArch RPM / Arch 验证入口
+
+`Validate LoongArch RPM and Arch builds` 仅手动运行，不参与日常 CI 或发布。固定 digest 的候选镜像来自
+[Fedora Remix LoongArch](https://github.com/fedora-remix-loongarch/releases-info) 与
+[pkgforge Arch Loong64 镜像](https://github.com/pkgforge-dev/docker-archlinux)。它们是社区构建，不能视为现有 Fedora/openSUSE 官方基线的架构扩展已获验证。
+候选定义在 `targets.json` 的 `experimentalTargets`，不进入正式 targets、bundles、安装器或发布资产清单。
+
+两个任务独立运行依赖可用性检查、C lp64d/官方 Go 运行探针，复用现有 Core/UI 构建、nFPM、ABI 和包内容校验。
+RPM 显式使用 `loongarch64` 包头，Arch 候选使用 `loong64`；架构映射和包头由原生工具二次查询。
+只上传 `experimental-loongarch-*` artifacts；RPM 未签名，不公开分发，不声称安装、服务、UI 启动或网络已通过。
+首次验证失败应依据依赖或编译日志调整候选配置，不能通过关闭包签名策略或伪造通过证据规避。
+确认工具链、依赖及 Core/UI 构建均通过后，再决定是否纳入正式包支持；不重复执行 Debian 完整 VM 验收。
+
 ### 正式 Linux 安装包
 
 ```sh

@@ -1,0 +1,97 @@
+name: Validate LoongArch RPM and Arch builds
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Source branch or commit (validation only)
+        type: string
+        default: main
+permissions:
+  contents: read
+concurrency:
+  group: loongarch-formats-${{ inputs.ref || github.ref }}
+  cancel-in-progress: true
+jobs:
+  targets:
+    runs-on: ubuntu-24.04
+    outputs:
+      matrix: ${{ steps.targets.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.ref }}
+      - id: targets
+        run: |
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          entries = json.loads(Path('packaging/linux/targets.json').read_text())['experimentalTargets']
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write('matrix=' + json.dumps({'include': [{'target': p['id'], 'image': p['image']} for p in entries]}) + '\n')
+          PY
+  build:
+    needs: targets
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.targets.outputs.matrix) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      TARGET: ${{ matrix.target }}
+      IMAGE: ${{ matrix.image }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.ref }}
+          fetch-depth: 0
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.27.1'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.14.0'
+      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1
+        with:
+          platforms: loong64
+      - name: Prepare frontend, official Go and packaging tool
+        run: |
+          npm --prefix ui/frontend ci
+          npm --prefix ui/frontend run build
+          GOOS=linux GOARCH=loong64 CGO_ENABLED=0 GOBIN='' go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.40.0
+          mkdir -p "$RUNNER_TEMP/format-tools"
+          cp "$(go env GOPATH)/bin/linux_loong64/nfpm" "$RUNNER_TEMP/format-tools/"
+          python3 - <<'PY'
+          import json, os, sys
+          sys.path.insert(0, 'scripts/loongarch')
+          from validate import download
+          from pathlib import Path
+          environment = json.loads(Path('scripts/loongarch/environment.json').read_text())
+          download(environment['goURL'], Path(os.environ['RUNNER_TEMP']) / 'go.tar.gz', environment['goSHA256'])
+          PY
+      - name: Start pinned candidate image
+        run: |
+          docker run -d --platform linux/loong64 --name fncpn-format -e TARGET -v "$GITHUB_WORKSPACE:/workspace" -v "$RUNNER_TEMP/format-tools:/opt/tools:ro" "$IMAGE" sleep infinity
+          docker exec fncpn-format mkdir -p /opt
+          docker cp "$RUNNER_TEMP/go.tar.gz" fncpn-format:/opt/go.tar.gz
+          docker exec fncpn-format tar -xzf /opt/go.tar.gz -C /opt
+      - name: Verify dependency availability
+        run: docker exec fncpn-format bash /workspace/scripts/loongarch/probe-format.sh bootstrap
+      - name: Verify native C and official Go toolchains
+        run: docker exec fncpn-format bash /workspace/scripts/loongarch/probe-format.sh toolchain
+      - name: Build and inspect matching Core and UI packages
+        run: docker exec fncpn-format bash /workspace/scripts/loongarch/probe-format.sh build
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: experimental-loongarch-${{ matrix.target }}
+          path: |
+            dist/loongarch-formats/**/*.rpm
+            dist/loongarch-formats/**/*.pkg.tar.zst
+            dist/loongarch-formats/**/*.json
+            dist/loongarch-formats/**/*.txt
+            dist/loongarch-formats/**/SHA256SUMS
+          if-no-files-found: warn
+          retention-days: 14
+      - name: Remove disposable candidate
+        if: always()
+        run: docker rm -f fncpn-format || true

@@ -553,5 +553,27 @@
       "format": "deb",
       "execution": "qemu"
     }
-  }
+  },
+  "experimentalTargets": [
+    {
+      "id": "fedora-remix43-loong64",
+      "base": "fedora43",
+      "label": "Fedora Remix 43 LoongArch (validation only)",
+      "image": "ghcr.io/fedora-remix-loongarch/mini-image@sha256:07c17fbd8c8c829a7bd788d7277245c650a1e6f78d9610275866521e16341927",
+      "architectures": [
+        "loong64"
+      ],
+      "packageArch": "loongarch64"
+    },
+    {
+      "id": "archlinux-loong64",
+      "base": "archlinux",
+      "label": "Loong Arch Linux (validation only)",
+      "image": "ghcr.io/pkgforge-dev/archlinux@sha256:c64bb6ee692e1ed0bc32a81cb47a4652188cbd538a8acbdfa0d83856c14edc92",
+      "architectures": [
+        "loong64"
+      ],
+      "packageArch": "loong64"
+    }
+  ]
 }

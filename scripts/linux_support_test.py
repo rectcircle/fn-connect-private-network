@@ -11,7 +11,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from linux_support import ROOT, TARGETS, BUNDLES, build_matrix, ci_matrix, package_name, package_profile, release_packages, target_profile, validate_loongarch_publication
+from linux_support import ROOT, TARGETS, BUNDLES, EXPERIMENTAL_TARGETS, build_matrix, ci_matrix, package_name, package_profile, release_packages, target_profile, validate_loongarch_publication
 
 
 def module(name):
@@ -67,6 +67,23 @@ class LinuxSupportTest(unittest.TestCase):
         self.assertEqual(len(names),len(set(names)))
         self.assertEqual(len(names),12)
         self.assertEqual(len(build_matrix()["include"]),5)
+
+    def test_experimental_loongarch_formats_are_not_release_targets(self):
+        for target, expected in [('fedora-remix43-loong64', 'loongarch64'), ('archlinux-loong64', 'loong64')]:
+            self.assertIn(target, EXPERIMENTAL_TARGETS)
+            self.assertNotIn(target, TARGETS)
+            self.assertNotIn(target, BUNDLES)
+            profile = package_profile(target, 'loong64')
+            self.assertTrue(profile['experimental'])
+            with self.assertRaises(ValueError): package_profile(target, 'amd64')
+            with tempfile.TemporaryDirectory() as temporary:
+                for component in ('core', 'ui'):
+                    config = builder.configuration(component, target, 'loong64', '1.1.8', '/tmp/fixture', pathlib.Path(temporary))
+                    self.assertEqual(config[profile['format']]['arch'], expected)
+                    for script in config['scripts'].values():
+                        self.assertNotIn('Debian forky', pathlib.Path(script).read_text())
+        self.assertEqual(len(release_packages('1.1.8')), 12)
+        self.assertTrue(all(item['target'] not in EXPERIMENTAL_TARGETS for item in ci_matrix()['include']))
 
     def test_build_only_loongarch_draft_cannot_be_published(self):
         files = {package_name(component, '1.1.8', 'deb-loong64', 'loong64'): 'hash-' + component

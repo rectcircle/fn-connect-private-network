@@ -108,7 +108,7 @@ def configuration(component, target, arch, version, binary, directory, runtime_d
     for item in config['contents']:
         if item['src']==variable: item['src']=str(pathlib.Path(binary).resolve())
     generic,special = lifecycle(component,profile['format'],directory)
-    if arch == 'loong64':
+    if arch == 'loong64' and profile['format'] == 'deb':
         preinstall = pathlib.Path(generic['preinstall'])
         preinstall.write_text('#!/bin/sh\n' + script_body('check-loongarch') + '\n' + preinstall.read_text().removeprefix('#!/bin/sh\n'))
     config['scripts'] = generic
@@ -117,8 +117,10 @@ def configuration(component, target, arch, version, binary, directory, runtime_d
         if component=='ui':config['recommends']=['libnotify-bin']
     elif profile['format']=='rpm':
         config['rpm']={'scripts':special}
+        if profile.get('packageArch'): config['rpm']['arch'] = profile['packageArch']
     else:
         config['archlinux']={'scripts':special,'pkgbase':'fncpn-'+component}
+        if profile.get('packageArch'): config['archlinux']['arch'] = profile['packageArch']
     return config
 
 
