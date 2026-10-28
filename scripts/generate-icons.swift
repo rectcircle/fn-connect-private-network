@@ -168,6 +168,30 @@ func androidVector(_ paths: [CGPath], viewport: CGFloat, scale: CGFloat, offset:
 }
 let paths = brandPaths()
 try svgIcon(paths).write(to: output.appendingPathComponent("AppIcon.svg"), atomically: true, encoding: .utf8)
+// HarmonyOS launcher masks the full-bleed background itself. Keep UI artwork separate.
+if let flag = CommandLine.arguments.firstIndex(of: "--harmonyos-root") {
+    let root = URL(fileURLWithPath: CommandLine.arguments[flag+1])
+    let background = png(1024) { size in
+        pale.setFill()
+        NSBezierPath(rect: NSRect(x: 0, y: 0, width: size, height: size)).fill()
+    }
+    let foreground = png(1024) { size in
+        let context = NSGraphicsContext.current!.cgContext
+        context.translateBy(x: 0, y: size)
+        context.scaleBy(x: 1, y: -1)
+        context.setFillColor(blue.cgColor)
+        for path in paths { context.addPath(path); context.fillPath() }
+    }
+    for relative in ["AppScope/resources/base/media", "entry/src/main/resources/base/media"] {
+        let media = root.appendingPathComponent(relative)
+        try FileManager.default.createDirectory(at: media, withIntermediateDirectories: true)
+        try background.write(to: media.appendingPathComponent("icon_background.png"))
+        try foreground.write(to: media.appendingPathComponent("icon_foreground.png"))
+        try """
+        {"layered-image":{"background":"$media:icon_background","foreground":"$media:icon_foreground"}}
+        """.appending("\n").write(to: media.appendingPathComponent("layered_image.json"), atomically: true, encoding: .utf8)
+    }
+}
 if let flag = CommandLine.arguments.firstIndex(of: "--mobile-root") {
     let root = URL(fileURLWithPath: CommandLine.arguments[flag+1])
     let res = root.appendingPathComponent("android/app/src/main/res")

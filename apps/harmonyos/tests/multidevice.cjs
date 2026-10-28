@@ -8,10 +8,12 @@ const pin = JSON.parse(fs.readFileSync(path.join(root, 'apps/harmonyos/toolchain
 const cli = path.join(process.env.HOME, '.local/opt/harmonyos/command-line-tools', pin[process.platform === 'linux' ? 'linuxCli' : 'cli'].version);
 const ts = require(path.join(cli, 'hvigor/hvigor/node_modules/typescript'));
 let systemLanguage = 'zh-Hans';
+let bridgeStops = 0;
+let failBridgeStop = false;
 function load(relative) {
   const source = fs.readFileSync(path.join(root, 'apps/harmonyos/entry/src/main/ets', relative), 'utf8');
   const code = ts.transpileModule(source, {compilerOptions: {module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020}}).outputText;
-  const sandbox = {exports: {}, require: name => { if (name === '@kit.PerformanceAnalysisKit') return {hilog: {warn() {}}}; if (name === '@kit.LocalizationKit') return {i18n: {System: {getSystemLanguage: () => systemLanguage}}}; if (name === './Messages') return load('platform/Messages.ets'); throw new Error('Unexpected runtime import: '+name); }}; vm.runInNewContext(code, sandbox); return sandbox.exports;
+  const sandbox = {exports: {}, require: name => { if (name === '@kit.PerformanceAnalysisKit') return {hilog: {warn() {}}}; if (name === '@kit.LocalizationKit') return {i18n: {System: {getSystemLanguage: () => systemLanguage}}}; if (name === './Messages') return load('platform/Messages.ets'); if (name === '@kit.AbilityKit') return {UIAbility: class {}}; if (name === '@kit.ArkUI') return {display: {off() { throw {code: 801, message: 'unsupported'}; }}}; if (name === '../platform/WindowStartup') return load('platform/WindowStartup.ets'); if (name === '../platform/DeviceServices') return {isDesktop: () => false, deviceType: () => 'phone'}; if (name === '../platform/SystemAdapter') return {SystemAdapter: class {}}; if (name === 'BuildProfile') return {default: {DEBUG: false, PRODUCT_NAME: 'default'}}; if (name === 'libfncpnbridge.so') return {default: {invoke() { bridgeStops++; if (failBridgeStop) throw new Error('runtime already stopped'); return Promise.resolve(''); }}}; throw new Error('Unexpected runtime import: '+name); }}; vm.runInNewContext(code, sandbox); return sandbox.exports;
 }
 (async () => {
   const {failureMessage, dnsStateName} = load('platform/FailureMessages.ets');
@@ -71,5 +73,24 @@ function load(relative) {
   await AdminWindows.open(context, 'http://127.0.0.1:12345/', '/private', 'test|user');
   assert.equal(launches[0].abilityName, 'AdminAbility');
   assert.equal(launches[0].parameters.identity, 'test|user');
-  console.log('Adaptive layout, VPN capability and admin window policy checks passed');
+  const {default: EntryAbility} = load('entryability/EntryAbility.ets');
+  for (const stopFails of [false, true]) {
+    failBridgeStop = stopFails;
+    const ability = new EntryAbility(); let offCalls = 0; let adapterCloses = 0;
+    ability.main = {off() { offCalls++; throw {code: 1300002, message: 'window already destroyed'}; }};
+    ability.adapter = {close: async () => { adapterCloses++; }};
+    assert.doesNotThrow(() => ability.onWindowStageDestroy());
+    assert.doesNotThrow(() => ability.onDestroy());
+    assert.doesNotThrow(() => ability.onDestroy());
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(offCalls, 1, 'destroyed window listeners are detached once');
+    assert.equal(adapterCloses, 1, 'adapter cleanup survives window and bridge failures');
+    assert.equal(ability.main, undefined);
+    assert.equal(ability.adapter, undefined);
+  }
+  const serviceAbility = new EntryAbility(); const stops = bridgeStops;
+  assert.doesNotThrow(() => serviceAbility.onDestroy());
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(bridgeStops, stops, 'system VPN lifetime is not tied to the UI ability');
+  console.log('Adaptive layout, VPN capability, lifecycle teardown and admin window policy checks passed');
 })().catch(error => {console.error(error);process.exitCode = 1;});

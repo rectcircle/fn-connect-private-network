@@ -4,6 +4,13 @@
 格式遵循 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)，版本规则见
 [版本与兼容性](docs/versioning-and-compatibility.md)。
 
+## [1.1.8] - 2026-10-28
+
+### Fixed
+
+- HarmonyOS 退出时安全清理窗口监听器，避免系统窗口先销毁导致 JsCrash，并继续释放应用内隧道资源。
+- HarmonyOS 应用图标采用 1024×1024 前景与满幅背景分层资源，由系统生成圆角与遮罩。
+
 ## [1.1.7] - 2026-10-27
 
 ### Added

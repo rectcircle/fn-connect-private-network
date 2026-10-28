@@ -17,8 +17,8 @@
         "srcEntry": "./ets/entryability/EntryAbility.ets",
         "exported": true,
         "label": "$string:app_name",
-        "icon": "$media:icon",
-        "startWindowIcon": "$media:icon",
+        "icon": "$media:layered_image",
+        "startWindowIcon": "$media:layered_image",
         "startWindowBackground": "$color:start_background",
         "skills": [
           {
@@ -42,13 +42,13 @@
         "exported": false,
         "launchType": "singleton",
         "label": "$string:app_name",
-        "icon": "$media:icon",
+        "icon": "$media:layered_image",
         "supportWindowMode": [
           "fullscreen",
           "split",
           "floating"
         ],
-        "startWindowIcon": "$media:icon",
+        "startWindowIcon": "$media:layered_image",
         "startWindowBackground": "$color:start_background"
       }
     ],

@@ -387,6 +387,17 @@ bash scripts/package-harmonyos.sh --release --sign
 申请者 DN（CN/O/OU/L/ST/C），私钥保留在密钥库中。签名材料与安装设备、用途须匹配。
 HAP 是模块安装包；APP 可包含多个模块，不能直接互换扩展名。
 
+分层启动图标使用 `layered_image.json` 引用两张 1024×1024 PNG：背景满幅不透明，前景透明，
+由系统裁切圆角；页面内品牌图形保留现有资源。更新图形后可从共享矢量生成资源：
+
+```sh
+swift scripts/generate-icons.swift /tmp/harmonyos-icons --harmonyos-root apps/harmonyos
+```
+
+上架 APP 打包需保留内部 HAP 签名（打包工具 `--replace-pack-info false`），并为最终 APP
+执行外层签名；交付前分别执行官方 `verify-app` 验证内部 HAP（含原生代码）及 APP。
+仅内部 HAP 验签通过不足以证明 APP 可上架。
+
 ### HarmonyOS CI、官网与夸克分发
 
 官网提供 HarmonyOS 中英下载页签；显式 HarmonyOS/OpenHarmony UA 优先于 Android 兼容标记，

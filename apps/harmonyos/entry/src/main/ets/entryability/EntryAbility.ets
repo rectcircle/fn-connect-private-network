@@ -33,7 +33,7 @@ export default class EntryAbility extends UIAbility {
     AppStorage.setOrCreate<number>('fontScale', this.context.config.fontSizeScale ?? 1);
     AppStorage.setOrCreate<number>('foldRight', 0); AppStorage.setOrCreate<number>('foldBottom', 0);
     AppStorage.setOrCreate<boolean>('uiDebug', ['simulator'].includes(BuildProfile.PRODUCT_NAME));
-    AppStorage.setOrCreate<boolean>('showDebugUI', BuildProfile.DEBUG && BuildProfile.PRODUCT_NAME === 'simulator');
+    AppStorage.setOrCreate<boolean>('showDebugUI', BuildProfile.DEBUG && ['simulator'].includes(BuildProfile.PRODUCT_NAME));
   }
   async onWindowStageCreate(stage: window.WindowStage): Promise<void> {
     const application = AppStorage.get<boolean>('uiDebug') === true;
@@ -70,9 +70,25 @@ export default class EntryAbility extends UIAbility {
   }
   onForeground(): void { this.syncBars(); this.syncFoldArea(); AppStorage.setOrCreate<number>('resumeEpoch', (AppStorage.get<number>('resumeEpoch') ?? 0) + 1); }
   onConfigurationUpdate(): void { this.syncBars(); this.syncFoldArea(); }
-  onDestroy(): void {
-    this.main?.off('windowSizeChange', this.sizeChanged);
+  private releaseWindowListeners(): void {
+    const main = this.main;
+    this.main = undefined;
+    // The system may destroy the native window before ability teardown.
+    try { main?.off('windowSizeChange', this.sizeChanged); }
+    catch (error) {
+      const failure = error as BusinessError;
+      hilog.warn(0, 'FnCPNStartup', 'Window listener cleanup: code=%{public}d; %{public}s', failure.code, failure.message);
+    }
     try { display.off('foldStatusChange', this.foldChanged); } catch (_) {}
-    if (this.adapter) { bridge.invoke(2, '').then(async () => { await this.adapter?.close(); }).catch(() => {}); }
+  }
+  onWindowStageDestroy(): void { this.releaseWindowListeners(); }
+  onDestroy(): void {
+    this.releaseWindowListeners();
+    const adapter = this.adapter;
+    this.adapter = undefined;
+    if (adapter) {
+      // Stop failures must not prevent adapter cleanup or escape the lifecycle callback.
+      Promise.resolve().then(() => bridge.invoke(2, '')).catch(() => {}).then(() => adapter.close()).catch(() => {});
+    }
   }
 }
