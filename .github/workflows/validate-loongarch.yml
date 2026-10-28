@@ -1,0 +1,53 @@
+name: Validate LoongArch (experimental)
+on:
+  workflow_dispatch:
+  # Bootstrap the experiment before the workflow is on the default branch.
+  push:
+    branches: [codex/loongarch-validation]
+    paths:
+      - '.github/workflows/validate-loongarch.yml'
+      - 'scripts/loongarch/**'
+      - 'internal/**'
+permissions:
+  contents: read
+concurrency:
+  group: loongarch-validation-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.27.1'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.14.0'
+      - name: Install full-system emulator and filesystem tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends qemu-system-misc e2fsprogs
+          qemu-system-loongarch64 --version
+      - name: Register LoongArch user-mode emulator
+        uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+        with:
+          platforms: loong64
+      - name: Validate source in user mode and a disposable LoongArch kernel
+        run: python3 scripts/loongarch/validate.py
+      - name: Publish experiment report
+        if: always()
+        run: |
+          if [ -f dist/loongarch-validation/summary.md ]; then
+            cat dist/loongarch-validation/summary.md >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo 'Validation did not reach the report writer; inspect workflow setup logs.' >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: loongarch-validation-${{ github.sha }}
+          path: dist/loongarch-validation/
+          if-no-files-found: warn
+          retention-days: 14

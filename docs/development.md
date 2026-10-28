@@ -194,6 +194,47 @@ Windows CI 使用 `windows-2022` 与 `Visual Studio 17 2022`，调整工具链�
 
 平台范围与选择依据见 [平台支持](platform-support.md#linux)，安装脚本命令见 [README](../README.md#linux自动安装)。Core 可交叉构建；UI 必须在 [targets.json](../packaging/linux/targets.json) 指定的对应架构基线环境构建。
 
+### LoongArch 新世界实验验证
+
+第一阶段使用独立的 `Validate LoongArch (experimental)` GitHub Actions 工作流，
+不加入正式支持矩阵、不生成安装包或公开 Release。只验证新世界 `linux/loong64`，不支持旧世界 ABI 或 MIPS 龙芯。
+在 Actions 中选择该工作流 → Run workflow → 选择待验证分支；实验分支
+`codex/loongarch-validation` 推送相关代码时也会触发，方便首次工作流尚未进入默认分支时验证。
+
+普通 `ubuntu-24.04` runner 执行 `python3 scripts/loongarch/validate.py`：
+
+1. 原生交叉编译 Core、根 module 的测试二进制和独立内核探针；原生 Node 构建前端。
+2. QEMU 用户态模拟运行 Debian forky loong64 容器，执行根 module 测试；容器内安装官方
+   LoongArch Go，直接用 Wails production/desktop build tags 编译 UI，执行 UI Go 与 DBus activation 测试。
+   复用仓库绑定与前端资源，不修改 Wails 上游或正式构建脚本。
+3. 将容器用户空间导出为临时 ext4 磁盘，使用配套 Debian 内核、initramfs 和固定 SHA256 的
+   LoongArch UEFI 固件，启动 TCG `virt` 完整虚拟机。容器模拟与全系统模拟分别记录，互不替代。
+4. systemd 启动实验测试服务，验证项目内核 client engine 的创建、崩溃清理、WireGuard
+   握手和 HTTP 数据、底层链路断开恢复、主动断开重连、netfilter forwarding；验证真实
+   systemd-resolved D-Bus、stub 查询与 DNS 链路清理；以普通用户执行真实 WebKit 前端握手。
+
+VM 无外部网卡，网络夹具全部位于 guest 的 veth/netns 内；不修改 runner 的路由或 DNS，
+无需部署 fnOS、提供账号或配置仓库 secrets。WireGuard peer 仅为数据面夹具，不能代替真实 fnOS 登录、OTP、
+控制面选路或会话恢复验收。全流程超时或缺少 UI/完成标记都会失败，失败时保留日志。
+
+运行摘要列出各阶段状态；下载 `loongarch-validation-<commit>` artifact，重点查看
+`report.json`、`summary.md`、`packages.tsv`、`unit-tests/`、`serial.log` 和 `system/`。
+产物中的 Core/UI 仅用于实验，不是发行安装包。`environment.json` 固定社区容器 digest、官方 Go
+及社区固件 SHA256；APT 从 forky 当前仓库解析，实际依赖版本写入 `packages.tsv`，不是完整依赖快照锁定。
+首次执行须核实 guest 内核及系统依赖可用；模拟器结果不能作为真机、显卡、Wayland、托盘交互、
+polkit 弹窗、安装升级卸载或历史正式版本兼容的验收证据。
+
+本地可检查实验脚本（不需要 Docker/QEMU）：
+
+```sh
+python3 scripts/loongarch/validate_test.py
+actionlint .github/workflows/validate-loongarch.yml
+CGO_ENABLED=0 GOOS=linux GOARCH=loong64 go test -c -tags loongarch_validation \
+  -o /tmp/fncpn-loongarch-probe.test ./scripts/loongarch/probe
+```
+
+### 正式 Linux 安装包
+
 ```sh
 TARGET=deb ARCH=arm64 scripts/build-linux-core.sh
 # 在对应基线环境内构建 UI；TARGET 也可为 rpm 或 archlinux

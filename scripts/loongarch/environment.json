@@ -1,0 +1,8 @@
+{
+  "image": "ghcr.io/loong64/debian@sha256:cab472f2d0f07ca2cbee91a4770e7f7ee17b10597f3a161f36ed12b07946422e",
+  "distribution": "Debian forky (development snapshot, new-world ABI)",
+  "goURL": "https://go.dev/dl/go1.27.1.linux-loong64.tar.gz",
+  "goSHA256": "a3df3db12e0b16d932bbfd3f6025473faf8bfeb13ea2177de5e8fac1d4124b7f",
+  "firmwareURL": "https://github.com/xujiegb/debian-loong64-qcow2/releases/download/13.5/edk2-loongarch64-code.fd",
+  "firmwareSHA256": "edd5a67fe50f7597faecb2fe67c5733b9a31b0b345a2127c3c358a5737446ef7"
+}

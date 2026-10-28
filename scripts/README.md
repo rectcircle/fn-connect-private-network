@@ -7,6 +7,7 @@
 | macOS / fnOS | `build-all.sh`、`build-macos-pkg.sh`、`build-fpk.sh` | [构建安装包](../docs/development.md#macos-与-fnos-构建安装包) |
 | Windows | `setup-windows.ps1`、`build-windows.ps1`、`check-windows.ps1` | [开发与构建](../docs/development.md#windows-开发与构建)，内部辅助位于 `windows/` |
 | Linux | `install-linux.sh`、`build-linux-core.sh`、`build-linux-ui.sh` | [构建与部署](../docs/development.md#linux-构建与部署) |
+| LoongArch 实验 | `loongarch/validate.py` | [GitHub/QEMU 新世界验证](../docs/development.md#loongarch-新世界实验验证)，不发布安装包 |
 | Nix | `update-nix-go-hashes.sh`（支持 `--check`）、`nix_go_hashes.py` | [依赖维护](../docs/development.md#nix-flake-与-nixos) |
 | iOS | `setup-ios-macos.sh`、`build-ios.sh`、`package-ios.sh`、`sign-ios.sh`、`ios/` | [环境准备](../docs/development.md#ios-开发环境准备)，App/扩展开发构建、未签名 Release IPA 与模拟器安装；[个人设备重签](../docs/development.md#ios-个人设备本地重签) |
 | Android | `setup-android-macos.sh`、`android/prepare.py`、`android/notices.py`、`android/verify_apk.py` | [环境初始化、构建与 CI](../docs/development.md#android-开发与构建)，打包入口是 `mobile/android/`，仅构建正式签名、非 debuggable 的 Release APK |
