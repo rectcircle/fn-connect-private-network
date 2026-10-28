@@ -40,6 +40,19 @@ def release_packages(version):
             for component in ('core', 'ui')]
 
 
+def validate_loongarch_publication(manifest):
+    if tuple(map(int, manifest['version'].split('.'))) < (1, 1, 8):
+        return
+    proof = manifest.get('build', {}).get('loongarchValidation', {})
+    expected = {a['file']: a['sha256'] for a in manifest['artifacts']
+                if a['file'].endswith('-linux-loong64.deb')}
+    if not isinstance(proof, dict):
+        proof = {}
+    if (proof.get('level') != 'full' or proof.get('commit') != manifest['commit']
+            or len(expected) != 2 or proof.get('artifacts') != expected):
+        raise ValueError('LoongArch runtime acceptance is required before publication; rebuild with loongarch_full_validation=true')
+
+
 def build_matrix():
     entries = []
     for bundle, definition in BUNDLES.items():

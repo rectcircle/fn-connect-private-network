@@ -8,7 +8,7 @@ from pathlib import PurePosixPath
 import re
 import subprocess
 import tempfile
-from linux_support import release_packages
+from linux_support import release_packages, validate_loongarch_publication
 from android_release import validate_inventory as validate_android_inventory
 from ios_release import validate_inventory as validate_ios_inventory, verify_ipa
 from harmonyos_release import validate_inventory as validate_harmonyos_inventory, verify_hap
@@ -116,6 +116,11 @@ def publish(directory, repository, make_public=False):
     for artifact in manifest['artifacts']:
         if hashlib.sha256(sources[artifact['file']].read_bytes()).hexdigest() != artifact['sha256']:
             raise SystemExit('Artifact checksum mismatch: ' + artifact['file'])
+    if make_public:
+        try:
+            validate_loongarch_publication(manifest)
+        except ValueError as error:
+            raise SystemExit(str(error))
     # Distinguish not-found from auth/network errors before creating a release.
     release = find_release(repository, tag, run)
     existing_release = release is not None

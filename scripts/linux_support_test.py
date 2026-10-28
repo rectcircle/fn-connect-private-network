@@ -11,7 +11,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from linux_support import ROOT, TARGETS, BUNDLES, build_matrix, ci_matrix, package_name, package_profile, release_packages, target_profile
+from linux_support import ROOT, TARGETS, BUNDLES, build_matrix, ci_matrix, package_name, package_profile, release_packages, target_profile, validate_loongarch_publication
 
 
 def module(name):
@@ -67,6 +67,21 @@ class LinuxSupportTest(unittest.TestCase):
         self.assertEqual(len(names),len(set(names)))
         self.assertEqual(len(names),12)
         self.assertEqual(len(build_matrix()["include"]),5)
+
+    def test_build_only_loongarch_draft_cannot_be_published(self):
+        files = {package_name(component, '1.1.8', 'deb-loong64', 'loong64'): 'hash-' + component
+                 for component in ('core', 'ui')}
+        manifest = {'version': '1.1.8', 'commit': 'candidate',
+                    'artifacts': [{'file': name, 'sha256': digest} for name, digest in files.items()],
+                    'build': {}}
+        for proof in (None, {'level': 'build'}, {'level': 'full', 'commit': 'foreign', 'artifacts': files},
+                      {'level': 'full', 'commit': 'candidate', 'artifacts': {}}):
+            manifest['build']['loongarchValidation'] = proof
+            with self.assertRaisesRegex(ValueError, 'runtime acceptance'):
+                validate_loongarch_publication(manifest)
+        manifest['build']['loongarchValidation'] = {'level': 'full', 'commit': 'candidate', 'artifacts': files}
+        validate_loongarch_publication(manifest)
+        validate_loongarch_publication({'version': '1.1.7'})
 
     def test_historical_releases_do_not_gain_loongarch_assets(self):
         for version in ('1.1.2', '1.1.7'):

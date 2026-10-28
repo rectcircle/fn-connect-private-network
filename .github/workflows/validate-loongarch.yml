@@ -8,6 +8,10 @@ on:
       version:
         type: string
         default: ''
+      full_validation:
+        description: Run source regressions and full package/kernel acceptance
+        type: boolean
+        default: false
       full_regression:
         type: boolean
         default: false
@@ -23,6 +27,10 @@ on:
       version:
         type: string
         default: ''
+      full_validation:
+        description: Run source regressions and full package/kernel acceptance
+        type: boolean
+        default: false
       full_regression:
         type: boolean
         default: false
@@ -44,6 +52,7 @@ jobs:
       RELEASE: ${{ inputs.release && '1' || '0' }}
       RELEASE_COMMIT: ${{ inputs.ref }}
       RELEASE_VERSION: ${{ inputs.version }}
+      FULL_VALIDATION: ${{ inputs.full_validation && '1' || '0' }}
       FORCE_ROOT_REGRESSION: ${{ inputs.full_regression && '1' || '0' }}
     steps:
       - uses: actions/checkout@v5
@@ -67,6 +76,7 @@ jobs:
           restore-keys: |
             loongarch-${{ steps.cache-epoch.outputs.month }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/loongarch/environment.json', 'scripts/loongarch/provision.sh', 'go.sum', 'ui/go.sum') }}-
       - name: Install full-system emulator and filesystem tools
+        if: inputs.full_validation
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends qemu-system-misc e2fsprogs
@@ -80,13 +90,15 @@ jobs:
         run: python3 scripts/loongarch/validate.py --stage prepare
       - name: Restore or prepare compilation environment
         run: python3 scripts/loongarch/validate.py --stage builder
-      - name: Run source regressions and UI tests
+      - name: Prepare Go toolchain and optional source regressions
         run: python3 scripts/loongarch/validate.py --stage tests
       - name: Build final Core and UI DEBs
         run: python3 scripts/loongarch/validate.py --stage packages
       - name: Restore clean runtime and cache package dependencies
+        if: inputs.full_validation
         run: python3 scripts/loongarch/validate.py --stage runtime
       - name: Validate installed packages and real kernel in VM
+        if: inputs.full_validation
         run: python3 scripts/loongarch/validate.py --stage system
       - name: Finalize evidence and clean disposable environments
         if: always()
@@ -132,6 +144,7 @@ jobs:
             dist/linux/**/SHA256SUMS
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
+        if: inputs.full_validation
         with:
           name: linux-compat-debian-forky-loong64
           path: dist/linux-compat/

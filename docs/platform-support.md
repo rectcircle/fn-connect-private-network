@@ -77,6 +77,7 @@ Core/UI DEB 构建、安装识别与发布校验已接入；同 commit 包的干
 真实 systemd 服务、内核网络、DNS 和 WebKit 握手已通过 QEMU 验收。操作与边界见
 [LoongArch 构建与验收](development.md#loongarch-新世界构建与验收)。模拟器结果不等于真机或完整 fnOS 验收，
 不将麒麟/UOS/Loongnix、旧世界 ABI 或 MIPS 型号归入此目标。
+LoongArch 草稿默认只编译、打包和静态校验；完整系统验收按需显式开启，公开前要求最终包的匹配验收证据。
 
 ### Nix / NixOS
 

@@ -204,11 +204,18 @@ Windows CI 使用 `windows-2022` 与 `Visual Studio 17 2022`，调整工具链�
 `Build LoongArch DEB and validate` 工作流可在 Actions 中手动运行，也由正式 Linux 构建工作流调用。
 `ref` 可选择源码分支；发布候选须使用完整 commit SHA、匹配的 `version` 和 `release=true`。
 工作流只上传 Actions artifacts，不创建 tag、不上传或公开 GitHub Release。
+默认 `full_validation=false` 只编译并生成正式 Core/UI DEB，检查 ELF、动态链接、包元数据和哈希，
+不执行源码回归、升级夹具、干净系统安装或内核 VM。需要平台验收时手动设置 `full_validation=true`。
+草稿发布同样默认快速构建；Release 的 `loongarch_full_validation=true` 会对本次候选执行完整验收。
+草稿清单明确标记 `loongarchValidation.level=build/full`，快速构建不冒充运行验收通过。
+公开前要求最终候选的完整验收及匹配 commit/包哈希；仅构建的草稿会被公开入口拒绝。
+
 不再保留实验分支 push 触发；日常 PR 不自动执行完整模拟器验收。
 
 普通 `ubuntu-26.04` runner（QEMU ≥ 10）按 prepare、builder、tests、packages、runtime、system、finish
-七个可见步骤执行 `python3 scripts/loongarch/validate.py --stage <阶段>`，同一 job 内保留容器和报告；
-每阶段核对源码 commit，finish 始终清理环境并检查完整证据。仍可无参数执行整个流程：
+可见步骤执行 `python3 scripts/loongarch/validate.py --stage <阶段>`，同一 job 内保留容器和报告；
+每阶段核对源码 commit，finish 始终清理环境并检查所选范围证据。runtime/system 仅完整模式执行。
+无参数执行也默认快速构建，可用 `FULL_VALIDATION=1` 运行以下完整验收流程：
 
 1. 原生交叉编译 Core 和测试二进制，原生 Node 构建同 commit 前端资源。
 2. 在固定 digest 的 Debian forky loong64 容器中运行用户态测试和 UI Go/DBus activation 测试；
@@ -235,7 +242,7 @@ Windows CI 使用 `windows-2022` 与 `Visual Studio 17 2022`，调整工具链�
 成功后上传：
 
 - `linux-packages-deb-loong64-loong64`：`linux/deb-loong64/loong64/` 下的 Core/UI DEB、构建清单与校验和。
-- `linux-compat-debian-forky-loong64`：同 commit、同包哈希的系统及安装生命周期验收证据，正式发布汇总必须验证。
+- `linux-compat-debian-forky-loong64`：仅完整模式上传，同 commit、同包哈希的系统及安装生命周期验收证据。
 - `loongarch-validation-<commit>`：JSON/摘要、实际依赖版本、用户态测试、串口、journal 和 VM 分项结果。
 
 固定的基础镜像、Go 和固件在 `scripts/loongarch/environment.json` 中；APT 使用 forky 当前仓库，
@@ -248,9 +255,9 @@ Windows CI 使用 `windows-2022` 与 `Visual Studio 17 2022`，调整工具链�
 根模块通用用户态回归通过后保存源码内容指纹、环境和月份对应的通过记录。指纹保守包含根模块源码、
 内嵌资源、依赖、打包/测试脚本和未知文件；只排除明确属于移动端、独立 UI、iOS、macOS、文档及官网的输入。
 仅这些独立输入变化时可复用匹配的通过记录，仍重新编译 VM 必需测试及 probe，并对最终包执行全部系统验收。
-报告显式记录复用来源 commit；记录缺失、损坏、环境变化或指纹不符时运行完整回归。
+报告显式记录复用来源 commit；记录缺失、损坏、环境变化或指纹不符时，在完整模式中运行根模块全部回归。
 手动运行可设置 `full_regression=true` 强制完整根模块回归。UI 测试及实际 DEB 的安装、升级、重装、卸载、
-UI 启动、WireGuard 与 DNS 验收不采用该复用机制。
+UI 启动、WireGuard 与 DNS 验收在完整模式中始终执行，不采用该复用机制。
 无需龙芯实机；所有提权、包安装与网络操作均限于一次性容器/VM。
 
 手工在匹配的新世界环境构建：

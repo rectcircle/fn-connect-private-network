@@ -10,6 +10,10 @@ on:
         description: Full candidate commit SHA (40 lowercase hex characters)
         required: true
         type: string
+      loongarch_full_validation:
+        description: Include full LoongArch package and kernel acceptance (required before publication)
+        type: boolean
+        default: false
       artifacts_only:
         description: Build and verify candidate artifacts without modifying any GitHub Release
         default: false
@@ -154,6 +158,7 @@ jobs:
       ref: ${{ inputs.commit }}
       version: ${{ inputs.version }}
       release: true
+      loongarch_full_validation: ${{ inputs.loongarch_full_validation == true }}
   android-build:
     needs: candidate
     if: ${{ !inputs.publish }}
@@ -295,6 +300,8 @@ jobs:
           name: harmonyos-release-candidates-${{ inputs.commit }}
           path: dist/harmonyos
       - name: Assemble same-commit release inventory
+        env:
+          LOONGARCH_VALIDATION: ${{ inputs.loongarch_full_validation && 'full' || 'build' }}
         run: python3 scripts/release-manifest.py "$DIST_DIR" "$RELEASE_VERSION" "$RELEASE_COMMIT" arm64
       - uses: actions/upload-artifact@v4
         with:

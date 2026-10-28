@@ -11,4 +11,6 @@ bash scripts/build-linux-ui.sh
 readelf -l dist/linux/deb-loong64/loong64/fncpn-ui
 ldd -r dist/linux/deb-loong64/loong64/fncpn-ui
 python3 scripts/check-linux-packages.py dist/linux/deb-loong64/loong64 deb-loong64 loong64
-python3 scripts/loongarch/upgrade-fixture.py
+if [ "${FULL_VALIDATION:-0}" = 1 ]; then
+ python3 scripts/loongarch/upgrade-fixture.py
+fi

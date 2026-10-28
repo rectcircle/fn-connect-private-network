@@ -325,31 +325,38 @@ def phase(stage):
             shutil.rmtree(work)
         work.mkdir(parents=True)
         commit = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip()
-        report = Report(OUT, required=['host-tools', 'core-build', 'test-build', 'frontend', 'container',
-            'provision', 'core-runtime', 'unit-tests', 'ui-tests', 'packaging-tool', 'package-build',
-            'runtime-provision', 'offline-dependencies', 'full-system'],
+        full = os.environ.get('FULL_VALIDATION') == '1'
+        required = ['host-tools', 'frontend', 'container', 'provision', 'packaging-tool', 'package-build']
+        if full:
+            required += ['core-build', 'test-build', 'core-runtime', 'unit-tests', 'ui-tests',
+                         'runtime-provision', 'offline-dependencies', 'full-system']
+        report = Report(OUT, required=required, validationLevel='full' if full else 'build',
             commit=commit, environment=ENVIRONMENT, deferredToFullSystem=[DEFERRED_TEST],
             notValidated=['physical hardware and GPU', 'real fnOS login/OTP and end-to-end session recovery',
                           'historical release compatibility (upgrade fixture uses candidate code)',
                           'Wayland, interactive tray and polkit flows', 'old-world ABI'])
+        if not full:
+            report.data['notValidated'].append('build-only: package lifecycle, UI startup and kernel/DNS acceptance were not run')
         (OUT / 'commit').write_text(commit + '\n')
         (OUT / 'environment.json').write_text(json.dumps(ENVIRONMENT, indent=2) + '\n')
     else:
         report = load_report()
         commit = report.data['commit']
+    full = report.data['validationLevel'] == 'full'
     started = time.monotonic()
     try:
         if stage == 'prepare':
-            report.check('host-tools', ['bash', '-ec', 'go version; node --version; docker version; qemu-system-loongarch64 --version'])
-            fingerprint = root_regression_fingerprint()
-            scope = root_regression_plan(cache, fingerprint, os.environ.get('FORCE_ROOT_REGRESSION') == '1')
-            reuse = scope['reused']
-            report.data['rootRegression'] = scope
-            report.check('core-build', ['go', 'build', '-trimpath', '-ldflags',
-                f'-X github.com/rectcircle/fn-connect-private-network/internal/version.Revision={commit}',
-                '-o', str(OUT / 'fncpn'), './cmd/fncpn'], env=environment)
-            report.check('test-build', [sys.executable, __file__, 'compile-tests'], timeout=1200,
-                         env=dict(os.environ, FNCPN_ROOT_REGRESSION='0' if reuse else '1'))
+            report.check('host-tools', ['bash', '-ec', 'go version; node --version; docker version' + ('; qemu-system-loongarch64 --version' if full else '')])
+            if full:
+                fingerprint = root_regression_fingerprint()
+                scope = root_regression_plan(cache, fingerprint, os.environ.get('FORCE_ROOT_REGRESSION') == '1')
+                reuse = scope['reused']
+                report.data['rootRegression'] = scope
+                report.check('core-build', ['go', 'build', '-trimpath', '-ldflags',
+                    f'-X github.com/rectcircle/fn-connect-private-network/internal/version.Revision={commit}',
+                    '-o', str(OUT / 'fncpn'), './cmd/fncpn'], env=environment)
+                report.check('test-build', [sys.executable, __file__, 'compile-tests'], timeout=1200,
+                             env=dict(os.environ, FNCPN_ROOT_REGRESSION='0' if reuse else '1'))
             report.check('frontend', ['bash', '-ec', 'npm --prefix ui/frontend ci && npm --prefix ui/frontend run build'], timeout=600)
             for directory in ('go-build', 'go-mod', 'toolchain/bin/linux_loong64'):
                 (cache / directory).mkdir(parents=True, exist_ok=True)
@@ -358,25 +365,28 @@ def phase(stage):
         elif stage == 'builder':
             start_container(report, container)
         elif stage == 'tests':
-            report.check('core-runtime', ['docker', 'exec', container, '/workspace/dist/loongarch-validation/fncpn', 'version'])
-            scope = report.data['rootRegression']
-            if scope['reused']:
-                report.data['checks']['unit-tests'] = {'status': 'passed', 'reused': True,
-                    'fingerprint': scope['fingerprint'], 'previousCommit': scope['previousCommit'], 'seconds': 0}
-                print('Reusing unchanged root regression:', scope, flush=True)
-            elif report.check('unit-tests', ['docker', 'exec', container, 'timeout', '--kill-after=10s', '2300s',
-                'python3', '/workspace/scripts/loongarch/validate.py', 'userspace-tests'], timeout=2400):
-                receipt = cache / 'root-tests' / (scope['fingerprint'] + '.json')
-                receipt.parent.mkdir(parents=True, exist_ok=True)
-                receipt.write_text(json.dumps({'passed': True, 'fingerprint': scope['fingerprint'], 'commit': commit}) + '\n')
+            if full:
+                report.check('core-runtime', ['docker', 'exec', container, '/workspace/dist/loongarch-validation/fncpn', 'version'])
+                scope = report.data['rootRegression']
+                if scope['reused']:
+                    report.data['checks']['unit-tests'] = {'status': 'passed', 'reused': True,
+                        'fingerprint': scope['fingerprint'], 'previousCommit': scope['previousCommit'], 'seconds': 0}
+                    print('Reusing unchanged root regression:', scope, flush=True)
+                elif report.check('unit-tests', ['docker', 'exec', container, 'timeout', '--kill-after=10s', '2300s',
+                    'python3', '/workspace/scripts/loongarch/validate.py', 'userspace-tests'], timeout=2400):
+                    receipt = cache / 'root-tests' / (scope['fingerprint'] + '.json')
+                    receipt.parent.mkdir(parents=True, exist_ok=True)
+                    receipt.write_text(json.dumps({'passed': True, 'fingerprint': scope['fingerprint'], 'commit': commit}) + '\n')
             archive = work / 'go.tar.gz'
             download(ENVIRONMENT['goURL'], archive, ENVIRONMENT['goSHA256'])
             subprocess.run(['docker', 'cp', str(archive), f'{container}:/tmp/go.tar.gz'], check=True)
             subprocess.run(['docker', 'exec', container, 'bash', '-ec', 'mkdir -p /opt; tar -xzf /tmp/go.tar.gz -C /opt; rm /tmp/go.tar.gz'], check=True)
-            report.check('ui-tests', ['docker', 'exec', container, 'timeout', '--kill-after=10s', '3500s',
-                         'bash', '/workspace/scripts/loongarch/build-ui.sh'], timeout=3600)
+            if full:
+                report.check('ui-tests', ['docker', 'exec', container, 'timeout', '--kill-after=10s', '3500s',
+                             'bash', '/workspace/scripts/loongarch/build-ui.sh'], timeout=3600)
         elif stage == 'packages':
             if report.check('package-build', ['docker', 'exec',
+                '-e', 'FULL_VALIDATION=' + ('1' if full else '0'),
                 '-e', 'RELEASE=' + os.environ.get('RELEASE', '0'),
                 '-e', 'RELEASE_COMMIT=' + os.environ.get('RELEASE_COMMIT', ''),
                 '-e', 'RELEASE_VERSION=' + os.environ.get('RELEASE_VERSION', ''), container,
@@ -408,7 +418,7 @@ def phase(stage):
                 subprocess.run(['sudo', 'chown', '-R', f'{os.getuid()}:{os.getgid()}', str(cache)], check=True)
             report.save()
             lines = ['# LoongArch 新世界 DEB 构建与验收', '', f'Commit: `{commit}`', '',
-                     '| 检查 | 结果 | 秒数 |', '| --- | --- | --- |']
+                     '验证范围：' + report.data['validationLevel'], '', '| 检查 | 结果 | 秒数 |', '| --- | --- | --- |']
             lines += [f'| {name} | {item["status"]} | {item.get("seconds", "")} |' for name, item in report.data['checks'].items()]
             lines += ['', '环境缓存：`' + json.dumps(report.data.get('environmentCache', {})) + '`',
                       '', '根模块回归：`' + json.dumps(report.data.get('rootRegression', {})) + '`', '', '未验证：']
@@ -447,7 +457,10 @@ def main():
     if sys.argv[1:]:
         raise SystemExit('Use --stage STAGE, compile-tests or userspace-tests')
     try:
-        for stage in ('prepare', 'builder', 'tests', 'packages', 'runtime', 'system'):
+        stages = ['prepare', 'builder', 'tests', 'packages']
+        if os.environ.get('FULL_VALIDATION') == '1':
+            stages += ['runtime', 'system']
+        for stage in stages:
             phase(stage)
     finally:
         phase('finish')

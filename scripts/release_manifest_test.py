@@ -82,6 +82,7 @@ class ReleaseInventoryTest(unittest.TestCase):
     def test_linux_candidates_are_exact_and_tied_to_release(self):
         for mutation, message in (
             (lambda m: None, None),
+            (lambda m: m.update(_testEvidence='build-only-loongarch'), None),
             (lambda m: m.update(commit='foreign'), 'clean release'),
             (lambda m: m.update(workingTreeDirty=True), 'clean release'),
             (lambda m: m.update(architecture='arm64'), 'clean release'),
@@ -121,6 +122,8 @@ class ReleaseInventoryTest(unittest.TestCase):
                 (root/'linux-compat').mkdir()
                 for distro, profile in TARGETS.items():
                     for architecture in profile['architectures']:
+                        if architecture == 'loong64' and mode == 'build-only-loongarch':
+                            continue
                         evidence={'target':distro,'architecture':architecture,'bundle':profile['format'],'productVersion':version,'commit':'commit','passed':True,'checks':['package-metadata','dependency-resolution','core-version','ui-dynamic-linking','core-only-install','elf-abi','ui-frontend-handshake','package-reinstall','package-remove'],'artifacts':{package_name(component,version,distro,architecture):hashlib.sha256(b'fixture').hexdigest() for component in ('core','ui')}}
                         if architecture == 'loong64':
                             evidence['checks'] += ['systemd-services','package-upgrade','upgrade-state-preserved','kernel-network','real-resolved']
@@ -132,7 +135,8 @@ class ReleaseInventoryTest(unittest.TestCase):
                         if mode == 'failed': evidence['passed']=False
                         if mode == 'no-ui': evidence['checks'].remove('ui-frontend-handshake')
                         if mode != 'missing': (root/'linux-compat'/f'{distro}-{architecture}.json').write_text(json.dumps(evidence))
-                result=subprocess.run([sys.executable,str(SCRIPT),str(root),version,'commit','arm64'],capture_output=True,text=True)
+                result=subprocess.run([sys.executable,str(SCRIPT),str(root),version,'commit','arm64'],capture_output=True,text=True,
+                    env=dict(os.environ, LOONGARCH_VALIDATION='build' if mode == 'build-only-loongarch' else 'full'))
                 if message:
                     self.assertNotEqual(result.returncode,0)
                     self.assertIn(message,result.stderr)

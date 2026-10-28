@@ -72,6 +72,8 @@ if tuple(map(int, version.split('.'))) >= (1, 1, 2):
     by_name = {entry['file']: entry['sha256'] for entry in artifacts}
     for distro, profile in TARGETS.items():
         for architecture in profile['architectures']:
+            if architecture == 'loong64' and os.environ.get('LOONGARCH_VALIDATION') == 'build':
+                continue  # Draft build only; do not claim runtime acceptance.
             try:
                 evidence = json.loads((root/'linux-compat'/f'{distro}-{architecture}.json').read_text())
             except (OSError, json.JSONDecodeError) as error:
@@ -137,6 +139,11 @@ if tuple(map(int, version.split('.'))) >= (1, 1, 2):
     metadata['build']['linuxTargets'] = list(TARGETS)
     metadata['build']['linuxBundles'] = list(BUNDLES)
     metadata['build']['nixSystems'] = ['x86_64-linux', 'aarch64-linux']
+if tuple(map(int, version.split('.'))) >= (1, 1, 8):
+    metadata['build']['loongarchValidation'] = {
+        'level': 'build' if os.environ.get('LOONGARCH_VALIDATION') == 'build' else 'full',
+        'commit': revision,
+        'artifacts': {a['file']: a['sha256'] for a in artifacts if a['file'].endswith('-linux-loong64.deb')}}
 if harmonyos_build:
     metadata['build']['harmonyos'] = harmonyos_build
 if ios_build:
