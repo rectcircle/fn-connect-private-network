@@ -8,8 +8,18 @@
 - [Arch 新世界格式验证](https://github.com/rectcircle/fn-connect-private-network/actions/runs/40731600172/job/122969194281)已通过：
   commit `e4c924f`，固定镜像中 C lp64d、官方 Go、GTK/WebKit/AppIndicator、Core/UI 编译、包头与动态链接检查均成功。
   仅为实验候选，尚未验证安装、UI 启动或服务生命周期，也未加入正式发布清单。
-  Fedora Remix RPM 候选因仓库不可达停用；已确认 ALT Sisyphus 官方 loong64 容器、可访问镜像及所需开发包，
-  RPM 构建候选切换到 ALT，实际 C/Go/UI 构建及包验证仍待 GitHub 结果。
+  [ALT Sisyphus RPM 构建验证](https://github.com/rectcircle/fn-connect-private-network/actions/runs/40745432371)
+  已通过，commit `f381cd5`；C/Go/UI 构建、包头和动态链接检查成功，尚不代表安装和启动通过。
+  RPM、Arch 新增干净容器安装及 UI 握手验证，结果待运行；真实 systemd 生命周期尚未覆盖。
+- openSUSE LoongArch 兼容性尚未验证：2026-10-29 查询
+  [官方 OBS 项目元数据](https://api.opensuse.org/public/source/devel:LoongArch:Factory/_meta)，
+  `standard` 仓库列有 `loongarch64`，但项目设置 `<publish><disable/></publish>`；
+  `https://download.opensuse.org/repositories/devel:/LoongArch:/Factory/` 和
+  `https://download.opensuse.org/ports/loongarch/` 返回 HTTP 404。
+  这表明该开发项目目前没有公开发布的安装仓库，不能作为可复现的运行验收基线；
+  不据此断言 ALT 二进制不能运行，也不宣称不存在其他社区镜像。
+  要验证 openSUSE，仍需可核实的 LoongArch 新世界 rootfs/镜像及配套完整仓库，
+  然后对同一 ALT 产物进行依赖解析、ABI 和启动检查。
 
 
 - [第一步 GitHub 验证](https://github.com/rectcircle/fn-connect-private-network/actions/runs/40668515602)

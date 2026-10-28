@@ -1,5 +1,5 @@
 #!/bin/bash
-# Runs only in a disposable candidate image; never publishes or installs FnCPN.
+# Runs only in a disposable candidate image; never publishes FnCPN. Runtime checks use a separate clean container.
 set -euo pipefail
 cd /workspace
 export PATH=/opt/go/bin:/opt/tools:$PATH GOTOOLCHAIN=local
@@ -8,7 +8,7 @@ export NFPM=/opt/tools/nfpm DIST_DIR=/workspace/dist/loongarch-formats
 out="$DIST_DIR/$TARGET/loong64"
 mkdir -p "$out"
 case "$1" in
- bootstrap)
+ bootstrap|runtime-bootstrap)
   if command -v dnf >/dev/null; then
    dnf --setopt=timeout=20 --setopt=retries=2 --setopt=ip_resolve=4 install -y --setopt=install_weak_deps=False git ca-certificates curl python3 tar xz
   elif command -v microdnf >/dev/null; then
@@ -29,7 +29,7 @@ case "$1" in
    echo 'Candidate image has no supported package manager' >&2; exit 1
   fi
   git config --global --add safe.directory /workspace
-  python3 scripts/linux-ci-dependencies.py "$TARGET"
+  if [ "$1" = bootstrap ]; then python3 scripts/linux-ci-dependencies.py "$TARGET"; fi
   cat /etc/os-release
   if command -v rpm >/dev/null; then rpm -qa | sort > "$out/installed-packages.txt"; else pacman -Q > "$out/installed-packages.txt"; fi
   ;;

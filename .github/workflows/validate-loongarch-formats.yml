@@ -108,6 +108,14 @@ jobs:
         run: docker exec fncpn-format bash /workspace/scripts/loongarch/probe-format.sh toolchain
       - name: Build and inspect matching Core and UI packages
         run: docker exec fncpn-format bash /workspace/scripts/loongarch/probe-format.sh build
+      - name: Install and start candidates in a clean runtime image
+        run: |
+          docker rm -f fncpn-format
+          # Allow the real WebKit/image sandbox in the disposable test container.
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          docker run -d --privileged --shm-size=1g --platform linux/loong64 --name fncpn-format -e TARGET -v "$GITHUB_WORKSPACE:/workspace" "$IMAGE" sleep infinity
+          docker exec fncpn-format bash /workspace/scripts/loongarch/probe-format.sh runtime-bootstrap
+          docker exec fncpn-format python3 /workspace/scripts/loongarch/runtime-format.py
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -117,6 +125,7 @@ jobs:
             dist/loongarch-formats/**/*.pkg.tar.zst
             dist/loongarch-formats/**/*.json
             dist/loongarch-formats/**/*.txt
+            dist/loongarch-formats/**/*.log
             dist/loongarch-formats/**/SHA256SUMS
           if-no-files-found: warn
           retention-days: 14

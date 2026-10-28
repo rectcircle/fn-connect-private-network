@@ -98,7 +98,7 @@ def smoke(out, version, commit, binary='/usr/bin/fncpn-ui', as_user=True):
         with (out / 'ui.log').open('w') as log:
             process = subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
             try:
-                code = process.wait(timeout=90)
+                code = process.wait(timeout=int(os.environ.get('FNCPN_UI_SMOKE_TIMEOUT', '90')))
             except subprocess.TimeoutExpired:
                 os.killpg(process.pid, signal.SIGKILL)
                 process.wait()

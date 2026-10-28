@@ -288,7 +288,12 @@ DEB 正式构建和 RPM/Arch 实验验证均调用 `scripts/loongarch/build-targ
 共用 Core/UI 编译、nFPM、动态链接检查和最终清单生成，避免每种格式重复维护或重复校验。
 正式发布矩阵暂不扩展到实验目标，直到其对应环境及所需验收通过。
 RPM 显式使用 `loongarch64` 包头，Arch 候选使用 `loong64`；架构映射和包头由原生工具二次查询。
-只上传 `experimental-loongarch-*` artifacts；RPM 未签名，不公开分发，不声称安装、服务、UI 启动或网络已通过。
+构建后删除构建容器，重新启动同一固定镜像的干净运行容器；不安装开发依赖。
+依次验证 Core 独立安装、版本命令、Core/UI 包管理器依赖解析、UI 动态链接、服务文件安装、
+普通用户 Xvfb/WebKit 前端握手、同版本重装和卸载；测试工具在产品依赖检查之后安装。
+输出独立的 `runtime-validation.json`，包含精确包哈希、commit、通过项及未覆盖项，失败时保留 UI/动态链接日志。
+容器不运行 systemd PID 1，服务文件检查不证明真实服务启动；真实服务生命周期和内核网络仍待对应系统验收。
+只上传 `experimental-loongarch-*` artifacts；RPM 未签名，不公开分发。
 首次验证失败应依据依赖或编译日志调整候选配置，不能通过关闭包签名策略或伪造通过证据规避。
 确认工具链、依赖及 Core/UI 构建均通过后，再决定是否纳入正式包支持；不重复执行 Debian 完整 VM 验收。
 
