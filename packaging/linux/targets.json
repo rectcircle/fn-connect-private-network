@@ -563,7 +563,8 @@
       "architectures": [
         "loong64"
       ],
-      "packageArch": "loongarch64"
+      "packageArch": "loongarch64",
+      "repositoryProbe": "https://mirrors.wsyu.edu.cn/fedora/linux/F43/rawhide/Everything/loongarch64/os/repodata/repomd.xml"
     },
     {
       "id": "archlinux-loong64",

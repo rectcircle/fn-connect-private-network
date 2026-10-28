@@ -10,7 +10,7 @@ mkdir -p "$out"
 case "$1" in
  bootstrap)
   if command -v dnf >/dev/null; then
-   dnf install -y --setopt=install_weak_deps=False git ca-certificates curl python3 tar xz
+   dnf --setopt=timeout=20 --setopt=retries=2 --setopt=ip_resolve=4 install -y --setopt=install_weak_deps=False git ca-certificates curl python3 tar xz
   elif command -v microdnf >/dev/null; then
    microdnf install -y git ca-certificates curl python3 tar xz dnf
   elif command -v pacman >/dev/null; then

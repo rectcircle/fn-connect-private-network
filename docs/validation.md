@@ -3,7 +3,13 @@
 本文件只保留版本级验收结论与支持边界，不记录日常部署或逐次排障。
 操作命令见[开发文档](development.md)，判定依据见[版本契约](versioning-and-compatibility.md)。
 
-## 1.1.8 LoongArch 新世界候选（2026-10-28，未发布）
+## 1.1.8 LoongArch 新世界候选（2026-10-29，未发布）
+
+- [Arch 新世界格式验证](https://github.com/rectcircle/fn-connect-private-network/actions/runs/40731600172/job/122969194281)已通过：
+  commit `e4c924f`，固定镜像中 C lp64d、官方 Go、GTK/WebKit/AppIndicator、Core/UI 编译、包头与动态链接检查均成功。
+  仅为实验候选，尚未验证安装、UI 启动或服务生命周期，也未加入正式发布清单。
+  Fedora Remix RPM 候选仍受其上游仓库连接超时阻塞，尚不能判断 UI 依赖和构建结果。
+
 
 - [第一步 GitHub 验证](https://github.com/rectcircle/fn-connect-private-network/actions/runs/40668515602)
   成功，源码 commit `88b0a0be9429d300fede97121a141f4b127ec989`；JSON 报告 `passed=true`。

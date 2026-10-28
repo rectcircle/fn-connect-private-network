@@ -60,7 +60,8 @@ def validate_loongarch_publication(manifest):
 def experimental_matrix(selected='both'):
     if selected not in ('both', 'rpm', 'archlinux'):
         raise ValueError('Unknown experimental package format: ' + selected)
-    return {'include': [{'target': name, 'image': profile['image']}
+    return {'include': [{'target': name, 'image': profile['image'],
+                         'repository_probe': profile.get('repositoryProbe', '')}
                         for name, profile in EXPERIMENTAL_TARGETS.items()
                         if selected == 'both' or profile['format'] == selected]}
 

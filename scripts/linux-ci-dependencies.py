@@ -14,6 +14,8 @@ elif profile['osID'].startswith('opensuse'):
     command=['zypper','--non-interactive','install','--no-recommends']
 else:
     command=['dnf','install','-y','--setopt=install_weak_deps=False']
+    if profile.get('experimental'):
+        command += ['--setopt=timeout=20', '--setopt=retries=2', '--setopt=ip_resolve=4']
 subprocess.run(command+packages,check=True)
 # Fail here if a target's development package naming no longer supplies the ABI.
 subprocess.run(['pkg-config','--exists','gtk+-3.0','webkit2gtk-4.1','ayatana-appindicator3-0.1'],check=True)
