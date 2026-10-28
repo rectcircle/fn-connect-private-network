@@ -13,8 +13,9 @@ on:
         type: choice
         options: [both, deepin, anolis]
         default: both
+# Reading unpublished drafts requires push-equivalent contents permission.
 permissions:
-  contents: read
+  contents: write
 jobs:
   compatibility:
     strategy:
@@ -53,9 +54,20 @@ jobs:
         run: |
           out="dist/linux/$TARGET/loong64"
           mkdir -p "$out"
-          gh release download "v$VERSION" --pattern "*-linux-loong64.$EXTENSION" --pattern "release-$VERSION.json" --dir "$out"
           python3 - <<'PY'
-          import json, os, pathlib, subprocess
+          import json, os, pathlib, subprocess, sys
+          sys.path.insert(0, 'scripts')
+          from release_assets import find_release, assets, download_asset
+          repository = os.environ['GITHUB_REPOSITORY']
+          release = find_release(repository, 'v'+os.environ['VERSION'])
+          assert release is not None, 'Draft release was not found'
+          directory = pathlib.Path('dist/linux') / os.environ['TARGET'] / 'loong64'
+          wanted = {f"fncpn-{component}-{os.environ['VERSION']}-linux-loong64.{os.environ['EXTENSION']}" for component in ('core','ui')}
+          wanted.add('release-'+os.environ['VERSION']+'.json')
+          selected = [asset for asset in assets(repository, release['id']) if asset['name'] in wanted]
+          assert {asset['name'] for asset in selected} == wanted, 'Missing exact draft assets'
+          for asset in selected:
+              download_asset(repository, asset, directory)
           record = json.loads((pathlib.Path('dist/linux') / os.environ['TARGET'] / 'loong64' / ('release-'+os.environ['VERSION']+'.json')).read_text())
           assert record['commit'] == subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip(), 'Draft and checkout must have identical source'
           PY
