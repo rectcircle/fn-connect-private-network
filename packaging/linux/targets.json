@@ -545,6 +545,7 @@
       ]
     },
     "deb-loong64": {
+      "since": "1.1.8",
       "baseline": "debian-forky",
       "architectures": [
         "loong64"

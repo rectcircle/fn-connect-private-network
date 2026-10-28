@@ -63,10 +63,19 @@ class LinuxSupportTest(unittest.TestCase):
         with self.assertRaises(ValueError):target_profile('fedora42')
         matrix=ci_matrix()['include']
         self.assertEqual(len(matrix),sum(len(p['architectures']) for p in TARGETS.values()))
-        names=[name for *_,name in release_packages('1.1.2')]
+        names=[name for *_,name in release_packages('1.1.8')]
         self.assertEqual(len(names),len(set(names)))
         self.assertEqual(len(names),12)
         self.assertEqual(len(build_matrix()["include"]),5)
+
+    def test_historical_releases_do_not_gain_loongarch_assets(self):
+        for version in ('1.1.2', '1.1.7'):
+            rows = release_packages(version)
+            self.assertEqual(len(rows), 10)
+            self.assertFalse(any(arch == 'loong64' for _, arch, _, _ in rows))
+        rows = release_packages('1.1.8')
+        self.assertEqual(len(rows), 12)
+        self.assertEqual({component for _, arch, component, _ in rows if arch == 'loong64'}, {'core', 'ui'})
 
     def test_package_metadata_must_match_requested_build_target(self):
         fields={'Package':'fncpn-core','Version':'1.1.2','Architecture':'amd64'}

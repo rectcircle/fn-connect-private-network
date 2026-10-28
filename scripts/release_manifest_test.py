@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Exercise release inventories without building or replacing real packages."""
 import hashlib, json, os, pathlib, subprocess, sys, tempfile, unittest
-from linux_support import TARGETS, BUNDLES, package_name, release_packages
+from linux_support import TARGETS, BUNDLES, package_name
 from rpm_signing import signing_identity
 SCRIPT = pathlib.Path(__file__).with_name('release-manifest.py')
 class ReleaseInventoryTest(unittest.TestCase):
@@ -131,8 +131,11 @@ class ReleaseInventoryTest(unittest.TestCase):
                 else:
                     self.assertEqual(result.returncode,0,result.stderr)
                     record=json.loads((root/f'release-{version}.json').read_text())
-                    self.assertEqual(len(record['artifacts']),6+len(release_packages(version)))
-                    self.assertEqual(len([a for a in record['artifacts'] if a.get('path','').startswith('linux/')]),len(release_packages(version)))
+                    # Candidate construction uses today's target catalog; historical
+                    # published inventories separately follow each bundle's since version.
+                    package_count = sum(2 * len(p['architectures']) for p in BUNDLES.values())
+                    self.assertEqual(len(record['artifacts']),6+package_count)
+                    self.assertEqual(len([a for a in record['artifacts'] if a.get('path','').startswith('linux/')]),package_count)
 
 if __name__ == '__main__':
     unittest.main()

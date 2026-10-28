@@ -34,7 +34,9 @@ def package_name(component, version, target, architecture):
 
 def release_packages(version):
     return [(bundle, arch, component, package_name(component, version, bundle, arch))
-            for bundle, profile in BUNDLES.items() for arch in profile['architectures']
+            for bundle, profile in BUNDLES.items()
+            if tuple(map(int, version.split('.'))) >= tuple(map(int, profile.get('since', '0.0.0').split('.')))
+            for arch in profile['architectures']
             for component in ('core', 'ui')]
 
 
