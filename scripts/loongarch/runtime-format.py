@@ -72,9 +72,9 @@ def main():
             if profile.get('packageManager') == 'apt-rpm':
                 run('apt-get', 'install', '-y', 'xorg-xvfb', 'xauth', 'dbus', 'fonts-ttf-dejavu', 'shadow-utils', 'util-linux')
             elif profile['format'] == 'rpm':
-                run('dnf', 'install', '-y', 'xorg-x11-server-Xvfb', 'xorg-x11-xauth', 'dbus-daemon', 'dejavu-fonts', 'shadow', 'mesa-dri-drivers')
+                run('dnf', 'install', '-y', 'xorg-x11-server-Xvfb', 'xorg-x11-xauth', 'dbus-daemon', 'dejavu-fonts', 'shadow', 'mesa-dri-drivers', 'systemd-pam', 'systemd-udev', 'kmod')
             else:
-                run('pacman', '-S', '--noconfirm', '--needed', 'xorg-server-xvfb', 'xorg-xauth', 'dbus', 'ttf-dejavu', 'shadow', 'mesa')
+                run('pacman', '-S', '--noconfirm', '--needed', 'xorg-server-xvfb', 'xorg-xauth', 'dbus', 'ttf-dejavu', 'shadow', 'mesa', 'kmod')
         if mode == 'prepare':
             return
         spec = importlib.util.spec_from_file_location('compatibility', '/workspace/scripts/linux-compatibility.py')

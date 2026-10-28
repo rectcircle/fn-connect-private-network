@@ -139,9 +139,20 @@ jobs:
           curl --fail --location --retry 2 --connect-timeout 15 --max-time 180 "$IMAGE_ARCHIVE" -o "$RUNNER_TEMP/candidate.tar.xz"
           echo "$IMAGE_ARCHIVE_SHA256  $RUNNER_TEMP/candidate.tar.xz" | sha256sum -c -
           docker load -i "$RUNNER_TEMP/candidate.tar.xz"
+      - name: Select compiler cache epoch
+        id: compiler-epoch
+        run: echo "month=$(date -u +%Y-%m)" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache/restore@v4
+        id: compiler-cache
+        with:
+          path: ~/.cache/fncpn-loongarch-formats/${{ matrix.target }}
+          key: loongarch-compiler-${{ matrix.target }}-${{ steps.compiler-epoch.outputs.month }}-${{ hashFiles('go.sum', 'ui/go.sum') }}-${{ github.sha }}
+          restore-keys: |
+            loongarch-compiler-${{ matrix.target }}-${{ steps.compiler-epoch.outputs.month }}-${{ hashFiles('go.sum', 'ui/go.sum') }}-
       - name: Start pinned candidate image
         run: |
-          docker run -d --platform linux/loong64 --name fncpn-format -e TARGET -e RELEASE -e RELEASE_COMMIT -e RELEASE_VERSION -e DIST_DIR -e GODEBUG -v "$GITHUB_WORKSPACE:/workspace" -v "$RUNNER_TEMP/format-tools:/opt/tools:ro" "$IMAGE" sleep infinity
+          mkdir -p "$HOME/.cache/fncpn-loongarch-formats/$TARGET/go-build" "$HOME/.cache/fncpn-loongarch-formats/$TARGET/go-mod"
+          docker run -d --platform linux/loong64 -v "$HOME/.cache/fncpn-loongarch-formats/$TARGET/go-build:/root/.cache/go-build" -v "$HOME/.cache/fncpn-loongarch-formats/$TARGET/go-mod:/root/go/pkg/mod" --name fncpn-format -e TARGET -e RELEASE -e RELEASE_COMMIT -e RELEASE_VERSION -e DIST_DIR -e GODEBUG -v "$GITHUB_WORKSPACE:/workspace" -v "$RUNNER_TEMP/format-tools:/opt/tools:ro" "$IMAGE" sleep infinity
           docker exec fncpn-format mkdir -p /opt
           docker cp "$RUNNER_TEMP/go.tar.gz" fncpn-format:/opt/go.tar.gz
       - name: Verify dependency availability
@@ -185,6 +196,14 @@ jobs:
           docker exec fncpn-format python3 /workspace/scripts/loongarch/runtime-format.py prepare
           sudo chown -R "$(id -u):$(id -g)" dist
           python3 scripts/loongarch/format-vm.py
+      - name: Preserve compiler cache permissions
+        if: always()
+        run: sudo chown -R "$(id -u):$(id -g)" "$HOME/.cache/fncpn-loongarch-formats/$TARGET" || true
+      - uses: actions/cache/save@v4
+        if: always() && steps.compiler-cache.outputs.cache-hit != 'true'
+        with:
+          path: ~/.cache/fncpn-loongarch-formats/${{ matrix.target }}
+          key: ${{ steps.compiler-cache.outputs.cache-primary-key }}
       - uses: actions/upload-artifact@v4
         if: always()
         with:

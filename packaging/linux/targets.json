@@ -497,7 +497,7 @@
       "label": "openEuler 24.03 LTS SP4 LoongArch",
       "osID": "openEuler",
       "osVersion": "24.03",
-      "image": "sha256:04729520976d8864852350907af891d00a9cd96b3084d21c3513ce36729afca4",
+      "image": "openeuler-24.03-lts-sp4:latest",
       "format": "rpm",
       "architectures": [
         "loong64"
