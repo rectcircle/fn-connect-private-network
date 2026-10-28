@@ -6,7 +6,9 @@ from linux_support import package_profile
 
 profile=package_profile(sys.argv[1])
 packages=profile['buildDependencies']
-if profile['format']=='deb':
+if profile.get('packageManager') == 'apt-rpm':
+    command=['apt-get', '-o', 'Acquire::Retries=2', '-o', 'Acquire::http::Timeout=20', 'install', '-y']
+elif profile['format']=='deb':
     command=['apt-get','install','-y','--no-install-recommends']
 elif profile['format']=='archlinux':
     command=['pacman','-S','--needed','--noconfirm']

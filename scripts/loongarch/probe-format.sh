@@ -15,6 +15,16 @@ case "$1" in
    microdnf install -y git ca-certificates curl python3 tar xz dnf
   elif command -v pacman >/dev/null; then
    pacman -Syu --noconfirm --needed git ca-certificates curl python tar xz
+  elif command -v apt-get >/dev/null && command -v rpm >/dev/null; then
+   # Activate the mirror already supplied by this pinned ALT image, preserving
+   # its [sisyphus-loongarch64] signature/key identity and repository branch.
+   for file in /etc/apt/sources.list /etc/apt/sources.list.d/*.list; do
+    [ ! -f "$file" ] || sed -i 's/^rpm /#rpm /' "$file"
+   done
+   grep -E '^#rpm \[sisyphus-loongarch64\] http://mirror.yandex.ru/altlinux ports/loongarch64/Sisyphus/(loongarch64|noarch) classic$' /etc/apt/sources.list.d/yandex.list | sed 's/^#//' > /etc/apt/sources.list.d/fncpn-yandex.list
+   test "$(grep -c '^rpm ' /etc/apt/sources.list.d/fncpn-yandex.list)" = 2
+   apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=20 update
+   apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=20 install -y git ca-certificates curl python3-base tar xz
   else
    echo 'Candidate image has no supported package manager' >&2; exit 1
   fi

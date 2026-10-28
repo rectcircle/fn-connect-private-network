@@ -8,7 +8,8 @@
 - [Arch 新世界格式验证](https://github.com/rectcircle/fn-connect-private-network/actions/runs/40731600172/job/122969194281)已通过：
   commit `e4c924f`，固定镜像中 C lp64d、官方 Go、GTK/WebKit/AppIndicator、Core/UI 编译、包头与动态链接检查均成功。
   仅为实验候选，尚未验证安装、UI 启动或服务生命周期，也未加入正式发布清单。
-  Fedora Remix RPM 候选仍受其上游仓库连接超时阻塞，尚不能判断 UI 依赖和构建结果。
+  Fedora Remix RPM 候选因仓库不可达停用；已确认 ALT Sisyphus 官方 loong64 容器、可访问镜像及所需开发包，
+  RPM 构建候选切换到 ALT，实际 C/Go/UI 构建及包验证仍待 GitHub 结果。
 
 
 - [第一步 GitHub 验证](https://github.com/rectcircle/fn-connect-private-network/actions/runs/40668515602)

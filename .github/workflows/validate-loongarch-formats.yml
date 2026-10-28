@@ -50,6 +50,7 @@ jobs:
       TARGET: ${{ matrix.target }}
       IMAGE: ${{ matrix.image }}
       REPOSITORY_PROBE: ${{ matrix.repository_probe }}
+      REPOSITORY_FORMAT: ${{ matrix.repository_format }}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -59,11 +60,16 @@ jobs:
         if: matrix.repository_probe != ''
         run: |
           echo "Checking candidate repository: $REPOSITORY_PROBE"
-          curl -4 --fail --show-error --location --connect-timeout 8 --max-time 20 --retry 2 --retry-delay 2 --retry-all-errors "$REPOSITORY_PROBE" -o "$RUNNER_TEMP/repomd.xml"
+          curl -4 --fail --show-error --location --connect-timeout 8 --max-time 20 --retry 2 --retry-delay 2 --retry-all-errors "$REPOSITORY_PROBE" -o "$RUNNER_TEMP/repository-metadata"
           python3 - <<'PYXML'
           import os, pathlib, xml.etree.ElementTree as ET
-          root = ET.parse(pathlib.Path(os.environ['RUNNER_TEMP']) / 'repomd.xml').getroot()
-          assert root.tag == '{http://linux.duke.edu/metadata/repo}repomd', 'Candidate server did not return RPM repository metadata'
+          path = pathlib.Path(os.environ['RUNNER_TEMP']) / 'repository-metadata'
+          if os.environ['REPOSITORY_FORMAT'] == 'apt-rpm':
+              content = path.read_text()
+              assert 'Origin: ALT Linux Team' in content and 'Architectures: loongarch64 noarch' in content and 'classic' in content, 'Unexpected ALT repository metadata'
+          else:
+              root = ET.parse(path).getroot()
+              assert root.tag == '{http://linux.duke.edu/metadata/repo}repomd', 'Candidate server did not return RPM repository metadata'
           PYXML
       - uses: actions/setup-go@v6
         with:

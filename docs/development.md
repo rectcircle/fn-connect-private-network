@@ -276,10 +276,11 @@ python3 scripts/check-linux-packages.py dist/linux/deb-loong64/loong64 deb-loong
 `Validate LoongArch RPM and Arch builds` 仅手动运行，不参与日常 CI 或发布。
 `target` 可选 both、rpm、archlinux；失败时只重试对应格式，不重复占用另一项验证资源。
 最小镜像先安装基础工具和构建依赖，再解压官方 Go，避免假定镜像已自带 tar。
-RPM 先由宿主机检查候选仓库连通性与 repomd XML；仓库不可达时尽早失败，不下载工具链或启动模拟容器。
+RPM 先由宿主机检查候选仓库连通性与对应格式的仓库元数据；仓库不可达时尽早失败，不下载工具链或启动模拟容器。
 连接失败仅作有界重试，不关闭 TLS、包签名或替换成未经核实的源。固定 digest 的候选镜像来自
-[Fedora Remix LoongArch](https://github.com/fedora-remix-loongarch/releases-info) 与
-[pkgforge Arch Loong64 镜像](https://github.com/pkgforge-dev/docker-archlinux)。它们是社区构建，不能视为现有 Fedora/openSUSE 官方基线的架构扩展已获验证。
+[ALT Linux Sisyphus 官方容器仓库](https://registry.altlinux.org/) 与
+[pkgforge Arch Loong64 镜像](https://github.com/pkgforge-dev/docker-archlinux)。ALT RPM 候选使用 apt-rpm 和镜像自带的 Yandex 仓库定义，保留原仓库签名身份。
+不能据此宣称现有 Fedora/openSUSE 基线已支持 loong64；Fedora Remix 因上游仓库不可达暂不继续使用。
 候选定义在 `targets.json` 的 `experimentalTargets`，不进入正式 targets、bundles、安装器或发布资产清单。
 
 两个任务独立运行依赖可用性检查、C lp64d/官方 Go 运行探针。

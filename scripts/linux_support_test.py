@@ -4,6 +4,7 @@ import importlib.util
 import json
 import os
 import pathlib
+import runpy
 import shutil
 import struct
 import subprocess
@@ -76,8 +77,27 @@ class LinuxSupportTest(unittest.TestCase):
             self.assertEqual(package_profile(entries[0]['target'])['format'], selected)
         with self.assertRaises(ValueError): experimental_matrix('unsupported')
 
+    def test_alt_build_dependencies_use_apt_rpm(self):
+        with patch('sys.argv', ['linux-ci-dependencies.py', 'alt-sisyphus-loong64']), patch('subprocess.run') as execute:
+            runpy.run_path(str(ROOT / 'scripts/linux-ci-dependencies.py'), run_name='__main__')
+        command = execute.call_args_list[0].args[0]
+        self.assertEqual(command[0], 'apt-get')
+        self.assertIn('libwebkit2gtk4.1-devel', command)
+        self.assertNotIn('--no-install-recommends', command)
+        self.assertNotIn('--allow-unauthenticated', command)
+        self.assertEqual(execute.call_args_list[1].args[0][0], 'pkg-config')
+
+    def test_alt_rpm_probe_keeps_native_package_and_repository_identity(self):
+        profile = package_profile('alt-sisyphus-loong64', 'loong64')
+        self.assertEqual(profile['osID'], 'altlinux')
+        self.assertEqual(profile['packageManager'], 'apt-rpm')
+        self.assertEqual(profile['format'], 'rpm')
+        self.assertIn('libwebkit2gtk4.1-devel', profile['buildDependencies'])
+        self.assertIn('libayatana-appindicator3-devel', profile['buildDependencies'])
+        self.assertEqual(experimental_matrix('rpm')['include'][0]['repository_format'], 'apt-rpm')
+
     def test_experimental_loongarch_formats_are_not_release_targets(self):
-        for target, expected in [('fedora-remix43-loong64', 'loongarch64'), ('archlinux-loong64', 'loong64')]:
+        for target, expected in [('alt-sisyphus-loong64', 'loongarch64'), ('archlinux-loong64', 'loong64')]:
             self.assertIn(target, EXPERIMENTAL_TARGETS)
             self.assertNotIn(target, TARGETS)
             self.assertNotIn(target, BUNDLES)
