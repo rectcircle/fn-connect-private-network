@@ -448,6 +448,49 @@
         "binutils",
         "jq"
       ]
+    },
+    {
+      "id": "debian-forky",
+      "label": "Debian forky (new-world LoongArch64)",
+      "osID": "debian",
+      "osVersion": "",
+      "image": "ghcr.io/loong64/debian@sha256:cab472f2d0f07ca2cbee91a4770e7f7ee17b10597f3a161f36ed12b07946422e",
+      "format": "deb",
+      "architectures": [
+        "loong64"
+      ],
+      "coreDependencies": [
+        "systemd",
+        "dbus",
+        "sudo",
+        "procps",
+        "util-linux",
+        "systemd-resolved"
+      ],
+      "uiDependencies": [
+        "libgtk-3-0t64",
+        "libwebkit2gtk-4.1-0",
+        "libayatana-appindicator3-1",
+        "polkitd",
+        "pkexec",
+        "xdg-utils"
+      ],
+      "buildDependencies": [
+        "build-essential",
+        "pkg-config",
+        "libgtk-3-dev",
+        "libwebkit2gtk-4.1-dev",
+        "libayatana-appindicator3-dev",
+        "dpkg-dev",
+        "dbus",
+        "desktop-file-utils",
+        "libarchive-tools",
+        "binutils",
+        "jq"
+      ],
+      "osCodename": "forky",
+      "bundle": "deb-loong64",
+      "execution": "qemu"
     }
   ],
   "bundles": {
@@ -500,6 +543,15 @@
       "architectures": [
         "amd64"
       ]
+    },
+    "deb-loong64": {
+      "since": "1.1.8",
+      "baseline": "debian-forky",
+      "architectures": [
+        "loong64"
+      ],
+      "format": "deb",
+      "execution": "qemu"
     }
   }
 }

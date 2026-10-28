@@ -3,7 +3,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$ROOT_DIR/scripts/release-version.sh"
 export FNCPN_ARCH="${ARCH:-arm64}"
-case "$FNCPN_ARCH" in arm64|amd64) ;; *) echo 'ARCH must be arm64 or amd64' >&2; exit 1 ;; esac
+case "$FNCPN_ARCH" in arm64|amd64|loong64) ;; *) echo 'ARCH must be arm64, amd64 or loong64' >&2; exit 1 ;; esac
 TARGET="${TARGET:-deb}"
 python3 "$ROOT_DIR/scripts/linux_support.py" "$TARGET" "$FNCPN_ARCH" >/dev/null
 OUT="${DIST_DIR:-$ROOT_DIR/dist/linux}/$TARGET/$FNCPN_ARCH"

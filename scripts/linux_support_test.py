@@ -11,7 +11,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from linux_support import ROOT, TARGETS, BUNDLES, build_matrix, ci_matrix, package_name, release_packages, target_profile
+from linux_support import ROOT, TARGETS, BUNDLES, build_matrix, ci_matrix, package_name, package_profile, release_packages, target_profile
 
 
 def module(name):
@@ -25,6 +25,35 @@ inspector=module('check-linux-packages.py')
 
 
 class LinuxSupportTest(unittest.TestCase):
+    def test_loongarch_has_an_independent_deb_baseline(self):
+        profile = package_profile('debian-forky', 'loong64')
+        self.assertEqual(profile['bundle'], 'deb-loong64')
+        self.assertEqual(profile['format'], 'deb')
+        self.assertEqual(profile['baseline'], 'debian-forky')
+        self.assertEqual(profile['osCodename'], 'forky')
+        for target in ('deb', 'debian12', 'debian13', 'rpm', 'archlinux'):
+            with self.subTest(target=target), self.assertRaises(ValueError):
+                package_profile(target, 'loong64')
+        self.assertFalse(any(item['arch'] == 'loong64' for item in ci_matrix('native')['include']))
+        self.assertEqual(package_name('ui','1.1.8','deb-loong64','loong64'), 'fncpn-ui-1.1.8-linux-loong64.deb')
+
+    def test_loongarch_preinstall_refuses_foreign_abi_before_maintenance(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = pathlib.Path(temporary)
+            release = directory / 'os-release'
+            loader = directory / 'loader'
+            loader.touch()
+            guard = (ROOT / 'packaging/linux/scripts/check-loongarch').read_text().replace(
+                '/etc/os-release', str(release)).replace('/lib64/ld-linux-loongarch-lp64d.so.1', str(loader))
+            for arch, kernel, codename, success in [('loong64','6.12.0','forky',True),
+                    ('loongarch64','6.12.0','forky',False), ('loong64','5.10.0','forky',False),
+                    ('loong64','6.12.0','trixie',False)]:
+                release.write_text('ID=debian\nVERSION_CODENAME='+codename+'\n')
+                prefix = f'uname() {{ case "$1" in -m) echo loongarch64 ;; -r) echo {kernel} ;; esac; }}; dpkg() {{ echo {arch}; }};\n'
+                result = subprocess.run(['sh', '-c', prefix + guard + '\necho maintenance-reached'], capture_output=True, text=True)
+                self.assertEqual(result.returncode == 0, success, result.stderr)
+                self.assertEqual('maintenance-reached' in result.stdout, success)
+
     def test_distribution_dependency_and_architecture_contract(self):
         self.assertEqual(target_profile('debian12')['uiDependencies'][0],'libgtk-3-0')
         self.assertEqual(target_profile('debian13')['uiDependencies'][0],'libgtk-3-0t64')
@@ -34,10 +63,19 @@ class LinuxSupportTest(unittest.TestCase):
         with self.assertRaises(ValueError):target_profile('fedora42')
         matrix=ci_matrix()['include']
         self.assertEqual(len(matrix),sum(len(p['architectures']) for p in TARGETS.values()))
-        names=[name for *_,name in release_packages('1.1.2')]
+        names=[name for *_,name in release_packages('1.1.8')]
         self.assertEqual(len(names),len(set(names)))
-        self.assertEqual(len(names),10)
+        self.assertEqual(len(names),12)
         self.assertEqual(len(build_matrix()["include"]),5)
+
+    def test_historical_releases_do_not_gain_loongarch_assets(self):
+        for version in ('1.1.2', '1.1.7'):
+            rows = release_packages(version)
+            self.assertEqual(len(rows), 10)
+            self.assertFalse(any(arch == 'loong64' for _, arch, _, _ in rows))
+        rows = release_packages('1.1.8')
+        self.assertEqual(len(rows), 12)
+        self.assertEqual({component for _, arch, component, _ in rows if arch == 'loong64'}, {'core', 'ui'})
 
     def test_package_metadata_must_match_requested_build_target(self):
         fields={'Package':'fncpn-core','Version':'1.1.2','Architecture':'amd64'}
@@ -111,17 +149,19 @@ class LinuxSupportTest(unittest.TestCase):
             binary=directory/'fixture-elf'
             elf=bytearray(64);elf[:6]=b'\x7fELF\x02\x01';struct.pack_into('<H',elf,18,62)
             binary.write_bytes(elf);binary.chmod(0o755)
-            for target in ('debian12','fedora43','archlinux'):
+            for target, arch, machine in [('debian12','amd64',62),('fedora43','amd64',62),('archlinux','amd64',62),('debian-forky','loong64',258)]:
+                struct.pack_into('<H',elf,18,machine)
+                binary.write_bytes(elf)
                 for component in ('core','ui'):
                     with self.subTest(target=target,component=component):
-                        config=builder.configuration(component,target,'amd64','1.1.2',str(binary),directory)
+                        config=builder.configuration(component,target,arch,'1.1.2',str(binary),directory)
                         file=directory/'config.json';file.write_text(json.dumps(config))
-                        output=directory/package_name(component,'1.1.2',target,'amd64')
+                        output=directory/package_name(component,'1.1.2',target,arch)
                         subprocess.run([nfpm,'package','-f',str(file),'-p',target_profile(target)['format'],'-t',str(output)],cwd=ROOT,check=True,capture_output=True)
                         fields=inspector.inspect(output)
                         self.assertEqual(fields['Package'],'fncpn-'+component)
                         self.assertEqual(fields['Version'],'1.1.2')
-                        self.assertEqual(fields['Architecture'],'amd64')
+                        self.assertEqual(fields['Architecture'],arch)
 
 
 if __name__=='__main__':unittest.main()

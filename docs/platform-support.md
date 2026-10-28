@@ -19,13 +19,14 @@ Linux 目标以 [targets.json](../packaging/linux/targets.json) 为唯一机器�
 | 系列 | 列入目标的版本 | 架构 | 格式 |
 | --- | --- | --- | --- |
 | Debian | 12、13 | amd64、arm64 | deb |
+| Debian forky 新世界 | 固定基础镜像，配套当前 forky 仓库 | loong64 | deb |
 | Ubuntu | 22.04、24.04、26.04 LTS；26.10 | amd64、arm64 | deb |
 | Fedora | 43、44 | amd64、arm64 | RPM |
 | Arch Linux | 完整更新的 rolling 系统 | amd64 | pkg.tar.zst |
 | openSUSE Leap | 16.0 | amd64、arm64 | RPM |
 | openSUSE Tumbleweed | 完整更新的 rolling 系统 | amd64、arm64 | RPM |
 
-这些目标共 21 个发行版/架构组合，共用 10 个 Core/UI 安装包，不为每个发行版另编译一份。Alpine/apk、Arch Linux ARM 以及 Fedora Atomic、openSUSE Aeon/Kalpa/MicroOS 等不可变系统不在普通包支持范围内。发行版发布、EOL 或滚动 ABI 变化时须重新核对清单、依赖和 CI。
+这些构建目标共 22 个发行版/架构组合，生成 12 个 Core/UI 安装包（含 LoongArch），不为每个发行版另编译一份。Alpine/apk、Arch Linux ARM 以及 Fedora Atomic、openSUSE Aeon/Kalpa/MicroOS 等不可变系统不在普通包支持范围内。发行版发布、EOL 或滚动 ABI 变化时须重新核对清单、依赖和 CI。
 
 ## 共用原则
 
@@ -70,6 +71,12 @@ Linux 目标以 [targets.json](../packaging/linux/targets.json) 为唯一机器�
 RPM 使用项目专用 OpenPGP 密钥签名，无需购买签名服务。安装时同时验证签名与内容摘要，不以 SHA256 或 digest 成功替代来源验证，也不关闭系统包签名策略。公钥、手动验签及密钥维护见 [开发文档](development.md#rpm-签名与密钥维护)。
 
 草稿 CI 已覆盖 5 组基线构建和 21 组目标容器安装、ABI、真实 WebKit 前端启动、重装及卸载。发布证据须指向同 commit、同版本、同包哈希。容器检查不能证明真实 systemd、polkit 弹窗、Wayland/托盘、内核、DNS 或完整 fnOS 连接已验收；历史协议兼容仍须单独验证。
+
+LoongArch 只支持 Debian forky 的新世界 `loong64` 包目标，独立基线避免复用 amd64/arm64 的旧 ABI 假设。
+Core/UI DEB 构建、安装识别与发布校验已接入；同 commit 包的干净安装、升级、重装、卸载、
+真实 systemd 服务、内核网络、DNS 和 WebKit 握手已通过 QEMU 验收。操作与边界见
+[LoongArch 构建与验收](development.md#loongarch-新世界构建与验收)。模拟器结果不等于真机或完整 fnOS 验收，
+不将麒麟/UOS/Loongnix、旧世界 ABI 或 MIPS 型号归入此目标。
 
 ### Nix / NixOS
 

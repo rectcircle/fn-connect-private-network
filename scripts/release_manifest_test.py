@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Exercise release inventories without building or replacing real packages."""
 import hashlib, json, os, pathlib, subprocess, sys, tempfile, unittest
-from linux_support import TARGETS, BUNDLES, package_name, release_packages
+from linux_support import TARGETS, BUNDLES, package_name
 from rpm_signing import signing_identity
 SCRIPT = pathlib.Path(__file__).with_name('release-manifest.py')
 class ReleaseInventoryTest(unittest.TestCase):
@@ -84,6 +84,7 @@ class ReleaseInventoryTest(unittest.TestCase):
             (lambda m: m.update(_testEvidence='foreign'), 'compatibility evidence does not match'),
             (lambda m: m.update(_testEvidence='failed'), 'compatibility evidence does not match'),
             (lambda m: m.update(_testEvidence='no-ui'), 'compatibility evidence does not match'),
+            (lambda m: m.update(_testEvidence='no-loongarch-kernel'), 'compatibility evidence does not match'),
         ):
             with self.subTest(message=message), tempfile.TemporaryDirectory() as directory:
                 root = pathlib.Path(directory)
@@ -100,7 +101,7 @@ class ReleaseInventoryTest(unittest.TestCase):
                             name=package_name(component,version,target,architecture)
                             (out/name).write_bytes(b'fixture')
                             entries.append({'path':name,'sha256':hashlib.sha256(b'fixture').hexdigest()})
-                        manifest={'productVersion':version,'commit':'commit','architecture':architecture,'distribution':target,'packageFormat':target,'workingTreeDirty':False,'artifacts':entries}
+                        manifest={'productVersion':version,'commit':'commit','architecture':architecture,'distribution':target,'packageFormat':profile.get('format',target),'workingTreeDirty':False,'artifacts':entries}
                         if target=='rpm': manifest['rpmSigning']=signing_identity()
                         if target=='deb' and architecture=='amd64': mutation(manifest)
                         (out/'build-manifest.json').write_text(json.dumps(manifest))
@@ -112,6 +113,9 @@ class ReleaseInventoryTest(unittest.TestCase):
                 for distro, profile in TARGETS.items():
                     for architecture in profile['architectures']:
                         evidence={'target':distro,'architecture':architecture,'bundle':profile['format'],'productVersion':version,'commit':'commit','passed':True,'checks':['package-metadata','dependency-resolution','core-version','ui-dynamic-linking','core-only-install','elf-abi','ui-frontend-handshake','package-reinstall','package-remove'],'artifacts':{package_name(component,version,distro,architecture):hashlib.sha256(b'fixture').hexdigest() for component in ('core','ui')}}
+                        if architecture == 'loong64':
+                            evidence['checks'] += ['systemd-services','package-upgrade','upgrade-state-preserved','kernel-network','real-resolved']
+                            if mode == 'no-loongarch-kernel': evidence['checks'].remove('kernel-network')
                         if profile['format']=='rpm':
                             evidence['rpmSigning']=signing_identity()
                             if mode!='no-rpm-signature': evidence['checks'].append('rpm-signature')
@@ -127,8 +131,11 @@ class ReleaseInventoryTest(unittest.TestCase):
                 else:
                     self.assertEqual(result.returncode,0,result.stderr)
                     record=json.loads((root/f'release-{version}.json').read_text())
-                    self.assertEqual(len(record['artifacts']),6+len(release_packages(version)))
-                    self.assertEqual(len([a for a in record['artifacts'] if a.get('path','').startswith('linux/')]),len(release_packages(version)))
+                    # Candidate construction uses today's target catalog; historical
+                    # published inventories separately follow each bundle's since version.
+                    package_count = sum(2 * len(p['architectures']) for p in BUNDLES.values())
+                    self.assertEqual(len(record['artifacts']),6+package_count)
+                    self.assertEqual(len([a for a in record['artifacts'] if a.get('path','').startswith('linux/')]),package_count)
 
 if __name__ == '__main__':
     unittest.main()

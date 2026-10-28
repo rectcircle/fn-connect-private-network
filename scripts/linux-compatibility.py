@@ -10,7 +10,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
-from linux_support import ROOT, package_name, target_profile
+from linux_support import ROOT, package_name, package_profile, target_profile
 from linux_abi import inspect
 from rpm_signing import KEY, verify
 
@@ -120,7 +120,9 @@ def main():
                    if '=' in line and shlex.split(line.split('=', 1)[1]))
     if release.get('ID') != profile['osID'] or (profile['osVersion'] and release.get('VERSION_ID') != profile['osVersion']):
         raise SystemExit('Compatibility container does not match requested target')
-    directory = pathlib.Path(directory).resolve() / profile['format'] / arch
+    if profile.get('osCodename') and release.get('VERSION_CODENAME') != profile['osCodename']:
+        raise SystemExit('Compatibility container does not match requested codename')
+    directory = pathlib.Path(directory).resolve() / package_profile(target, arch)['bundle'] / arch
     version = (ROOT / 'internal/version/VERSION').read_text().strip()
     commit = subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip()
     packages = [directory / package_name(c, version, target, arch) for c in ('core', 'ui')]

@@ -42,7 +42,7 @@ class InstallerTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             path = pathlib.Path(temporary)/'os-release'
             for profile in catalog['targets']:
-                path.write_text(f'ID={profile["osID"]}\nVERSION_ID={shlex.quote(profile["osVersion"])}\n')
+                path.write_text(f'ID={profile["osID"]}\nVERSION_ID={shlex.quote(profile["osVersion"])}\nVERSION_CODENAME={profile.get("osCodename", "")}\n')
                 result = self.shell(f'detect_distribution {shlex.quote(str(path))}; echo "$FORMAT"')
                 self.assertEqual(result.stdout.strip(), profile['format'])
             for name, version in [('alpine','3.22'), ('nixos','26.05'), ('ubuntu','20.04'), ('fedora','42'), ('opensuse-leap','15.6'), ('linuxmint','22')]:
@@ -55,6 +55,17 @@ class InstallerTest(unittest.TestCase):
         self.shell('DISPLAY=:0; has_desktop')
         self.shell('DISPLAY=; WAYLAND_DISPLAY=; compgen() { return 0; }; has_desktop')
         self.shell('DISPLAY=; WAYLAND_DISPLAY=; compgen() { return 1; }; [ ! -L /etc/systemd/system/display-manager.service ] || exit 0; ! has_desktop')
+
+    def test_loongarch_rejects_old_world_and_unvalidated_distributions(self):
+        setup = ('FORMAT=deb; LOONGARCH_DISTRO=1; '
+                 'uname() { case "$1" in -m) echo loongarch64 ;; -r) echo 6.12.0 ;; esac; }; '
+                 'dpkg() { echo loong64; }; loongarch_loader_available() { return 0; }; ')
+        self.assertEqual(self.shell(setup + 'detect_architecture; echo "$ARCH"').stdout.strip(), 'loong64')
+        for refusal in ('LOONGARCH_DISTRO=0;', 'dpkg() { echo loongarch64; };',
+                        'loongarch_loader_available() { return 1; };',
+                        'uname() { case "$1" in -m) echo loongarch64 ;; -r) echo 5.10.0 ;; esac; };'):
+            self.shell(setup + refusal + 'detect_architecture', False)
+        self.shell('FORMAT=deb; LOONGARCH_DISTRO=1; uname() { echo x86_64; }; detect_architecture', False)
 
     def test_automatic_component_selection_preserves_existing_ui(self):
         for desktop, installed, expected in [(True, False, 'all'), (False, False, 'core'), (False, True, 'all')]:
