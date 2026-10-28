@@ -1,7 +1,7 @@
 name: iOS
 on:
   push:
-    branches: ['**']
+    branches: [main]
   pull_request:
   workflow_dispatch:
   workflow_call:
@@ -14,8 +14,15 @@ on:
         required: true
 permissions:
   contents: read
+concurrency:
+  group: ios-${{ github.workflow }}-${{ inputs.ref || github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || github.event_name == 'push' }}
 jobs:
+  changes:
+    uses: ./.github/workflows/ci-changes.yml
   build:
+    needs: changes
+    if: needs.changes.outputs.run == 'true'
     runs-on: xcode-27
     timeout-minutes: 45
     env:

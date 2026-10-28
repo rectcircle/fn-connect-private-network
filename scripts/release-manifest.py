@@ -120,6 +120,17 @@ metadata = {"version": version, "commit": revision,
                       "windowsSourceFingerprint": windows_fingerprint,
                       "macosArchitectures": ["arm64", "x64"],
                       "windowsArchitectures": ["arm64", "x64"]}}
+context_path = root / 'macos-fnos-build.json'
+if context_path.exists():
+    context = json.loads(context_path.read_text())
+    if context.get('version') != version or context.get('commit') != revision:
+        raise SystemExit('Native build context does not match candidate')
+    for key in ('go', 'xcode', 'sdk', 'deploymentTarget'):
+        if not isinstance(context.get(key), str) or not context[key] or context[key] == 'unavailable':
+            raise SystemExit('Incomplete native build context: ' + key)
+        metadata['build'][key] = context[key]
+elif os.environ.get('RELEASE') == '1' and sys.platform != 'darwin':
+    raise SystemExit('Native build context is required for cross-host release assembly')
 if tuple(map(int, version.split('.'))) >= (1, 1, 2):
     metadata['build']['rpmSigning'] = signing_identity()
     metadata['build']['linuxArchitectures'] = sorted({arch for p in BUNDLES.values() for arch in p['architectures']})

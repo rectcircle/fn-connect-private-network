@@ -204,14 +204,14 @@ Windows CI 使用 `windows-2022` 与 `Visual Studio 17 2022`，调整工具链�
 `Build LoongArch DEB and validate` 工作流可在 Actions 中手动运行，也由正式 Linux 构建工作流调用。
 `ref` 可选择源码分支；发布候选须使用完整 commit SHA、匹配的 `version` 和 `release=true`。
 工作流只上传 Actions artifacts，不创建 tag、不上传或公开 GitHub Release。
-实验分支 `codex/loongarch-validation` 推送相关代码时也会触发，方便工作流尚未合入默认分支时验收。
+不再保留实验分支 push 触发；日常 PR 不自动执行完整模拟器验收。
 
 普通 `ubuntu-26.04` runner（QEMU ≥ 10）执行 `python3 scripts/loongarch/validate.py`：
 
 1. 原生交叉编译 Core 和测试二进制，原生 Node 构建同 commit 前端资源。
 2. 在固定 digest 的 Debian forky loong64 容器中运行用户态测试和 UI Go/DBus activation 测试；
-   安装官方 Go 及固定版本 nFPM，调用正式 `build-linux-core.sh`、`build-linux-ui.sh` 生成匹配 Core/UI DEB、
-   ABI 清单和 SHA256。Wails CLI 未列入 loong64，故 UI 使用已验证的 `desktop,production,webkit2_41` Go tags
+   安装官方 Go，使用宿主交叉编译的固定版本 nFPM，调用正式 `build-linux-core.sh`、`build-linux-ui.sh` 生成匹配 Core/UI DEB、
+   ABI 清单和 SHA256。生产 UI 只构建一次，后续安装和握手验证使用该产物。Wails CLI 未列入 loong64，故 UI 使用已验证的 `desktop,production,webkit2_41` Go tags
    及 `-buildvcs=false`，仍通过显式 ldflags 和真实前端握手校验 commit。
 3. 准备另一份无 GTK/WebKit 的干净运行环境。下载包依赖供离线使用，使用配套 Debian 内核、initramfs、
    固定 SHA256 的 UEFI 固件启动 QEMU TCG 完整虚拟机。VM 没有外部网卡，不需要 fnOS 账号或仓库 secrets。
@@ -238,6 +238,10 @@ Windows CI 使用 `windows-2022` 与 `Visual Studio 17 2022`，调整工具链�
 
 固定的基础镜像、Go 和固件在 `scripts/loongarch/environment.json` 中；APT 使用 forky 当前仓库，
 依赖版本记录在 `packages.tsv`、`runtime-base-packages.tsv`，不宣称整个依赖树已快照锁定。
+构建和运行环境的依赖镜像、Go 缓存保存在 Actions cache；镜像在复制产品包、用户或测试状态之前生成，
+构建镜像不安装内核，运行镜像保留干净的无 GUI 基线。环境、准备脚本或月份变化时重新准备环境；
+删除对应 `loongarch-*` cache 可强制刷新当前月份的 APT 依赖。命中缓存仍记录依赖版本并重新运行全部包/VM 验收。
+缓存容量不足或被 GitHub 回收时自动走冷构建，首次运行不能代表缓存命中后的耗时。
 无需龙芯实机；所有提权、包安装与网络操作均限于一次性容器/VM。
 
 手工在匹配的新世界环境构建：
@@ -946,6 +950,21 @@ GitHub Secrets 是 CI 使用副本，网页/API 不提供原值下载。必要�
 
 ## GitHub 发布与 Homebrew
 
+### CI 与发布任务编排
+
+普通平台检查由 PR 和 main push 触发；Android/iOS 不再监听其他分支 push，需构建分支产物时手动运行。
+纯 `docs/`、README、CHANGELOG、TODO 改动跳过平台构建；未知文件、许可证、生成资源与工作流变更仍运行完整检查。
+`Checks / check` 汇总任务始终执行，源码变更要求所有选中的平台成功，文档变更允许按策略跳过。
+PR 新提交取消旧检查；发布调用不自动取消。平台源码间的更细路径过滤暂不启用，以保留共享 Go 的跨平台覆盖。
+
+草稿发布在候选 SHA 校验后并行运行各平台及 Nix 验收，不再将 Nix 依赖检查作为其他平台前置。
+macOS/fnOS 的完整检查和构建提前并行；产物及 `macos-fnos-build.json` 记录原生工具链、版本和 commit。
+最终 Linux 汇总任务只下载候选、验证同 commit 清单并上传/复核草稿，保留原 macOS 工具链元数据，不重新构建。
+Linux 矩阵中的通用脚本/前端回归只执行一次，各基线的原生 Go、UI、链接和发行版运行验收继续保留。
+公开入口继续下载、复核原草稿，不重建、不覆盖公开产物。
+调整发布编排时可手动设置 `artifacts_only=true`：运行完整候选构建与验收，仅上传 Actions artifact，
+不上传、覆盖或公开 GitHub Release；不得与 `publish=true` 同时使用。
+
 流水线固定 Go 1.27.1、Xcode 16.4 / 对应 SDK、Node 22.14.0 和 fnpack 1.2.3（下载验证 SHA256），使用 macOS 15 Apple Silicon runner。临时目录按构建随机隔离。
 本地首发环境可能不同，发布清单记录实际工具版本；两端同一 commit 不等于构建字节可复现。
 
@@ -962,7 +981,7 @@ PKG Cask 安装使用系统 installer，卸载先运行项目脚本做网络清�
 
 Android 从 1.1.4 起提供 `fncpn-<version>-android-{arm64-v8a,x86_64}.apk`，均使用固定项目证书签名。
 iOS 从 1.1.5 起提供 `fncpn-<version>-ios-arm64-unsigned.ipa`，独立 Xcode 27.1 job 记录同 commit 的结构核验与未签名证据；汇总、公开及夸克镜像都要求该资产。
-候选构建同时启动 Android Release 构建，macOS 汇总 job 下载同 commit 的 APK 和验签证据，
+候选构建同时启动 Android Release 构建，最终汇总 job 下载同 commit 的 APK 和验签证据，
 校验非调试包、签名指纹、版本、ABI 与 SHA256 后纳入统一清单；公开与夸克镜像同样要求双 ABI APK。
 
 macOS、Windows、fnOS 安装包命名使用小写 `fncpn-<version>-<os>-<arch>[-unsigned].<extension>`，系统为 `macos`、`windows`、`fnos`，架构为 `arm64`、`x64`。fnOS manifest 内的 `x86`/`arm` 平台标识保持不变，仅对外文件名统一。`release-<version>.json` 与 `SHA256SUMS-<version>` 为发布清单和校验和，沿用现有名称。Linux 使用 `fncpn-{core,ui}-<version>-linux-{amd64,arm64}.{deb,rpm,pkg.tar.zst}`，

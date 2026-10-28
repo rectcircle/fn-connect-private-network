@@ -35,6 +35,15 @@ class ReleaseInventoryTest(unittest.TestCase):
             empty_path = root / 'empty-bin'
             empty_path.mkdir()
             environment['PATH'] = str(empty_path)
+            context = {'version': '1.0.0', 'commit': 'foreign', 'go': 'native Go',
+                       'xcode': 'native Xcode', 'sdk': 'native SDK', 'deploymentTarget': '13.0'}
+            (root / 'macos-fnos-build.json').write_text(json.dumps(context))
+            result = subprocess.run(command, env=environment, capture_output=True, text=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn('context does not match', result.stderr)
+            self.assertFalse((root / 'release-1.0.0.json').exists())
+            context['commit'] = 'commit'
+            (root / 'macos-fnos-build.json').write_text(json.dumps(context))
             subprocess.run(command, env=environment, check=True, capture_output=True)
             before = (root / 'release-1.0.0.json').read_bytes()
             record = json.loads(before)
@@ -43,9 +52,9 @@ class ReleaseInventoryTest(unittest.TestCase):
             self.assertEqual(record['artifacts'][4]['path'], 'windows/arm64/fncpn-1.0.0-windows-arm64-unsigned.msi')
             self.assertEqual(record['build']['windowsArchitectures'], ['arm64', 'x64'])
             self.assertEqual(record['commit'], 'commit')
-            self.assertEqual(record['build']['go'], 'unavailable')
-            self.assertEqual(record['build']['xcode'], 'unavailable')
-            self.assertEqual(record['build']['sdk'], 'unavailable')
+            self.assertEqual(record['build']['go'], 'native Go')
+            self.assertEqual(record['build']['xcode'], 'native Xcode')
+            self.assertEqual(record['build']['sdk'], 'native SDK')
             self.assertNotEqual(subprocess.run(command, env=environment, capture_output=True).returncode, 0)
             self.assertEqual((root / 'release-1.0.0.json').read_bytes(), before)
 

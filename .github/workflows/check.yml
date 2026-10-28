@@ -5,8 +5,15 @@ on:
   pull_request:
 permissions:
   contents: read
+concurrency:
+  group: checks-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 jobs:
-  check:
+  changes:
+    uses: ./.github/workflows/ci-changes.yml
+  source:
+    needs: changes
+    if: needs.changes.outputs.run == 'true'
     runs-on: macos-15
     env:
       DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
@@ -25,6 +32,8 @@ jobs:
       - name: Verify root-owned fnOS state recovery
         run: sudo bash scripts/test-fnos-state-permissions.sh
   linux:
+    needs: changes
+    if: needs.changes.outputs.run == 'true'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
@@ -48,10 +57,16 @@ jobs:
           npm --prefix ui/frontend test
           for script in packaging/linux/scripts/*; do sh -n "$script"; done
   fnos:
+    needs: changes
+    if: needs.changes.outputs.run == 'true'
     uses: ./.github/workflows/check-fnos.yml
   nix:
+    needs: changes
+    if: needs.changes.outputs.run == 'true'
     uses: ./.github/workflows/check-nix.yml
   windows:
+    needs: changes
+    if: needs.changes.outputs.run == 'true'
     # Match the native build generator (Visual Studio 17 2022).
     # windows-2025 now defaults to VS 2026.
     runs-on: windows-2022
@@ -104,3 +119,22 @@ jobs:
         run: ./scripts/build-windows.ps1
       - name: Native UI and MSI smoke (x64)
         run: ./scripts/windows/test-ui-smoke.ps1 -Architecture x64
+
+  check:
+    if: always()
+    needs: [changes, source, linux, fnos, nix, windows]
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Require all selected checks to pass
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          python3 - <<'PYGATE'
+          import json, os
+          results = json.loads(os.environ['RESULTS'])
+          assert results['changes']['result'] == 'success', results
+          selected = results['changes']['outputs']['run']
+          assert selected in ('true', 'false'), results
+          expected = 'success' if selected == 'true' else 'skipped'
+          assert all(item['result'] == expected for name, item in results.items() if name != 'changes'), results
+          PYGATE

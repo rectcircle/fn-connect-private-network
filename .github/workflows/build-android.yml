@@ -2,7 +2,7 @@ name: Android
 
 on:
   push:
-    branches: ['**']
+    branches: [main]
   pull_request:
   workflow_dispatch:
   workflow_call:
@@ -31,8 +31,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: android-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  group: android-${{ github.workflow }}-${{ inputs.ref || github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || github.event_name == 'push' }}
 
 env:
   GOTOOLCHAIN: local
@@ -42,7 +42,11 @@ defaults:
     shell: bash
 
 jobs:
+  changes:
+    uses: ./.github/workflows/ci-changes.yml
   check:
+    needs: changes
+    if: needs.changes.outputs.run == 'true'
     name: Mobile Go checks
     runs-on: ubuntu-24.04
     timeout-minutes: 20

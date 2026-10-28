@@ -24,20 +24,11 @@ on:
         description: Enforce clean same-commit candidate (does not publish)
         type: boolean
         default: false
-  # Bootstrap the experiment before the workflow is on the default branch.
-  push:
-    branches: [codex/loongarch-validation]
-    paths:
-      - '.github/workflows/validate-loongarch.yml'
-      - 'scripts/loongarch/**'
-      - 'scripts/*linux*'
-      - 'packaging/linux/**'
-      - 'internal/**'
 permissions:
   contents: read
 concurrency:
   group: loongarch-${{ github.workflow }}-${{ inputs.ref || github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ !inputs.release }}
 jobs:
   validate:
     # QEMU >= 10 supports this firmware's 16 MiB LoongArch ROM layout.
@@ -56,6 +47,14 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22.14.0'
+      - id: cache-epoch
+        run: echo "month=$(date -u +%Y-%m)" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/fncpn-loongarch
+          key: loongarch-${{ steps.cache-epoch.outputs.month }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/loongarch/environment.json', 'scripts/loongarch/provision.sh', 'go.sum', 'ui/go.sum') }}-${{ github.sha }}
+          restore-keys: |
+            loongarch-${{ steps.cache-epoch.outputs.month }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/loongarch/environment.json', 'scripts/loongarch/provision.sh', 'go.sum', 'ui/go.sum') }}-
       - name: Install full-system emulator and filesystem tools
         run: |
           sudo apt-get update
@@ -94,7 +93,7 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
       - uses: actions/upload-artifact@v4
-        if: always()
+        if: failure()
         with:
           name: loongarch-validation-binaries-${{ steps.source.outputs.commit }}
           path: |
@@ -105,7 +104,12 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: linux-packages-deb-loong64-loong64
-          path: dist/linux/
+          path: |
+            dist/linux/**/*.deb
+            dist/linux/**/*.rpm
+            dist/linux/**/*.pkg.tar.zst
+            dist/linux/**/build-manifest.json
+            dist/linux/**/SHA256SUMS
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
         with:
