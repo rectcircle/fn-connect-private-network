@@ -147,7 +147,8 @@ def system_vm(container, temporary):
     download(ENVIRONMENT['firmwareURL'], firmware, ENVIRONMENT['firmwareSHA256'])
     subprocess.run(['docker', 'exec', container, 'mkdir', '-p', '/validation/out', '/validation/scripts', '/validation/packaging/linux'], check=True)
     files = {'fncpn': OUT / 'fncpn', 'probe': OUT / 'probe', 'guest.sh': ROOT / 'scripts/loongarch/guest.sh',
-             'version': ROOT / 'internal/version/VERSION', 'commit': OUT / 'commit'}
+             'version': ROOT / 'internal/version/VERSION', 'commit': OUT / 'commit',
+             'guest_commands.py': ROOT / 'scripts/loongarch/guest_commands.py'}
     if (OUT / 'fncpn-ui').exists():
         files['fncpn-ui'] = OUT / 'fncpn-ui'
     manifest = json.loads((OUT / 'tests/manifest.json').read_text())

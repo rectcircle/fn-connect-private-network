@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+from guest_commands import run_command
 
 BASE = Path('/validation')
 OUT = BASE / 'out'
@@ -18,13 +19,8 @@ packages = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(packages)
 
 
-def run(*args):
-    print('package check:', *args, flush=True)
-    try:
-        return subprocess.check_output(args, text=True, stderr=subprocess.STDOUT, timeout=180).strip()
-    except subprocess.CalledProcessError as error:
-        print(error.output, flush=True)
-        raise
+def run(*args, timeout=180):
+    return run_command(args, timeout=timeout, log=OUT / 'package-commands.log')
 
 
 def user(*args):
@@ -37,7 +33,7 @@ def install(paths, reinstall=False):
     # The guest has no NIC: cached dependencies remain mandatory, while APT
     # must be allowed to acquire the explicitly supplied local archives.
     run('apt-get', 'install', '-y', '--no-install-recommends', '-o', 'Acquire::Retries=0',
-        *(['--reinstall'] if reinstall else []), *map(str, paths))
+        *(['--reinstall'] if reinstall else []), *map(str, paths), timeout=600)
 
 
 def state_hashes():
