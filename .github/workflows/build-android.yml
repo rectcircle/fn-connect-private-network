@@ -74,8 +74,9 @@ jobs:
 
   build:
     name: Signed Release APK (arm64 and x86_64)
-    # Pull requests run checks only; never expose the production key to PR code.
-    if: github.event_name != 'pull_request'
+    # Automatic events run checks; signed artifacts are built on explicit dispatch
+    # (including the reusable release workflow), never from PR code.
+    if: github.event_name == 'workflow_dispatch'
     needs: check
     runs-on: ubuntu-24.04
     timeout-minutes: 45

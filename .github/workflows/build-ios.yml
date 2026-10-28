@@ -57,8 +57,10 @@ jobs:
           go test -race -tags ci ./...
           go vet -tags ci ./...
       - name: Build unsigned device Release IPA
+        if: github.event_name != 'push'
         run: bash scripts/package-ios.sh
       - uses: actions/upload-artifact@v4
+        if: github.event_name != 'push'
         with:
           name: ios-release-candidates-${{ inputs.ref || github.sha }}
           path: dist/ios/

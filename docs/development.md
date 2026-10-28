@@ -682,7 +682,7 @@ alias 为 `fncpn-release`，证书主体 `CN=rectcircle,C=CN`，RSA 3072 位，�
 仓库 Actions Secrets 已配置 `FNCPN_KEYSTORE_BASE64`、`FNCPN_STORE_PASSWORD`、
 `FNCPN_KEY_ALIAS`、`FNCPN_KEY_PASSWORD`。正式签名 job 需将前者解码到 runner 临时文件，
 将该绝对路径传给 `FNCPN_KEYSTORE`，其余 Secret 作为同名环境变量传入，完成后删除临时密钥库。
-分支推送与 Release workflow 均构建正式签名、非 debuggable 的 Release APK；后者通过
+手动构建与 Release workflow 均构建正式签名、非 debuggable 的 Release APK；后者通过
 复用 Android workflow 执行候选检查，两份 APK 合入发布清单。
 正式 versionCode 采用 tag commit 的 `git rev-list --count HEAD`，同一候选双 ABI 相同，后续发布单调增加。
 通过版本与真机验收后可在干净源码树运行：
@@ -760,9 +760,9 @@ Java 日志不记录 RPC 参数、地址、凭据和异常消息。设置页可�
 
 ### Android CI（正式签名 Release 构建）
 
-[Android workflow](../.github/workflows/build-android.yml) 在任意分支推送、PR 和手动触发时运行。
-提交需要推送到 GitHub 才会触发，不要求本机安装 Android 工具链。
-推送和手动构建必须配置上述四项签名 Secrets；PR 只运行 Go/Python 检查，不执行持有正式私钥的构建。
+[Android workflow](../.github/workflows/build-android.yml) 在 main 推送、PR 和手动触发时运行。
+main 推送和 PR 只运行 Go/Python 检查；手动或草稿发布构建才打包 APK，并需要上述四项签名 Secrets。
+其他分支需手动触发，不要求本机安装 Android 工具链。
 
 流程先运行共享连接宿主和移动 module 的竞态测试、静态检查及 APK 校验脚本回归；
 通过后，在 Ubuntu runner 配置上文固定版本的 Go、JDK、Gradle、SDK 和 NDK，下载 Go/Gradle
@@ -774,7 +774,7 @@ SDK/NDK 的安装步骤只存在于 workflow；本机构建脚本仍拒绝自动
 只有校验通过才上传 `fncpn-android-release-<run>-<attempt>`，内含两份单架构 APK、SHA256SUMS 和每份 APK 的 `.verification.json`。
 `fncpn-android-logs-<run>-<attempt>` 保留构建/校验日志和 Gradle 报告，失败时也尝试上传；产物保留 14 天。
 
-普通分支流程使用正式证书签名，在 runner 临时目录还原密钥，任务结束清理；不创建 GitHub Release，
+手动 Android 构建使用正式证书签名，在 runner 临时目录还原密钥，任务结束清理；不创建 GitHub Release，
 不公开或覆盖正式产物，版本与 server 的准入契约不变。构建成功也不等于已完成安装、
 Service 冷启动或真实网络验收；首轮云端运行结果仍须单独记录。
 
@@ -952,7 +952,8 @@ GitHub Secrets 是 CI 使用副本，网页/API 不提供原值下载。必要�
 
 ### CI 与发布任务编排
 
-普通平台检查由 PR 和 main push 触发；Android/iOS 不再监听其他分支 push，需构建分支产物时手动运行。
+普通平台检查由 PR 和 main push 触发；Android/iOS 不再监听其他分支 push。main push 只运行移动端检查，
+APK/IPA 由手动或草稿发布构建，避免同一提交重复打包；iOS PR 仍保留设备 IPA 构建验证。
 纯 `docs/`、README、CHANGELOG、TODO 改动跳过平台构建；未知文件、许可证、生成资源与工作流变更仍运行完整检查。
 `Checks / check` 汇总任务始终执行，源码变更要求所有选中的平台成功，文档变更允许按策略跳过。
 PR 新提交取消旧检查；发布调用不自动取消。平台源码间的更细路径过滤暂不启用，以保留共享 Go 的跨平台覆盖。
