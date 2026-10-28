@@ -358,6 +358,10 @@ python3 scripts/harmonyos/setup_linux.py --check
 
 ### 应用构建与发布签名
 
+构建脚本将 `website/harmonyos/privacy/` 的 HTML、CSS 和 JavaScript 同步到应用 rawfile，
+并逐字节检查 HAP 内资源与官网源码一致。登录页在应用内 WebView 离线展示该政策；
+政策内容更新后需重新构建应用，不维护另一份正文。
+
 公开分发只提供 release 构建模式的**未签名**系统 VPN 包：
 
 ```sh

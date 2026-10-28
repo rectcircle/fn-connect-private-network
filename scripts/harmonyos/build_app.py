@@ -33,6 +33,13 @@ def main():
     notices=app/'entry/src/main/resources/rawfile';notices.mkdir(parents=True,exist_ok=True)
     shutil.copyfile(ROOT/'THIRD_PARTY_NOTICES.md',notices/'THIRD_PARTY_NOTICES.md')
     shutil.copyfile(Path(go).resolve().parent.parent/'LICENSE',notices/'COMMUNITY_GO_LICENSE')
+    privacy_source=ROOT/'website/harmonyos/privacy'
+    privacy_assets=['index.html', 'privacy.css', 'privacy.js']
+    privacy_target=notices/'privacy'
+    if privacy_target.exists(): shutil.rmtree(privacy_target)
+    privacy_target.mkdir()
+    for name in privacy_assets:
+        shutil.copyfile(privacy_source/name,privacy_target/name)
     target=dict(env,GOOS='openharmony',GOARCH='arm64',CGO_ENABLED='1',CC=str(cc),GOTOOLCHAIN='local')
     subprocess.run([go,'build','-buildmode=c-shared','-o',libs/'libfncpn.so','./apps/harmonyos/go'],cwd=ROOT,env=target,check=True)
     version=(ROOT/'internal/version/VERSION').read_text().strip()
@@ -52,6 +59,9 @@ def main():
     with zipfile.ZipFile(hap) as archive:
         names=archive.namelist()
         module=json.loads(archive.read('module.json'))
+        for name in privacy_assets:
+            if archive.read('resources/rawfile/privacy/'+name) != (privacy_source/name).read_bytes():
+                raise RuntimeError('Bundled privacy policy does not match website source: '+name)
         if module['app']['versionName'] != version or module['app']['versionCode'] != int((app/'BUILD_NUMBER').read_text()): raise RuntimeError('HAP version metadata does not match source')
         expected=['phone','tablet','2in1']
         if sorted(module['module']['deviceTypes']) != sorted(expected): raise RuntimeError('Unexpected device distribution')

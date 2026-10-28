@@ -6,6 +6,7 @@ import { AdminWindows } from '../controller/AdminWindows';
 import { deviceType, isDesktop, vpnUnavailable, openLogDirectory } from '../platform/DeviceServices';
 import { LoginHero } from '../components/LoginHero';
 import { BrandHeader } from '../components/BrandHeader';
+import { i18n } from '@kit.LocalizationKit';
 import { KeyCode } from '@kit.InputKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { tr } from '../platform/Messages';
@@ -54,7 +55,10 @@ struct Index {
   @State accessCode: string = '';
   @State otp: string = '';
   @State trust: boolean = false;
+  @State privacyAccepted: boolean = false;
   @State adminURL: string = '';
+  @State privacyURL: string = '';
+  private privacyController: webview.WebviewController = new webview.WebviewController();
   @State viewportWidth: number = 360;
   @State viewportHeight: number = 800;
   @State contentWidth: number = 360;
@@ -104,6 +108,7 @@ struct Index {
     if (this.adminLoading) { this.cancelAdmin(); return true; }
     if (this.busy) { return true; }
     if (this.networkDebug) { this.networkDebug = false; return true; }
+    if (this.privacyURL) { this.closePrivacy(); return true; }
     if (this.adminURL) { this.closeAdmin(); return true; }
     if (this.logsOpen) { this.logsOpen = false; return true; }
     if (this.menu) { this.closeMenu(); return true; }
@@ -129,7 +134,7 @@ struct Index {
       AdminWindows.invalidate();
       await this.client.cancelAuthorization();
       this.loginReturnEditing = this.loginPage;
-      this.closeMenu(); this.message = ''; this.clearLoginSecrets();
+      this.closeMenu(); this.message = ''; this.clearLoginSecrets(); this.privacyAccepted = false;
       this.fnId = change ? '' : this.report?.fnId ?? this.fnId;
       this.username = change ? '' : this.report?.username ?? this.username;
       this.loginFromMenu = true;
@@ -158,7 +163,8 @@ struct Index {
     finally { this.busy = false; }
   }
   private navigate(): void {
-    if (this.adminURL) { this.closeAdmin(); }
+    if (this.privacyURL) { this.closePrivacy(); }
+    else if (this.adminURL) { this.closeAdmin(); }
     else if (this.logsOpen) { this.logsOpen = false; }
     else if (this.loginPage && this.loginFromMenu) { this.cancelLogin(); }
     else if (this.tv) { this.getUIContext().getFocusController().requestFocus('menu-重新登录'); }
@@ -238,8 +244,12 @@ struct Index {
     try { await this.client.ensure(); await this.client.call<Object>(method); await this.refresh(true); }
     catch (error) { this.message = (error as Error).message || String(error); } finally { this.busy = false; }
   }
+  private closePrivacy(): void {
+    this.getUIContext().animateTo({ duration: 220, curve: Curve.EaseOut }, () => { this.privacyURL = ''; });
+  }
   private async login(): Promise<void> {
     if (this.busy || !this.fnId.trim() || (!this.challenge && (!this.username || !this.password))) { return; }
+    if (!this.privacyAccepted) { this.message = tr('请先阅读并同意隐私政策。'); return; }
     this.getUIContext().getFocusController().clearFocus();
     this.busy = true; this.message = ''; this.sessionGeneration++;
     const password = this.password; const accessCode = this.accessCode; const otp = this.otp;
@@ -477,10 +487,29 @@ struct Index {
         Row() { Checkbox().select(this.trust).enabled(!this.busy).onChange((v: boolean) => { this.trust = v; }); Text(tr('信任此设备')); }
         this.secondaryAction('上一步', $r('app.media.menu_login'), () => { this.previousLogin(); })
       }
+      Row({ space: 4 }) {
+        Checkbox({ name: 'privacyConsent' }).id('privacy-consent').select(this.privacyAccepted)
+          .enabled(!this.busy).accessibilityText(tr('我已阅读并同意隐私政策'))
+          .onChange((accepted: boolean) => {
+            this.privacyAccepted = accepted;
+            if (accepted && this.message === tr('请先阅读并同意隐私政策。')) { this.message = ''; }
+          })
+        Text() {
+          Span(tr('我已阅读并同意'))
+          Span(tr('《隐私政策》')).fontColor($r('app.color.primary')).decoration({ type: TextDecorationType.Underline })
+            .onClick(() => {
+              const language = i18n.System.getSystemLanguage().startsWith('zh') ? 'zh' : 'en';
+              this.getUIContext().getFocusController().clearFocus();
+              this.getUIContext().animateTo({ duration: 220, curve: Curve.EaseOut }, () => {
+                this.privacyURL = language;
+              });
+            })
+        }.fontSize(14).layoutWeight(1).textAlign(TextAlign.Start)
+      }.width('100%')
       if (vpnUnavailable(this.uiDebug)) { Text(tr(vpnUnavailable(this.uiDebug))).fontColor($r('app.color.danger')).width('100%') }
       if (this.message) { Text(this.message).fontSize(13).fontColor($r('app.color.danger')).width('100%').textAlign(TextAlign.Start) }
       Button(this.busy ? tr('正在登录…') : tr('登录并连接')).type(ButtonType.Normal).height(this.controlHeight()).focusBox({ margin: LengthMetrics.vp(3), strokeWidth: LengthMetrics.vp(2), strokeColor: ColorMetrics.resourceColor($r('app.color.primary')) }).borderRadius(BUTTON_RADIUS).backgroundColor($r('app.color.primary')).fontColor($r('app.color.on_primary')).width('100%')
-        .enabled(!this.busy && !vpnUnavailable(this.uiDebug) && this.fnId.trim().length > 0 && (this.challenge || (this.username.length > 0 && this.password.length > 0))).onClick(() => { this.login(); })
+        .enabled(!this.busy && this.privacyAccepted && !vpnUnavailable(this.uiDebug) && this.fnId.trim().length > 0 && (this.challenge || (this.username.length > 0 && this.password.length > 0))).onClick(() => { this.login(); })
     }.width('100%').constraintSize({ maxWidth: this.tv ? 640 : 480 })
   }
   @Builder menuItem(label: string, icon: Resource, action: () => void) {
@@ -557,8 +586,15 @@ struct Index {
           .accessibilityLevel(this.embedded() ? 'auto' : 'no-hide-descendants')
           .border({ width: { right: this.embedded() ? 1 : 0 }, color: $r('app.color.divider') })
       Column() {
-        BrandHeader({ back: !!this.adminURL || this.logsOpen || (this.loginPage && this.loginFromMenu), debug: this.showDebugUI, busy: this.busy, tv: this.tv, navigate: () => { this.navigate(); } })
-        if (this.adminURL) {
+        BrandHeader({ back: !!this.privacyURL || !!this.adminURL || this.logsOpen || (this.loginPage && this.loginFromMenu), debug: this.showDebugUI, busy: this.busy, tv: this.tv, navigate: () => { this.navigate(); } })
+        if (this.privacyURL) {
+          Web({ src: $rawfile('privacy/index.html'), controller: this.privacyController }).layoutWeight(1)
+            .javaScriptAccess(true).fileAccess(true).domStorageAccess(false)
+            .onPageEnd(() => {
+              this.privacyController.runJavaScript(this.privacyURL === 'en' ? "showLanguage('en')" : "showLanguage('zh')").catch(() => {});
+            })
+            .transition(TransitionEffect.move(TransitionEdge.END).combine(TransitionEffect.OPACITY))
+        } else if (this.adminURL) {
           Web({ src: this.adminURL, controller: this.adminController }).layoutWeight(1).javaScriptAccess(true).fileAccess(false).domStorageAccess(true).transition(TransitionEffect.move(TransitionEdge.END).combine(TransitionEffect.OPACITY))
         } else if (this.logsOpen) {
           Column({ space: 8 }) {
@@ -645,7 +681,7 @@ struct Index {
       .parallelGesture(PanGesture({ direction: PanDirection.Horizontal, distance: 16 })
         .onActionStart((event: GestureEvent) => {
           // Reserve the first 24 vp for system back; the 24–96 vp strip opens the drawer.
-          this.drawerDragging = !this.embedded() && !this.tv && !this.adminURL && !this.logsOpen && !this.networkDebug && !this.adminLoading && (this.menu || (this.gestureX >= 24 && this.gestureX <= 96 && event.offsetX > 0));
+          this.drawerDragging = !this.embedded() && !this.tv && !this.privacyURL && !this.adminURL && !this.logsOpen && !this.networkDebug && !this.adminLoading && (this.menu || (this.gestureX >= 24 && this.gestureX <= 96 && event.offsetX > 0));
           if (this.drawerDragging) { this.menu = true; }
         })
         .onActionUpdate((event: GestureEvent) => {
