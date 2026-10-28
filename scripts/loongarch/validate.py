@@ -15,13 +15,17 @@ import urllib.request
 ROOT = Path(__file__).resolve().parents[2]
 OUT = ROOT / 'dist/loongarch-validation'
 ENVIRONMENT = json.loads(Path(__file__).with_name('environment.json').read_text())
+# qemu-user successfully sets SO_BINDTODEVICE but its getsockopt translation
+# returns EINVAL. Execute this exact test against the guest kernel instead.
+DEFERRED_TEST = 'TestLinuxLocalProbeBindsPhysicalInterface'
 
 
 class Report:
-    def __init__(self, directory, **metadata):
+    def __init__(self, directory, required=(), **metadata):
         self.directory = Path(directory)
         self.directory.mkdir(parents=True, exist_ok=True)
-        self.data = dict(metadata, checks={}, passed=False)
+        self.data = dict(metadata, checks={name: {'status': 'pending'} for name in required}, passed=False)
+        self.save()
 
     def check(self, name, command, *, cwd=ROOT, env=None, timeout=900):
         print(f'[{name}] {command[0]}', flush=True)
@@ -92,12 +96,17 @@ def compile_tests():
 
 
 def userspace_tests():
-    report = Report(OUT / 'unit-tests', emulation='qemu-user; host kernel, not LoongArch kernel')
     manifest = json.loads((OUT / 'tests/manifest.json').read_text())
     if not manifest:
         raise RuntimeError('No compiled tests')
+    report = Report(OUT / 'unit-tests', required=[str(i) for i in range(len(manifest))],
+                    emulation='qemu-user; host kernel, not LoongArch kernel',
+                    deferredToFullSystem=[DEFERRED_TEST])
     for index, item in enumerate(manifest):
-        report.check(str(index), [str(OUT / 'tests' / item['binary']), '-test.v', '-test.timeout=180s'],
+        command = [str(OUT / 'tests' / item['binary']), '-test.v', '-test.timeout=180s']
+        if item['package'].endswith('/internal/client'):
+            command += ['-test.skip', '^' + DEFERRED_TEST + '$']
+        report.check(str(index), command,
                      cwd=ROOT / item['directory'], timeout=240)
     if not report.data['passed']:
         raise SystemExit(1)
@@ -113,8 +122,8 @@ def system_vm(container, temporary):
     if (OUT / 'fncpn-ui').exists():
         files['fncpn-ui'] = OUT / 'fncpn-ui'
     manifest = json.loads((OUT / 'tests/manifest.json').read_text())
-    for package in ('linux', 'privileged'):
-        expected = '/internal/platform/linux' if package == 'linux' else '/internal/privileged'
+    for package in ('linux', 'privileged', 'client'):
+        expected = '/internal/platform/linux' if package == 'linux' else '/internal/' + package
         item = next(item for item in manifest if item['package'].endswith(expected))
         files[package + '.test'] = OUT / 'tests' / item['binary']
     for target, source in files.items():
@@ -196,7 +205,12 @@ def main():
     if sys.platform != 'linux' or os.environ.get('GITHUB_ACTIONS') != 'true':
         raise SystemExit('Run on a disposable GitHub Actions Linux runner')
     commit = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip()
-    report = Report(OUT, commit=commit, environment=ENVIRONMENT, experimental=True,
+    if OUT.exists():
+        shutil.rmtree(OUT)
+    report = Report(OUT, required=['host-tools', 'core-build', 'test-build', 'frontend', 'container',
+                                  'provision', 'core-runtime', 'unit-tests', 'ui-build', 'full-system'],
+                    commit=commit, environment=ENVIRONMENT, experimental=True,
+                    deferredToFullSystem=[DEFERRED_TEST],
                     notValidated=['physical hardware and GPU', 'real fnOS login/OTP and end-to-end session recovery',
                                   'historical release compatibility', 'package installation/upgrade/uninstall',
                                   'Wayland, interactive tray and polkit flows', 'old-world ABI'])
@@ -205,23 +219,26 @@ def main():
     container = 'fncpn-loongarch-validation'
     environment = dict(os.environ, GOOS='linux', GOARCH='loong64', CGO_ENABLED='0')
     try:
-        report.check('host-tools', ['bash', '-c', 'go version; node --version; docker version; qemu-system-loongarch64 --version'])
+        report.check('host-tools', ['bash', '-ec', 'go version; node --version; docker version; qemu-system-loongarch64 --version'])
         core = report.check('core-build', ['go', 'build', '-trimpath', '-ldflags',
                             f'-X github.com/rectcircle/fn-connect-private-network/internal/version.Revision={commit}',
                             '-o', str(OUT / 'fncpn'), './cmd/fncpn'], env=environment)
         tests = report.check('test-build', [sys.executable, __file__, 'compile-tests'], timeout=1200)
         frontend = report.check('frontend', ['bash', '-ec', 'npm --prefix ui/frontend ci && npm --prefix ui/frontend run build'], timeout=600)
         started = report.check('container', ['docker', 'run', '-d', '--platform', 'linux/loong64', '--name', container,
-                               '-v', f'{ROOT}:/workspace', ENVIRONMENT['image'], 'sleep', 'infinity'])
+                               '-v', f'{ROOT}:/workspace', '-v', f'{ROOT}:{ROOT}:ro',
+                               ENVIRONMENT['image'], 'sleep', 'infinity'])
         if not started:
             return
-        ready = report.check('provision', ['docker', 'exec', container, 'bash', '/workspace/scripts/loongarch/provision.sh'], timeout=2400)
+        ready = report.check('provision', ['docker', 'exec', container, 'timeout', '--kill-after=10s', '2300s',
+                                         'bash', '/workspace/scripts/loongarch/provision.sh'], timeout=2400)
         if not ready:
             return
         if core:
             report.check('core-runtime', ['docker', 'exec', container, '/workspace/dist/loongarch-validation/fncpn', 'version'])
         if tests:
-            report.check('unit-tests', ['docker', 'exec', container, 'python3', '/workspace/scripts/loongarch/validate.py', 'userspace-tests'], timeout=2400)
+            report.check('unit-tests', ['docker', 'exec', container, 'timeout', '--kill-after=10s', '2300s',
+                                       'python3', '/workspace/scripts/loongarch/validate.py', 'userspace-tests'], timeout=2400)
         with tempfile.TemporaryDirectory(prefix='fncpn-loongarch-') as temporary:
             temporary = Path(temporary)
             if frontend:
@@ -229,16 +246,22 @@ def main():
                 download(ENVIRONMENT['goURL'], archive, ENVIRONMENT['goSHA256'])
                 subprocess.run(['docker', 'cp', str(archive), f'{container}:/tmp/go.tar.gz'], check=True)
                 subprocess.run(['docker', 'exec', container, 'bash', '-ec', 'mkdir -p /opt; tar -xzf /tmp/go.tar.gz -C /opt; rm /tmp/go.tar.gz'], check=True)
-                report.check('ui-build', ['docker', 'exec', '-e', f'VALIDATION_COMMIT={commit}', container, 'bash', '/workspace/scripts/loongarch/build-ui.sh'], timeout=3600)
+                report.check('ui-build', ['docker', 'exec', '-e', f'VALIDATION_COMMIT={commit}', container,
+                                         'timeout', '--kill-after=10s', '3500s', 'bash',
+                                         '/workspace/scripts/loongarch/build-ui.sh'], timeout=3600)
             if core and tests:
                 # Keep system validation independent of unit/UI failure. A missing UI
                 # is an explicit guest failure after the kernel checks have run.
                 try:
+                    print('[full-system] boot disposable LoongArch kernel', flush=True)
                     system_vm(container, temporary)
                     report.data['checks']['full-system'] = {'status': 'passed'}
                 except Exception as error:
                     report.data['checks']['full-system'] = {'status': 'failed', 'error': str(error)}
                     print(f'[full-system] FAILED: {error}', flush=True)
+                    for log in (OUT / 'serial.log', OUT / 'system/guest.log'):
+                        if log.exists():
+                            print(log.read_text(errors='replace')[-4000:], flush=True)
     except Exception as error:
         report.data['checks']['infrastructure'] = {'status': 'failed', 'error': str(error)}
         raise

@@ -14,6 +14,13 @@ spec.loader.exec_module(validation)
 
 
 class EvidenceTests(unittest.TestCase):
+    def test_incomplete_run_cannot_report_success(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            report = validation.Report(temporary, required=['build', 'runtime'])
+            self.assertTrue(report.check('build', [sys.executable, '-c', 'pass']))
+            self.assertFalse(report.data['passed'])
+            self.assertEqual(report.data['checks']['runtime']['status'], 'pending')
+
     def test_failure_is_preserved_after_independent_success(self):
         with tempfile.TemporaryDirectory() as temporary:
             report = validation.Report(temporary)
