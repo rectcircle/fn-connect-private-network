@@ -62,7 +62,9 @@ def experimental_matrix(selected='both'):
         raise ValueError('Unknown experimental package format: ' + selected)
     return {'include': [{'target': name, 'image': profile['image'],
                          'repository_probe': profile.get('repositoryProbe', ''),
-                         'repository_format': profile.get('repositoryProbeFormat', 'rpm-md')}
+                         'repository_format': profile.get('repositoryProbeFormat', 'rpm-md'),
+                         'image_archive': profile.get('imageArchive', ''),
+                         'image_archive_sha256': profile.get('imageArchiveSHA256', '')}
                         for name, profile in EXPERIMENTAL_TARGETS.items()
                         if selected == 'both' or profile['format'] == selected]}
 

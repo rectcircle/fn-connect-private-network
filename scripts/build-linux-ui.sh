@@ -11,6 +11,7 @@ case "$FNCPN_ARCH" in arm64|amd64|loong64) ;; *) exit 1 ;; esac
 python3 "$ROOT_DIR/scripts/linux_support.py" "$TARGET" "$FNCPN_ARCH" >/dev/null
 OUT="${DIST_DIR:-$ROOT_DIR/dist/linux}/$TARGET/$FNCPN_ARCH"
 mkdir -p "$OUT"
+UI_BUILD_TAGS=$(python3 -c 'import sys; sys.path.insert(0,sys.argv[1]); from linux_support import package_profile; print(",".join(["desktop","production","webkit2_41"]+package_profile(sys.argv[2],sys.argv[3]).get("uiBuildTags",[])))' "$ROOT_DIR/scripts" "$TARGET" "$FNCPN_ARCH")
 export FNCPN_VERSION="$VERSION"
 export FNCPN_UI_BINARY="$OUT/fncpn-ui"
 if [ "$FNCPN_ARCH" = loong64 ]; then
@@ -22,7 +23,7 @@ if [ "$FNCPN_ARCH" = loong64 ]; then
   npm --prefix "$ROOT_DIR/ui/frontend" ci
   npm --prefix "$ROOT_DIR/ui/frontend" run build
  fi
- (cd "$ROOT_DIR/ui" && CGO_ENABLED=1 go build -buildvcs=false -trimpath -tags desktop,production,webkit2_41 \
+ (cd "$ROOT_DIR/ui" && CGO_ENABLED=1 go build -buildvcs=false -trimpath -tags "$UI_BUILD_TAGS" \
   -ldflags "-s -w -X github.com/rectcircle/fn-connect-private-network/internal/version.Revision=$REVISION" -o "$FNCPN_UI_BINARY" .)
 else
  WAILS="${WAILS:-$(go env GOPATH)/bin/wails}"

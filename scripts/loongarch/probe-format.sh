@@ -9,7 +9,11 @@ out="$DIST_DIR/$TARGET/loong64"
 mkdir -p "$out"
 case "$1" in
  bootstrap|runtime-bootstrap)
-  if command -v dnf >/dev/null; then
+  if [ "$TARGET" = openeuler-loong64 ]; then
+   # Use the pinned release's published base URLs and retain package signatures.
+   sed -i -e '/^metalink=/d' -e 's|gpgkey=http:|gpgkey=https:|' /etc/yum.repos.d/openEuler.repo
+   dnf --disablerepo='*source*' --disablerepo=debuginfo --setopt=timeout=30 --setopt=retries=2 install -y git ca-certificates curl python3 tar xz
+  elif command -v dnf >/dev/null; then
    dnf --setopt=timeout=20 --setopt=retries=2 --setopt=ip_resolve=4 install -y --setopt=install_weak_deps=False git ca-certificates curl python3 tar xz
   elif command -v microdnf >/dev/null; then
    microdnf install -y git ca-certificates curl python3 tar xz dnf
@@ -40,7 +44,8 @@ case "$1" in
   gcc --version > "$out/gcc-version.txt"
   gcc -dumpmachine | tee "$out/compiler-target.txt"
   grep -q '^loongarch64' "$out/compiler-target.txt"
-  pkg-config --modversion gtk+-3.0 webkit2gtk-4.1 ayatana-appindicator3-0.1 | tee "$out/ui-dependencies.txt"
+  indicator=$(python3 -c 'import sys; sys.path.insert(0,"scripts"); from linux_support import package_profile; print(package_profile(sys.argv[1]).get("indicatorPkgConfig","ayatana-appindicator3-0.1"))' "$TARGET")
+  pkg-config --modversion gtk+-3.0 webkit2gtk-4.1 "$indicator" | tee "$out/ui-dependencies.txt"
   printf '#include <stdio.h>\nint main(void){puts("C lp64d runtime works");return 0;}\n' > "$out/probe.c"
   gcc -mabi=lp64d "$out/probe.c" -o "$out/c-probe"
   "$out/c-probe"

@@ -3,7 +3,10 @@
 package main
 
 /*
-#cgo pkg-config: gtk+-3.0 webkit2gtk-4.1 ayatana-appindicator3-0.1
+#cgo pkg-config: gtk+-3.0 webkit2gtk-4.1
+#cgo !appindicator_legacy pkg-config: ayatana-appindicator3-0.1
+#cgo appindicator_legacy pkg-config: appindicator3-0.1
+#cgo appindicator_legacy CFLAGS: -DFNCPN_APPINDICATOR_LEGACY
 #include <stdlib.h>
 void fn_init(char*);
 void fn_dispose(void);

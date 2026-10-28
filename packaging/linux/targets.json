@@ -556,31 +556,31 @@
   },
   "experimentalTargets": [
     {
-      "id": "alt-sisyphus-loong64",
+      "id": "openeuler-loong64",
       "base": "fedora43",
-      "label": "ALT Sisyphus LoongArch (RPM validation only)",
-      "image": "registry.altlinux.org/sisyphus/alt@sha256:1887d719f21b3834a5732581192acb7d61a55304c3ae38250bd4e3eab4150bb4",
-      "osID": "altlinux",
-      "osVersion": "",
+      "label": "openEuler 24.03 LTS SP4 LoongArch",
+      "image": "sha256:04729520976d8864852350907af891d00a9cd96b3084d21c3513ce36729afca4",
+      "osID": "openEuler",
+      "osVersion": "24.03",
       "architectures": [
         "loong64"
       ],
       "packageArch": "loongarch64",
-      "packageManager": "apt-rpm",
-      "repositoryProbe": "https://mirror.yandex.ru/altlinux/ports/loongarch64/Sisyphus/loongarch64/base/release",
-      "repositoryProbeFormat": "apt-rpm",
+      "packageManager": "dnf",
+      "repositoryProbe": "https://repo.openeuler.org/openEuler-24.03-LTS-SP4/everything/loongarch64/repodata/repomd.xml",
+      "repositoryProbeFormat": "rpm-md",
       "coreDependencies": [
         "systemd",
         "systemd-resolved",
         "dbus",
         "sudo",
-        "procps",
+        "procps-ng",
         "util-linux"
       ],
       "uiDependencies": [
-        "libgtk+3",
-        "libwebkit2gtk4.1",
-        "libayatana-appindicator3-1",
+        "gtk3",
+        "webkit2gtk4.1",
+        "libappindicator-gtk3",
         "polkit",
         "xdg-utils"
       ],
@@ -589,14 +589,21 @@
         "gcc-c++",
         "make",
         "pkg-config",
-        "libgtk+3-devel",
-        "libwebkit2gtk4.1-devel",
-        "libayatana-appindicator3-devel",
+        "gtk3-devel",
+        "webkit2gtk4.1-devel",
+        "libappindicator-gtk3-devel",
         "rpm-build",
         "desktop-file-utils",
-        "bsdtar",
+        "libarchive",
         "binutils",
-        "jq"
+        "jq",
+        "bsdtar"
+      ],
+      "imageArchive": "https://repo.openeuler.org/openEuler-24.03-LTS-SP4/docker_img/loongarch64/openEuler-docker.loongarch64.tar.xz",
+      "imageArchiveSHA256": "689034da42255a193981ffd87664606f2adfe0a69e6138b77732212f0f514afa",
+      "indicatorPkgConfig": "appindicator3-0.1",
+      "uiBuildTags": [
+        "appindicator_legacy"
       ]
     },
     {

@@ -20,4 +20,4 @@ else:
         command += ['--setopt=timeout=20', '--setopt=retries=2', '--setopt=ip_resolve=4']
 subprocess.run(command+packages,check=True)
 # Fail here if a target's development package naming no longer supplies the ABI.
-subprocess.run(['pkg-config','--exists','gtk+-3.0','webkit2gtk-4.1','ayatana-appindicator3-0.1'],check=True)
+subprocess.run(['pkg-config','--exists','gtk+-3.0','webkit2gtk-4.1',profile.get('indicatorPkgConfig', 'ayatana-appindicator3-0.1')],check=True)

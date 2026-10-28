@@ -32,8 +32,10 @@ def main():
               'checks': [], 'notValidated': ['booted systemd services', 'kernel/network', 'RPM signature']}
     assert report['artifacts'] == {a['path']: a['sha256'] for a in build['artifacts']}, 'Candidate hashes differ from build manifest'
     def install(items, reinstall=False):
-        if profile['format'] == 'rpm':
+        if profile.get('packageManager') == 'apt-rpm':
             run('apt-get', '-o', 'Acquire::Retries=2', '-o', 'Acquire::http::Timeout=20', 'install', '-y', *(['--reinstall'] if reinstall else []), *map(str, items))
+        elif profile['format'] == 'rpm':
+            run('dnf', 'reinstall' if reinstall else 'install', '-y', *map(str, items))
         else:
             run('pacman', '-U', '--noconfirm', *map(str, items))
     try:
@@ -58,8 +60,10 @@ def main():
             assert Path(unit).is_file(), 'Missing service unit: ' + unit
         report['checks'].append('service-unit-files-installed')
         # Tools are added only after product dependency and linking checks.
-        if profile['format'] == 'rpm':
+        if profile.get('packageManager') == 'apt-rpm':
             run('apt-get', 'install', '-y', 'xorg-xvfb', 'xauth', 'dbus', 'fonts-ttf-dejavu', 'shadow-utils', 'util-linux')
+        elif profile['format'] == 'rpm':
+            run('dnf', 'install', '-y', 'xorg-x11-server-Xvfb', 'xorg-x11-xauth', 'dbus-daemon', 'dejavu-fonts', 'shadow', 'mesa-dri-drivers')
         else:
             run('pacman', '-S', '--noconfirm', '--needed', 'xorg-server-xvfb', 'xorg-xauth', 'dbus', 'ttf-dejavu', 'shadow', 'mesa')
         spec = importlib.util.spec_from_file_location('compatibility', '/workspace/scripts/linux-compatibility.py')
@@ -70,8 +74,10 @@ def main():
         report['checks'].append('ui-frontend-handshake')
         install(packages, reinstall=True)
         report['checks'].append('package-reinstall')
-        if profile['format'] == 'rpm':
+        if profile.get('packageManager') == 'apt-rpm':
             run('apt-get', 'remove', '-y', 'fncpn-ui', 'fncpn-core')
+        elif profile['format'] == 'rpm':
+            run('dnf', 'remove', '-y', 'fncpn-ui', 'fncpn-core')
         else:
             run('pacman', '-R', '--noconfirm', 'fncpn-ui', 'fncpn-core')
         assert not Path('/usr/bin/fncpn').exists() and not Path('/usr/bin/fncpn-ui').exists()

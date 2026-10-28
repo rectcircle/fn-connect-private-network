@@ -1,7 +1,11 @@
 // Linux GTK3 integration. Every GTK operation is scheduled on Wails' GTK loop.
 #include <gtk/gtk.h>
 #include <webkit2/webkit2.h>
+#ifdef FNCPN_APPINDICATOR_LEGACY
+#include <libappindicator/app-indicator.h>
+#else
 #include <libayatana-appindicator/app-indicator.h>
+#endif
 #include <string.h>
 #include "activation_linux.h"
 #ifdef GDK_WINDOWING_WAYLAND

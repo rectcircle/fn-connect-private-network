@@ -51,6 +51,8 @@ jobs:
       IMAGE: ${{ matrix.image }}
       REPOSITORY_PROBE: ${{ matrix.repository_probe }}
       REPOSITORY_FORMAT: ${{ matrix.repository_format }}
+      IMAGE_ARCHIVE: ${{ matrix.image_archive }}
+      IMAGE_ARCHIVE_SHA256: ${{ matrix.image_archive_sha256 }}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -95,6 +97,12 @@ jobs:
           environment = json.loads(Path('scripts/loongarch/environment.json').read_text())
           download(environment['goURL'], Path(os.environ['RUNNER_TEMP']) / 'go.tar.gz', environment['goSHA256'])
           PY
+      - name: Load checksum-pinned official image archive
+        if: matrix.image_archive != ''
+        run: |
+          curl --fail --location --retry 2 --connect-timeout 15 --max-time 180 "$IMAGE_ARCHIVE" -o "$RUNNER_TEMP/candidate.tar.xz"
+          echo "$IMAGE_ARCHIVE_SHA256  $RUNNER_TEMP/candidate.tar.xz" | sha256sum -c -
+          docker load -i "$RUNNER_TEMP/candidate.tar.xz"
       - name: Start pinned candidate image
         run: |
           docker run -d --platform linux/loong64 --name fncpn-format -e TARGET -v "$GITHUB_WORKSPACE:/workspace" -v "$RUNNER_TEMP/format-tools:/opt/tools:ro" "$IMAGE" sleep infinity
