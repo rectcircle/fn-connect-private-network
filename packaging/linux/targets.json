@@ -664,5 +664,26 @@
       "execution": "qemu"
     }
   },
-  "experimentalTargets": []
+  "experimentalTargets": [],
+  "compatibilityCandidates": [
+    {
+      "id": "deepin25-loong64",
+      "base": "debian-forky",
+      "osID": "deepin",
+      "osVersion": "25",
+      "osCodename": "crimson",
+      "image": "fncpn-deepin25:rootfs",
+      "rootfsURL": "https://github.com/deepin-community/deepin-rootfs/releases/download/v1.6.0/deepin-docker-rootfs-loong64.tar.gz",
+      "rootfsSHA256": "f3b1c3cac22373bc5b999b252575870ea9f646b4e651f96d9652f246f0271f0f"
+    },
+    {
+      "id": "anolis23-loong64",
+      "base": "openeuler-loong64",
+      "osID": "anolis",
+      "osVersion": "23.5",
+      "image": "fncpn-anolis23:rootfs",
+      "repositoryURL": "https://mirrors.openanolis.cn/anolis/23.5/os/loongarch64/os/",
+      "repositoryKey": "https://mirrors.openanolis.cn/anolis/RPM-GPG-KEY-ANOLIS"
+    }
+  ]
 }

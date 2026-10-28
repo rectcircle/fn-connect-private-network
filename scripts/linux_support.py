@@ -8,20 +8,22 @@ TARGETS = {target['id']: target for target in CATALOG['targets']}
 BUNDLES = CATALOG['bundles']
 EXPERIMENTAL_TARGETS = {p['id']: dict(TARGETS[p['base']], **p, experimental=True)
                         for p in CATALOG.get('experimentalTargets', [])}
+COMPATIBILITY_TARGETS = {p['id']: dict(TARGETS[p['base']], **p, compatibilityCandidate=True)
+                         for p in CATALOG.get('compatibilityCandidates', [])}
 EXTENSIONS = {'deb': 'deb', 'rpm': 'rpm', 'archlinux': 'pkg.tar.zst'}
 
 
 def target_profile(name, architecture=None):
-    if name not in TARGETS and name not in EXPERIMENTAL_TARGETS:
+    if name not in TARGETS and name not in EXPERIMENTAL_TARGETS and name not in COMPATIBILITY_TARGETS:
         raise ValueError(f'Unknown Linux target {name!r}; choose: {", ".join(TARGETS)}')
-    profile = TARGETS[name] if name in TARGETS else EXPERIMENTAL_TARGETS[name]
+    profile = (TARGETS | EXPERIMENTAL_TARGETS | COMPATIBILITY_TARGETS)[name]
     if architecture and architecture not in profile['architectures']:
         raise ValueError(f'{name} does not support architecture {architecture}')
     return profile
 
 
 def package_profile(name, architecture=None):
-    if name in EXPERIMENTAL_TARGETS:
+    if name in EXPERIMENTAL_TARGETS or name in COMPATIBILITY_TARGETS:
         return dict(target_profile(name, architecture), bundle=name, baseline=name)
     profile = None if name in BUNDLES else target_profile(name, architecture)
     bundle = name if profile is None else profile.get('bundle', profile['format'])

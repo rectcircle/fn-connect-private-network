@@ -24,8 +24,14 @@ def main():
     target = os.environ['TARGET']
     profile = package_profile(target, 'loong64')
     out = Path(os.environ.get('DIST_DIR', '/workspace/dist/loongarch-formats')) / target / 'loong64'
-    build = json.loads((out / 'build-manifest.json').read_text())
-    packages = sorted(out.glob('*.rpm' if profile['format'] == 'rpm' else '*.pkg.tar.zst'))
+    if os.environ.get('FNCPN_RELEASE_INVENTORY'):
+        inventory = json.loads(Path(os.environ['FNCPN_RELEASE_INVENTORY']).read_text())
+        build = {'commit': inventory['commit'], 'productVersion': inventory['version'],
+                 'artifacts': [{'path': a['file'], 'sha256': a['sha256']} for a in inventory['artifacts']
+                               if a['file'].endswith('-linux-loong64.' + ('deb' if profile['format'] == 'deb' else 'rpm'))]}
+    else:
+        build = json.loads((out / 'build-manifest.json').read_text())
+    packages = sorted(out.glob({'rpm': '*.rpm', 'deb': '*.deb', 'archlinux': '*.pkg.tar.zst'}[profile['format']]))
     assert len(packages) == 2, 'Expected exact Core/UI candidate pair'
     report = {'passed': False, 'target': target, 'commit': build['commit'],
               'scope': 'clean-container installation and UI startup',
@@ -35,7 +41,9 @@ def main():
     if mode == 'finish':
         report = json.loads((out / 'runtime-validation.json').read_text())
     def install(items, reinstall=False):
-        if profile.get('packageManager') == 'apt-rpm':
+        if profile['format'] == 'deb':
+            run('apt-get', 'install', '-y', '--no-install-recommends', *(['--reinstall'] if reinstall else []), *map(str, items))
+        elif profile.get('packageManager') == 'apt-rpm':
             run('apt-get', '-o', 'Acquire::Retries=2', '-o', 'Acquire::http::Timeout=20', 'install', '-y', *(['--reinstall'] if reinstall else []), *map(str, items))
         elif profile['format'] == 'rpm':
             run('dnf', *(['--cacheonly'] if mode == 'finish' else []), 'reinstall' if reinstall else 'install', '-y', *(['--setopt=localpkg_gpgcheck=True'] if os.environ.get('RELEASE') == '1' else []), *map(str, items))
@@ -43,6 +51,7 @@ def main():
             run('pacman', '-U', '--noconfirm', *map(str, items))
     try:
         if mode != 'finish':
+            run(sys.executable, '/workspace/scripts/linux-build-environment.py', target, 'loong64')
             if profile['format'] == 'rpm' and os.environ.get('RELEASE') == '1':
                 from rpm_signing import KEY, verify
                 report['rpmSigning'] = verify(packages)
@@ -51,10 +60,10 @@ def main():
             core = next(p for p in packages if p.name.startswith('fncpn-core'))
             install([core])
             # No build dependencies or UI package have been installed in this image.
-            query = ['rpm', '-qa'] if profile['format'] == 'rpm' else ['pacman', '-Qq']
+            query = {'rpm': ['rpm', '-qa'], 'deb': ['dpkg-query', '-W', '-f=${Package}\n'], 'archlinux': ['pacman', '-Qq']}[profile['format']]
             installed = subprocess.check_output(query, text=True)
             (out / 'runtime-core-packages.txt').write_text(installed)
-            if any(line.startswith(('libgtk+3', 'libwebkit', 'gtk3', 'webkit2gtk')) for line in installed.splitlines()):
+            if any(line.startswith(('libgtk', 'libwebkit', 'gtk3', 'webkit2gtk')) for line in installed.splitlines()):
                 raise RuntimeError('Core-only environment unexpectedly contains GUI libraries')
             run('/usr/bin/fncpn', 'version')
             report['checks'] += ['core-only-install', 'core-version']
@@ -69,7 +78,9 @@ def main():
                 assert Path(unit).is_file(), 'Missing service unit: ' + unit
             report['checks'].append('service-unit-files-installed')
             # Tools are added only after product dependency and linking checks.
-            if profile.get('packageManager') == 'apt-rpm':
+            if profile['format'] == 'deb':
+                run('apt-get', 'install', '-y', '--no-install-recommends', 'xvfb', 'xauth', 'dbus', 'fonts-dejavu-core', 'passwd', 'libgl1-mesa-dri', 'libpam-systemd', 'udev', 'kmod', 'binutils')
+            elif profile.get('packageManager') == 'apt-rpm':
                 run('apt-get', 'install', '-y', 'xorg-xvfb', 'xauth', 'dbus', 'fonts-ttf-dejavu', 'shadow-utils', 'util-linux')
             elif profile['format'] == 'rpm':
                 run('dnf', 'install', '-y', 'xorg-x11-server-Xvfb', 'xorg-x11-xauth', 'dbus-daemon', 'dejavu-fonts', 'shadow', 'mesa-dri-drivers', 'systemd-pam', 'systemd-udev', 'kmod')
@@ -101,7 +112,9 @@ def main():
                 report['notValidated'].append('RPM signature')
         install(packages, reinstall=True)
         report['checks'].append('package-reinstall')
-        if profile.get('packageManager') == 'apt-rpm':
+        if profile['format'] == 'deb':
+            run('apt-get', 'remove', '-y', 'fncpn-ui', 'fncpn-core')
+        elif profile.get('packageManager') == 'apt-rpm':
             run('apt-get', 'remove', '-y', 'fncpn-ui', 'fncpn-core')
         elif profile['format'] == 'rpm':
             run('dnf', *(['--cacheonly'] if mode == 'finish' else []), 'remove', '-y', 'fncpn-ui', 'fncpn-core')

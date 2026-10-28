@@ -72,7 +72,15 @@ def elf_dependencies(binary, profile):
         line = next(line for line in output.splitlines() if line.startswith('shlibs:Depends='))
         dependencies = line.split('=',1)[1].split(', ')
         renamed = {'libgtk-3-0', 'libglib2.0-0', 'libatk1.0-0', 'libatk-bridge2.0-0', 'libasound2', 'libcups2', 'libpng16-16'}
-        return [re.sub(r'^(\S+)(.*)$', lambda m: m[0]+' | '+m[1]+'t64'+m[2] if m[1] in renamed else m[0], item) for item in dependencies]
+        def alternatives(item):
+            match = re.fullmatch(r'(\S+)(.*)', item)
+            name, constraint = match.groups()
+            base = name[:-3] if name.endswith('t64') else name
+            if base not in renamed:
+                return item
+            other = base if name.endswith('t64') else base + 't64'
+            return item + ' | ' + other + constraint
+        return [alternatives(item) for item in dependencies]
     output = subprocess.check_output(['readelf','--version-info',binary],text=True)
     if profile['format'] == 'archlinux':
         versions = re.findall(r'\bGLIBC_([0-9]+(?:\.[0-9]+)+)',output)

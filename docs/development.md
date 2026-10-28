@@ -275,7 +275,7 @@ python3 scripts/check-linux-packages.py dist/linux/deb-loong64/loong64 deb-loong
 
 `Build LoongArch RPM and Arch` 既可单独手动运行，也由 Linux 草稿构建复用。
 手动输入 `target=both/rpm/archlinux`、完整 `ref` SHA；`release=true` 时还需匹配源码的 `version`，RPM 使用项目正式密钥签名。
-`runtime_validation=true` 进行一次干净容器安装启动检查，默认草稿构建不重复执行。
+`runtime_validation=true` 进行一次干净安装及完整 VM 启动检查，默认草稿构建不重复执行。
 失败时只重试对应格式；Go 模块下载保留校验并进行有界重试。
 
 RPM 基线是 openEuler 24.03 LTS SP4：下载官方容器归档并核对固定 SHA256，再用归档中的 image ID 启动。
@@ -286,11 +286,15 @@ Arch 使用固定 digest 的 pkgforge Loong Arch Linux 镜像和完整滚动更�
 其他 CPU 架构的 Linux 构建基线不变。
 
 运行验证先删除构建容器，再启动干净镜像；依次检查 Core 独立安装、Core/UI 依赖解析、动态链接、
-服务文件安装、普通用户 Xvfb/WebKit 前端握手、重装和卸载，测试工具在产品依赖检查之后安装。
+服务文件安装，测试工具在产品依赖检查之后安装；再导出同一用户空间，在完整 VM 检查普通用户 Xvfb/WebKit 前端握手、真实服务启动、重装和卸载。
 `runtime-validation.json` 记录精确包哈希及源码 commit；失败保留 UI/动态链接日志。
-容器不运行 systemd PID 1，因此文件检查不证明服务启动、内核网络或升级状态保留；这些仍需发布前对应系统验收。
+VM 仅复用 Debian 内核/initramfs/模块缓存，运行库与包管理器仍来自目标发行版，不禁用 WebKit 沙箱。它不重复执行整套网络回归，也不冒充历史版本升级验证。
 快速草稿不能直接公开，发布脚本继续要求同 commit、同包哈希的完整 LoongArch 验收证据。
 Deepin、Anolis 仅作为兼容性调查目标，未通过之前不进入支持声明或安装器。
+`Validate LoongArch derivative compatibility` 下载现有同 commit 草稿中的精确 DEB/RPM，按发布清单复核哈希后安装启动；不重新编译。
+Deepin 25 使用上游发布、固定 SHA256 的 rootfs；Anolis 23.5 使用官方签名 RPM 仓库创建干净 installroot。
+候选放在 `compatibilityCandidates`，与发布目标清单分开，失败不写成已支持。
+DEB 的 t64/非 t64 别名均保留从实际 ELF 符号推导的最低版本约束。
 
 ### 正式 Linux 安装包
 

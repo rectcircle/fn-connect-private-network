@@ -11,6 +11,12 @@
   [ALT Sisyphus RPM 构建验证](https://github.com/rectcircle/fn-connect-private-network/actions/runs/40745432371)
   已通过，commit `f381cd5`；C/Go/UI 构建、包头和动态链接检查成功，尚不代表安装和启动通过。
   RPM、Arch 新增干净容器安装及 UI 握手验证，结果待运行；真实 systemd 生命周期尚未覆盖。
+- [Loong Arch Linux 安装启动验收](https://github.com/rectcircle/fn-connect-private-network/actions/runs/40758620682/job/123064229333)
+  已通过，commit `fa1d53d`：干净镜像 Core 独立安装、UI 依赖解析与动态链接，完整 VM 内普通用户 WebKit 握手、
+  systemd 用户与特权服务及健康检查、同版本重装、卸载均成功。
+  VM 用户空间来自 Arch，内核/initramfs/模块复用 Debian 缓存；不代表物理硬件、历史升级或完整网络回归通过。
+  同次运行的 RPM 任务在镜像引用处失败，不能将整个运行标记成功。
+
 - openSUSE LoongArch 兼容性尚未验证：2026-10-29 查询
   [官方 OBS 项目元数据](https://api.opensuse.org/public/source/devel:LoongArch:Factory/_meta)，
   `standard` 仓库列有 `loongarch64`，但项目设置 `<publish><disable/></publish>`；

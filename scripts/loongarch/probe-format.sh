@@ -30,6 +30,9 @@ case "$1" in
    test "$(grep -c '^rpm ' /etc/apt/sources.list.d/fncpn-yandex.list)" = 2
    apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=20 update
    apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=20 install -y git ca-certificates curl python3-base tar xz
+  elif command -v apt-get >/dev/null; then
+   apt-get update
+   apt-get install -y --no-install-recommends git ca-certificates curl python3 tar xz-utils
   else
    echo 'Candidate image has no supported package manager' >&2; exit 1
   fi

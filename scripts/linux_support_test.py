@@ -190,6 +190,10 @@ class LinuxSupportTest(unittest.TestCase):
         with patch.object(builder.subprocess,'check_output',return_value='shlibs:Depends=libc6 (>= 2.34), libgtk-3-0 (>= 3.24)\n'):
             self.assertEqual(builder.elf_dependencies('/tmp/fixture',target_profile('debian12')),['libc6 (>= 2.34)','libgtk-3-0 (>= 3.24) | libgtk-3-0t64 (>= 3.24)'])
 
+    def test_deb_t64_names_keep_same_abi_version_constraint(self):
+        with patch.object(builder.subprocess, 'check_output', return_value='shlibs:Depends=libgtk-3-0t64 (>= 3.24.22), libglib2.0-0t64 (>= 2.32.0)\n'):
+            self.assertEqual(builder.elf_dependencies('/tmp/fixture', target_profile('debian-forky')), ['libgtk-3-0t64 (>= 3.24.22) | libgtk-3-0 (>= 3.24.22)', 'libglib2.0-0t64 (>= 2.32.0) | libglib2.0-0 (>= 2.32.0)'])
+
     def test_native_package_roundtrip(self):
         nfpm=os.environ.get('NFPM',str(pathlib.Path.home()/'go/bin/nfpm'))
         if not pathlib.Path(nfpm).is_file():self.skipTest('pinned nFPM is required for archive roundtrip')
