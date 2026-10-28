@@ -282,7 +282,10 @@ RPM 先由宿主机检查候选仓库连通性与 repomd XML；仓库不可达�
 [pkgforge Arch Loong64 镜像](https://github.com/pkgforge-dev/docker-archlinux)。它们是社区构建，不能视为现有 Fedora/openSUSE 官方基线的架构扩展已获验证。
 候选定义在 `targets.json` 的 `experimentalTargets`，不进入正式 targets、bundles、安装器或发布资产清单。
 
-两个任务独立运行依赖可用性检查、C lp64d/官方 Go 运行探针，复用现有 Core/UI 构建、nFPM、ABI 和包内容校验。
+两个任务独立运行依赖可用性检查、C lp64d/官方 Go 运行探针。
+DEB 正式构建和 RPM/Arch 实验验证均调用 `scripts/loongarch/build-target.sh`，由 target profile 选择依赖及包格式，
+共用 Core/UI 编译、nFPM、动态链接检查和最终清单生成，避免每种格式重复维护或重复校验。
+正式发布矩阵暂不扩展到实验目标，直到其对应环境及所需验收通过。
 RPM 显式使用 `loongarch64` 包头，Arch 候选使用 `loong64`；架构映射和包头由原生工具二次查询。
 只上传 `experimental-loongarch-*` artifacts；RPM 未签名，不公开分发，不声称安装、服务、UI 启动或网络已通过。
 首次验证失败应依据依赖或编译日志调整候选配置，不能通过关闭包签名策略或伪造通过证据规避。

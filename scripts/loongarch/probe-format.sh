@@ -39,14 +39,7 @@ case "$1" in
   "$out/go-probe"
   ;;
  build)
-  bash scripts/build-linux-core.sh
-  bash scripts/build-linux-ui.sh
-  ldd -r "$out/fncpn-ui" > "$out/ldd.txt" 2>&1
-  cat "$out/ldd.txt"
-  if grep -E 'not found|undefined symbol' "$out/ldd.txt"; then exit 1; fi
-  "$out/fncpn" version
-  python3 scripts/linux-build-manifest.py "$out" "$TARGET" loong64
-  python3 scripts/check-linux-packages.py "$out" "$TARGET" loong64
+  bash scripts/loongarch/build-target.sh
   # Query the native package manager as well as our shared verifier.
   if command -v rpm >/dev/null; then
    for package in "$out/"*.rpm; do
