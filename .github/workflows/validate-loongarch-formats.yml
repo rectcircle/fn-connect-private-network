@@ -72,7 +72,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.targets.outputs.matrix) }}
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 60
     env:
       TARGET: ${{ matrix.target }}
@@ -158,6 +158,22 @@ jobs:
           RPM_SIGNING_PRIVATE_KEY: ${{ secrets.RPM_SIGNING_PRIVATE_KEY }}
           RPM_SIGNING_PASSPHRASE: ${{ secrets.RPM_SIGNING_PASSPHRASE }}
         run: docker exec -e RPM_SIGNING_PRIVATE_KEY -e RPM_SIGNING_PASSPHRASE fncpn-format bash /workspace/scripts/loongarch/probe-format.sh build
+      - name: Select shared kernel cache epoch
+        if: inputs.runtime_validation
+        id: cache-epoch
+        run: echo "month=$(date -u +%Y-%m)" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache/restore@v4
+        if: inputs.runtime_validation
+        with:
+          path: ~/.cache/fncpn-loongarch
+          key: loongarch-${{ steps.cache-epoch.outputs.month }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/loongarch/environment.json', 'scripts/loongarch/provision.sh', 'go.sum', 'ui/go.sum') }}-${{ github.sha }}
+          restore-keys: |
+            loongarch-${{ steps.cache-epoch.outputs.month }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/loongarch/environment.json', 'scripts/loongarch/provision.sh', 'go.sum', 'ui/go.sum') }}-
+      - name: Install full-system emulator for one-time acceptance
+        if: inputs.runtime_validation
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends qemu-system-misc e2fsprogs
       - name: Install and start candidates in a clean runtime image
         if: inputs.runtime_validation
         run: |
@@ -166,7 +182,9 @@ jobs:
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
           docker run -d --privileged --shm-size=1g --platform linux/loong64 --name fncpn-format -e TARGET -e RELEASE -e RELEASE_COMMIT -e RELEASE_VERSION -e DIST_DIR -e GODEBUG -v "$GITHUB_WORKSPACE:/workspace" "$IMAGE" sleep infinity
           docker exec fncpn-format bash /workspace/scripts/loongarch/probe-format.sh runtime-bootstrap
-          docker exec fncpn-format python3 /workspace/scripts/loongarch/runtime-format.py
+          docker exec fncpn-format python3 /workspace/scripts/loongarch/runtime-format.py prepare
+          sudo chown -R "$(id -u):$(id -g)" dist
+          python3 scripts/loongarch/format-vm.py
       - uses: actions/upload-artifact@v4
         if: always()
         with:

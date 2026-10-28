@@ -33,6 +33,20 @@ case "$1" in
   else
    echo 'Candidate image has no supported package manager' >&2; exit 1
   fi
+  if [ "$TARGET" = openeuler-loong64 ] || [ "$TARGET" = rpm-loong64 ]; then
+   python3 - <<'PYREPO'
+import configparser
+from pathlib import Path
+path = Path('/etc/yum.repos.d/openEuler.repo')
+config = configparser.ConfigParser(interpolation=None)
+config.read(path)
+for section in config.sections():
+    if 'source' in section or section == 'debuginfo':
+        config[section]['enabled'] = '0'
+with path.open('w') as output:
+    config.write(output)
+PYREPO
+  fi
   git config --global --add safe.directory /workspace
   if [ "$1" = bootstrap ]; then python3 scripts/linux-ci-dependencies.py "$TARGET"; fi
   cat /etc/os-release
