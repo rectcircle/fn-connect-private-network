@@ -14,7 +14,11 @@
 - 环境为固定 digest 的社区 Debian forky 新世界用户空间、官方 Go 1.27.1、配套 Debian 内核及 QEMU TCG。
   完整依赖与内核版本保留在该运行的日志和 artifact 中；没有龙芯物理设备。
 - 第二步新增独立 DEB 基线及 Core/UI 包、安装识别、发布清单门槛和干净 VM 安装/升级/重装/卸载测试。
-  **当前包验收尚待新工作流结果，不将第一步裸二进制成功记作安装包验收通过。**
+  [第二步包验收](https://github.com/rectcircle/fn-connect-private-network/actions/runs/40694605149)成功，
+  源码 commit `5403993b9932593d0e9b24322252168e978018a3`，产品版本 1.1.8，包证据 `passed=true`。
+  14 项检查覆盖 Core 独立安装且无 GUI 库、Core/UI 依赖及 ABI、systemd 服务、升级保留配置和身份、
+  同版本重装、普通用户 WebKit 握手、真实内核网络及 resolved、卸载保留用户数据。
+  发布工作流复用该验收任务，发布清单要求同 commit、同版本、同包哈希的通过证据。
   升级夹具使用当前代码配较低包版本，只证明包维护行为，不证明历史程序或 schema 迁移。
 - 真实 fnOS 登录/OTP、历史正式版本协议、真机 GPU、Wayland/托盘和 polkit 弹窗仍未验收；不支持旧世界。
 

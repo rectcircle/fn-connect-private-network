@@ -34,7 +34,7 @@ FnCPN 在自身的 fnOS HTTPS/WSS 连接中使用系统信任及内置、指纹�
 | Android x86_64 | `fncpn-<version>-android-x86_64.apk` |
 | Windows x64 | `fncpn-<version>-windows-x64-unsigned.msi` |
 | Debian / Ubuntu | `fncpn-{core,ui}-<version>-linux-{amd64,arm64}.deb` |
-| Debian forky 新世界 LoongArch64（新增候选，待包验收） | `fncpn-{core,ui}-<version>-linux-loong64.deb` |
+| Debian forky 新世界 LoongArch64 | `fncpn-{core,ui}-<version>-linux-loong64.deb` |
 | Fedora / openSUSE | `fncpn-{core,ui}-<version>-linux-{amd64,arm64}.rpm` |
 | Arch Linux | `fncpn-{core,ui}-<version>-linux-amd64.pkg.tar.zst` |
 | Nix / NixOS | [Flake 源码构建与模块](docs/development.md#nix-flake-与-nixos)，无独立 Release 包 |

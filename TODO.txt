@@ -1,4 +1,1 @@
 上架 fnos 应用商店
-
-
-支持 LoongArch Linux
