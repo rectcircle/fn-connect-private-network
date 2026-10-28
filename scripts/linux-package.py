@@ -108,9 +108,13 @@ def configuration(component, target, arch, version, binary, directory, runtime_d
     for item in config['contents']:
         if item['src']==variable: item['src']=str(pathlib.Path(binary).resolve())
     generic,special = lifecycle(component,profile['format'],directory)
-    if arch == 'loong64' and profile['format'] == 'deb':
+    if arch == 'loong64':
+        if 'preinstall' not in generic:
+            generic['preinstall'] = str(directory / (component+'-preinstall'))
+            pathlib.Path(generic['preinstall']).write_text('#!/bin/sh\n')
         preinstall = pathlib.Path(generic['preinstall'])
-        preinstall.write_text('#!/bin/sh\n' + script_body('check-loongarch') + '\n' + preinstall.read_text().removeprefix('#!/bin/sh\n'))
+        guard = 'check-loongarch' if profile['format'] == 'deb' else 'check-loongarch-abi'
+        preinstall.write_text('#!/bin/sh\n' + script_body(guard) + '\n' + preinstall.read_text().removeprefix('#!/bin/sh\n'))
     config['scripts'] = generic
     if profile['format']=='deb':
         config['section']='net';config['priority']='optional'

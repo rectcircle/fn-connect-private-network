@@ -49,24 +49,27 @@ def validate_loongarch_publication(manifest):
         return
     proof = manifest.get('build', {}).get('loongarchValidation', {})
     expected = {a['file']: a['sha256'] for a in manifest['artifacts']
-                if a['file'].endswith('-linux-loong64.deb')}
+                if '-linux-loong64.' in a['file']}
     if not isinstance(proof, dict):
         proof = {}
     if (proof.get('level') != 'full' or proof.get('commit') != manifest['commit']
-            or len(expected) != 2 or proof.get('artifacts') != expected):
+            or len(expected) != 6 or proof.get('artifacts') != expected):
         raise ValueError('LoongArch runtime acceptance is required before publication; rebuild with loongarch_full_validation=true')
 
 
 def experimental_matrix(selected='both'):
     if selected not in ('both', 'rpm', 'archlinux'):
         raise ValueError('Unknown experimental package format: ' + selected)
+    profiles = {name: package_profile(name) for name, definition in BUNDLES.items()
+                if definition.get('execution') == 'qemu' and package_profile(name)['format'] != 'deb'}
     return {'include': [{'target': name, 'image': profile['image'],
                          'repository_probe': profile.get('repositoryProbe', ''),
                          'repository_format': profile.get('repositoryProbeFormat', 'rpm-md'),
                          'image_archive': profile.get('imageArchive', ''),
                          'image_archive_sha256': profile.get('imageArchiveSHA256', '')}
-                        for name, profile in EXPERIMENTAL_TARGETS.items()
+                        for name, profile in profiles.items()
                         if selected == 'both' or profile['format'] == selected]}
+
 
 
 def build_matrix():

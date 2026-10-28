@@ -12,7 +12,7 @@ import subprocess
 import sys
 
 sys.path.insert(0, '/workspace/scripts')
-from linux_support import target_profile
+from linux_support import package_profile
 
 
 def run(*args):
@@ -21,8 +21,8 @@ def run(*args):
 
 def main():
     target = os.environ['TARGET']
-    profile = target_profile(target, 'loong64')
-    out = Path('/workspace/dist/loongarch-formats') / target / 'loong64'
+    profile = package_profile(target, 'loong64')
+    out = Path(os.environ.get('DIST_DIR', '/workspace/dist/loongarch-formats')) / target / 'loong64'
     build = json.loads((out / 'build-manifest.json').read_text())
     packages = sorted(out.glob('*.rpm' if profile['format'] == 'rpm' else '*.pkg.tar.zst'))
     assert len(packages) == 2, 'Expected exact Core/UI candidate pair'
@@ -35,10 +35,15 @@ def main():
         if profile.get('packageManager') == 'apt-rpm':
             run('apt-get', '-o', 'Acquire::Retries=2', '-o', 'Acquire::http::Timeout=20', 'install', '-y', *(['--reinstall'] if reinstall else []), *map(str, items))
         elif profile['format'] == 'rpm':
-            run('dnf', 'reinstall' if reinstall else 'install', '-y', *map(str, items))
+            run('dnf', 'reinstall' if reinstall else 'install', '-y', *(['--setopt=localpkg_gpgcheck=True'] if os.environ.get('RELEASE') == '1' else []), *map(str, items))
         else:
             run('pacman', '-U', '--noconfirm', *map(str, items))
     try:
+        if profile['format'] == 'rpm' and os.environ.get('RELEASE') == '1':
+            from rpm_signing import KEY, verify
+            report['rpmSigning'] = verify(packages)
+            run('rpmkeys', '--import', str(KEY))
+            report['checks'].append('rpm-signature')
         core = next(p for p in packages if p.name.startswith('fncpn-core'))
         install([core])
         # No build dependencies or UI package have been installed in this image.

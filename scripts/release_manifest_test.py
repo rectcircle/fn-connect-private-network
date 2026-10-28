@@ -112,7 +112,7 @@ class ReleaseInventoryTest(unittest.TestCase):
                             (out/name).write_bytes(b'fixture')
                             entries.append({'path':name,'sha256':hashlib.sha256(b'fixture').hexdigest()})
                         manifest={'productVersion':version,'commit':'commit','architecture':architecture,'distribution':target,'packageFormat':profile.get('format',target),'workingTreeDirty':False,'artifacts':entries}
-                        if target=='rpm': manifest['rpmSigning']=signing_identity()
+                        if profile.get('format',target)=='rpm': manifest['rpmSigning']=signing_identity()
                         if target=='deb' and architecture=='amd64': mutation(manifest)
                         (out/'build-manifest.json').write_text(json.dumps(manifest))
                 mode=json.loads((root/'linux/deb/amd64/build-manifest.json').read_text()).get('_testEvidence')

@@ -491,6 +491,98 @@
       "osCodename": "forky",
       "bundle": "deb-loong64",
       "execution": "qemu"
+    },
+    {
+      "id": "openeuler-loong64",
+      "label": "openEuler 24.03 LTS SP4 LoongArch",
+      "osID": "openEuler",
+      "osVersion": "24.03",
+      "image": "sha256:04729520976d8864852350907af891d00a9cd96b3084d21c3513ce36729afca4",
+      "format": "rpm",
+      "architectures": [
+        "loong64"
+      ],
+      "coreDependencies": [
+        "systemd",
+        "systemd-resolved",
+        "dbus",
+        "sudo",
+        "procps-ng",
+        "util-linux"
+      ],
+      "uiDependencies": [
+        "gtk3",
+        "webkit2gtk4.1",
+        "libappindicator-gtk3",
+        "polkit",
+        "xdg-utils"
+      ],
+      "buildDependencies": [
+        "gcc",
+        "gcc-c++",
+        "make",
+        "pkg-config",
+        "gtk3-devel",
+        "webkit2gtk4.1-devel",
+        "libappindicator-gtk3-devel",
+        "rpm-build",
+        "desktop-file-utils",
+        "libarchive",
+        "binutils",
+        "jq",
+        "bsdtar"
+      ],
+      "packageArch": "loongarch64",
+      "packageManager": "dnf",
+      "repositoryProbe": "https://repo.openeuler.org/openEuler-24.03-LTS-SP4/everything/loongarch64/repodata/repomd.xml",
+      "repositoryProbeFormat": "rpm-md",
+      "imageArchive": "https://repo.openeuler.org/openEuler-24.03-LTS-SP4/docker_img/loongarch64/openEuler-docker.loongarch64.tar.xz",
+      "imageArchiveSHA256": "689034da42255a193981ffd87664606f2adfe0a69e6138b77732212f0f514afa",
+      "indicatorPkgConfig": "appindicator3-0.1",
+      "uiBuildTags": [
+        "appindicator_legacy"
+      ],
+      "bundle": "rpm-loong64",
+      "execution": "qemu"
+    },
+    {
+      "id": "archlinux-loong64",
+      "label": "Loong Arch Linux (validation only)",
+      "osID": "arch",
+      "osVersion": "",
+      "image": "ghcr.io/pkgforge-dev/archlinux@sha256:c64bb6ee692e1ed0bc32a81cb47a4652188cbd538a8acbdfa0d83856c14edc92",
+      "format": "archlinux",
+      "architectures": [
+        "loong64"
+      ],
+      "coreDependencies": [
+        "systemd",
+        "dbus",
+        "sudo",
+        "procps-ng",
+        "util-linux"
+      ],
+      "uiDependencies": [
+        "gtk3",
+        "webkit2gtk-4.1",
+        "libayatana-appindicator",
+        "polkit",
+        "xdg-utils"
+      ],
+      "buildDependencies": [
+        "base-devel",
+        "pkgconf",
+        "gtk3",
+        "webkit2gtk-4.1",
+        "libayatana-appindicator",
+        "desktop-file-utils",
+        "libarchive",
+        "binutils",
+        "jq"
+      ],
+      "packageArch": "loong64",
+      "bundle": "archlinux-loong64",
+      "execution": "qemu"
     }
   ],
   "bundles": {
@@ -552,69 +644,25 @@
       ],
       "format": "deb",
       "execution": "qemu"
+    },
+    "rpm-loong64": {
+      "since": "1.1.8",
+      "baseline": "openeuler-loong64",
+      "architectures": [
+        "loong64"
+      ],
+      "format": "rpm",
+      "execution": "qemu"
+    },
+    "archlinux-loong64": {
+      "since": "1.1.8",
+      "baseline": "archlinux-loong64",
+      "architectures": [
+        "loong64"
+      ],
+      "format": "archlinux",
+      "execution": "qemu"
     }
   },
-  "experimentalTargets": [
-    {
-      "id": "openeuler-loong64",
-      "base": "fedora43",
-      "label": "openEuler 24.03 LTS SP4 LoongArch",
-      "image": "sha256:04729520976d8864852350907af891d00a9cd96b3084d21c3513ce36729afca4",
-      "osID": "openEuler",
-      "osVersion": "24.03",
-      "architectures": [
-        "loong64"
-      ],
-      "packageArch": "loongarch64",
-      "packageManager": "dnf",
-      "repositoryProbe": "https://repo.openeuler.org/openEuler-24.03-LTS-SP4/everything/loongarch64/repodata/repomd.xml",
-      "repositoryProbeFormat": "rpm-md",
-      "coreDependencies": [
-        "systemd",
-        "systemd-resolved",
-        "dbus",
-        "sudo",
-        "procps-ng",
-        "util-linux"
-      ],
-      "uiDependencies": [
-        "gtk3",
-        "webkit2gtk4.1",
-        "libappindicator-gtk3",
-        "polkit",
-        "xdg-utils"
-      ],
-      "buildDependencies": [
-        "gcc",
-        "gcc-c++",
-        "make",
-        "pkg-config",
-        "gtk3-devel",
-        "webkit2gtk4.1-devel",
-        "libappindicator-gtk3-devel",
-        "rpm-build",
-        "desktop-file-utils",
-        "libarchive",
-        "binutils",
-        "jq",
-        "bsdtar"
-      ],
-      "imageArchive": "https://repo.openeuler.org/openEuler-24.03-LTS-SP4/docker_img/loongarch64/openEuler-docker.loongarch64.tar.xz",
-      "imageArchiveSHA256": "689034da42255a193981ffd87664606f2adfe0a69e6138b77732212f0f514afa",
-      "indicatorPkgConfig": "appindicator3-0.1",
-      "uiBuildTags": [
-        "appindicator_legacy"
-      ]
-    },
-    {
-      "id": "archlinux-loong64",
-      "base": "archlinux",
-      "label": "Loong Arch Linux (validation only)",
-      "image": "ghcr.io/pkgforge-dev/archlinux@sha256:c64bb6ee692e1ed0bc32a81cb47a4652188cbd538a8acbdfa0d83856c14edc92",
-      "architectures": [
-        "loong64"
-      ],
-      "packageArch": "loong64"
-    }
-  ]
+  "experimentalTargets": []
 }

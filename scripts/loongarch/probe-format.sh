@@ -3,13 +3,14 @@
 set -euo pipefail
 cd /workspace
 export PATH=/opt/go/bin:/opt/tools:$PATH GOTOOLCHAIN=local
-export ARCH=loong64 FRONTEND_PREBUILT=1 RELEASE=0 DEFER_LINUX_MANIFEST=1
-export NFPM=/opt/tools/nfpm DIST_DIR=/workspace/dist/loongarch-formats
+export ARCH=loong64 FRONTEND_PREBUILT=1 DEFER_LINUX_MANIFEST=1
+export RELEASE="${RELEASE:-0}"
+export NFPM=/opt/tools/nfpm DIST_DIR="${DIST_DIR:-/workspace/dist/loongarch-formats}"
 out="$DIST_DIR/$TARGET/loong64"
 mkdir -p "$out"
 case "$1" in
  bootstrap|runtime-bootstrap)
-  if [ "$TARGET" = openeuler-loong64 ]; then
+  if [ "$TARGET" = openeuler-loong64 ] || [ "$TARGET" = rpm-loong64 ]; then
    # Use the pinned release's published base URLs and retain package signatures.
    sed -i -e '/^metalink=/d' -e 's|gpgkey=http:|gpgkey=https:|' /etc/yum.repos.d/openEuler.repo
    dnf --disablerepo='*source*' --disablerepo=debuginfo --setopt=timeout=30 --setopt=retries=2 install -y git ca-certificates curl python3 tar xz

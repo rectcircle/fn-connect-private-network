@@ -66,7 +66,7 @@ class LinuxSupportTest(unittest.TestCase):
         self.assertEqual(len(matrix),sum(len(p['architectures']) for p in TARGETS.values()))
         names=[name for *_,name in release_packages('1.1.8')]
         self.assertEqual(len(names),len(set(names)))
-        self.assertEqual(len(names),12)
+        self.assertEqual(len(names),16)
         self.assertEqual(len(build_matrix()["include"]),5)
 
     def test_experimental_format_can_be_retried_independently(self):
@@ -91,26 +91,21 @@ class LinuxSupportTest(unittest.TestCase):
         self.assertEqual(execute.call_args_list[0].args[0][0], 'dnf')
         self.assertEqual(execute.call_args_list[1].args[0][-1], 'appindicator3-0.1')
 
-    def test_experimental_loongarch_formats_are_not_release_targets(self):
-        for target, expected in [('openeuler-loong64', 'loongarch64'), ('archlinux-loong64', 'loong64')]:
-            self.assertIn(target, EXPERIMENTAL_TARGETS)
-            self.assertNotIn(target, TARGETS)
-            self.assertNotIn(target, BUNDLES)
+    def test_loongarch_formats_have_separate_baselines(self):
+        for target, expected in [('rpm-loong64', 'loongarch64'), ('archlinux-loong64', 'loong64')]:
+            self.assertIn(target, BUNDLES)
             profile = package_profile(target, 'loong64')
-            self.assertTrue(profile['experimental'])
+            self.assertEqual(profile['execution'], 'qemu')
             with self.assertRaises(ValueError): package_profile(target, 'amd64')
             with tempfile.TemporaryDirectory() as temporary:
                 for component in ('core', 'ui'):
                     config = builder.configuration(component, target, 'loong64', '1.1.8', '/tmp/fixture', pathlib.Path(temporary))
                     self.assertEqual(config[profile['format']]['arch'], expected)
-                    for script in config['scripts'].values():
-                        self.assertNotIn('Debian forky', pathlib.Path(script).read_text())
-        self.assertEqual(len(release_packages('1.1.8')), 12)
-        self.assertTrue(all(item['target'] not in EXPERIMENTAL_TARGETS for item in ci_matrix()['include']))
+                    self.assertIn('new-world lp64d', pathlib.Path(config['scripts']['preinstall']).read_text())
+        self.assertEqual(len(release_packages('1.1.8')), 16)
 
     def test_build_only_loongarch_draft_cannot_be_published(self):
-        files = {package_name(component, '1.1.8', 'deb-loong64', 'loong64'): 'hash-' + component
-                 for component in ('core', 'ui')}
+        files = {name: 'hash-' + name for _, arch, _, name in release_packages('1.1.8') if arch == 'loong64'}
         manifest = {'version': '1.1.8', 'commit': 'candidate',
                     'artifacts': [{'file': name, 'sha256': digest} for name, digest in files.items()],
                     'build': {}}
@@ -129,7 +124,7 @@ class LinuxSupportTest(unittest.TestCase):
             self.assertEqual(len(rows), 10)
             self.assertFalse(any(arch == 'loong64' for _, arch, _, _ in rows))
         rows = release_packages('1.1.8')
-        self.assertEqual(len(rows), 12)
+        self.assertEqual(len(rows), 16)
         self.assertEqual({component for _, arch, component, _ in rows if arch == 'loong64'}, {'core', 'ui'})
 
     def test_package_metadata_must_match_requested_build_target(self):

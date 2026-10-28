@@ -16,5 +16,8 @@ ldd -r "$out/fncpn-ui" > "$out/ldd.txt" 2>&1
 cat "$out/ldd.txt"
 if grep -E 'not found|undefined symbol' "$out/ldd.txt"; then exit 1; fi
 "$out/fncpn" version
+if [ "${RELEASE:-0}" = 1 ] && [ "$(python3 -c 'import sys; sys.path.insert(0,"scripts"); from linux_support import package_profile; print(package_profile(sys.argv[1])["format"])' "$TARGET")" = rpm ]; then
+ python3 scripts/rpm_signing.py sign "$out/"*.rpm
+fi
 # Includes package structure/architecture verification and final SHA256/ABI evidence.
 python3 scripts/linux-build-manifest.py "$out" "$TARGET" loong64

@@ -41,7 +41,7 @@ parse_args() {
 }
 
 detect_distribution() {
-    local file=${1:-/etc/os-release} ID= VERSION_ID= VERSION_CODENAME=
+    local file=${1:-/etc/os-release} ID= VERSION_ID= VERSION_CODENAME= VERSION=
     LOONGARCH_DISTRO=0
     [ -r "$file" ] || fail '无法读取 /etc/os-release'
     # os-release is root-managed and uses shell assignment syntax.
@@ -54,6 +54,9 @@ detect_distribution() {
             FORMAT=deb; MANAGER=apt-get; EXTENSION=deb; LOONGARCH_DISTRO=1 ;;
         fedora:43|fedora:44) FORMAT=rpm; MANAGER=dnf; EXTENSION=rpm ;;
         opensuse-leap:16.0|opensuse-tumbleweed:*) FORMAT=rpm; MANAGER=zypper; EXTENSION=rpm ;;
+        openEuler:24.03)
+            [[ "$VERSION" == *LTS-SP4* ]] || fail 'openEuler LoongArch 目前仅验证 24.03 LTS SP4'
+            FORMAT=rpm; MANAGER=dnf; EXTENSION=rpm; LOONGARCH_DISTRO=2 ;;
         arch:*) FORMAT=archlinux; MANAGER=pacman; EXTENSION=pkg.tar.zst ;;
         nixos:*) fail 'NixOS 请使用本项目的 Nix Flake / NixOS 模块，不能使用普通 Linux 安装包' ;;
         alpine:*) fail '不支持 Alpine Linux / apk' ;;
@@ -70,14 +73,14 @@ detect_architecture() {
     esac
     [ "$FORMAT:$ARCH" != archlinux:arm64 ] || fail '仅支持官方 Arch Linux x86_64，不支持 Arch Linux ARM'
     if [ "$ARCH" = loong64 ]; then
-        [ "${LOONGARCH_DISTRO:-0}" = 1 ] || fail 'LoongArch 仅支持 Debian forky 新世界系统'
-        [ "$(dpkg --print-architecture)" = loong64 ] && loongarch_loader_available || fail '不支持 LoongArch 旧世界 ABI'
+        [ "${LOONGARCH_DISTRO:-0}" != 0 ] || [ "$FORMAT" = archlinux ] || fail 'LoongArch 支持 Debian forky、openEuler 24.03 SP4 和 Loong Arch Linux 新世界系统'
+        { [ "$FORMAT" != deb ] || [ "$(dpkg --print-architecture)" = loong64 ]; } && loongarch_loader_available || fail '不支持 LoongArch 旧世界 ABI'
         local kernel major minor
         kernel=$(uname -r); major=${kernel%%.*}; minor=${kernel#*.}; minor=${minor%%.*}
         [[ "$major" =~ ^[0-9]+$ && "$minor" =~ ^[0-9]+$ ]] || fail '无法识别 LoongArch 内核版本'
         (( major > 5 || (major == 5 && minor >= 19) )) || fail 'LoongArch 需要 Linux 5.19 或更高版本'
     else
-        [ "${LOONGARCH_DISTRO:-0}" = 0 ] || fail 'Debian forky 目前仅验证 loong64 架构'
+        [ "${LOONGARCH_DISTRO:-0}" = 0 ] || fail '该发行版配置目前仅验证 loong64 架构'
     fi
 }
 loongarch_loader_available() { [ -r /lib64/ld-linux-loongarch-lp64d.so.1 ]; }

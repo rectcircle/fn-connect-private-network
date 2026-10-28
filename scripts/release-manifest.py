@@ -55,7 +55,7 @@ if tuple(map(int, version.split('.'))) >= (1, 1, 2):
                 build.get('architecture') != linux_arch or build.get('distribution') != linux_target or
                 build.get('packageFormat') != profile.get('format', linux_target) or build.get('workingTreeDirty') is not False):
                 raise SystemExit('Linux candidate must match the clean release version, commit, format and architecture')
-            if linux_target == 'rpm' and build.get('rpmSigning') != signing_identity():
+            if profile.get('format', linux_target) == 'rpm' and build.get('rpmSigning') != signing_identity():
                 raise SystemExit('RPM signing evidence does not match the project key')
             expected_names = {linux_package_name(component,version,linux_target,linux_arch) for component in ('core', 'ui')}
             entries = build.get('artifacts', [])
@@ -143,7 +143,7 @@ if tuple(map(int, version.split('.'))) >= (1, 1, 8):
     metadata['build']['loongarchValidation'] = {
         'level': 'build' if os.environ.get('LOONGARCH_VALIDATION') == 'build' else 'full',
         'commit': revision,
-        'artifacts': {a['file']: a['sha256'] for a in artifacts if a['file'].endswith('-linux-loong64.deb')}}
+        'artifacts': {a['file']: a['sha256'] for a in artifacts if '-linux-loong64.' in a['file']}}
 if harmonyos_build:
     metadata['build']['harmonyos'] = harmonyos_build
 if ios_build:

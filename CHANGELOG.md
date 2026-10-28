@@ -8,7 +8,7 @@
 
 ### Added
 
-- 新增面向新世界 Debian forky（LoongArch64）的 Core/UI DEB 构建、安装识别和发布验收流程。
+- 新增 LoongArch64 新世界 Core/UI 安装包：Debian forky DEB、openEuler 24.03 LTS SP4 RPM、Loong Arch Linux 包，并接入安装识别及草稿发布流程；各目标验收范围见验证记录。
 - HarmonyOS 登录页增加默认未勾选的隐私政策同意框，应用内离线展示与官网一致的中英双语政策，登录提交前检查同意状态。
 
 ### Fixed

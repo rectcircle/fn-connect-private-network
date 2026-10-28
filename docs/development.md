@@ -271,31 +271,26 @@ python3 scripts/check-linux-packages.py dist/linux/deb-loong64/loong64 deb-loong
 本地无需 Docker 的检查入口：`python3 scripts/loongarch/validate_test.py`、
 `python3 scripts/linux_support_test.py`、`python3 scripts/install_linux_test.py`、`python3 scripts/release_manifest_test.py`。
 
-### LoongArch RPM / Arch 验证入口
+### LoongArch RPM / Arch 构建与验收
 
-`Validate LoongArch RPM and Arch builds` 仅手动运行，不参与日常 CI 或发布。
-`target` 可选 both、rpm、archlinux；失败时只重试对应格式，不重复占用另一项验证资源。
-最小镜像先安装基础工具和构建依赖，再解压官方 Go，避免假定镜像已自带 tar。
-RPM 先由宿主机检查候选仓库连通性与对应格式的仓库元数据；仓库不可达时尽早失败，不下载工具链或启动模拟容器。
-连接失败仅作有界重试，不关闭 TLS、包签名或替换成未经核实的源。固定 digest 的候选镜像来自
-[ALT Linux Sisyphus 官方容器仓库](https://registry.altlinux.org/) 与
-[pkgforge Arch Loong64 镜像](https://github.com/pkgforge-dev/docker-archlinux)。ALT RPM 候选使用 apt-rpm 和镜像自带的 Yandex 仓库定义，保留原仓库签名身份。
-不能据此宣称现有 Fedora/openSUSE 基线已支持 loong64；Fedora Remix 因上游仓库不可达暂不继续使用。
-候选定义在 `targets.json` 的 `experimentalTargets`，不进入正式 targets、bundles、安装器或发布资产清单。
+`Build LoongArch RPM and Arch` 既可单独手动运行，也由 Linux 草稿构建复用。
+手动输入 `target=both/rpm/archlinux`、完整 `ref` SHA；`release=true` 时还需匹配源码的 `version`，RPM 使用项目正式密钥签名。
+`runtime_validation=true` 进行一次干净容器安装启动检查，默认草稿构建不重复执行。
+失败时只重试对应格式；Go 模块下载保留校验并进行有界重试。
 
-两个任务独立运行依赖可用性检查、C lp64d/官方 Go 运行探针。
-DEB 正式构建和 RPM/Arch 实验验证均调用 `scripts/loongarch/build-target.sh`，由 target profile 选择依赖及包格式，
-共用 Core/UI 编译、nFPM、动态链接检查和最终清单生成，避免每种格式重复维护或重复校验。
-正式发布矩阵暂不扩展到实验目标，直到其对应环境及所需验收通过。
-RPM 显式使用 `loongarch64` 包头，Arch 候选使用 `loong64`；架构映射和包头由原生工具二次查询。
-构建后删除构建容器，重新启动同一固定镜像的干净运行容器；不安装开发依赖。
-依次验证 Core 独立安装、版本命令、Core/UI 包管理器依赖解析、UI 动态链接、服务文件安装、
-普通用户 Xvfb/WebKit 前端握手、同版本重装和卸载；测试工具在产品依赖检查之后安装。
-输出独立的 `runtime-validation.json`，包含精确包哈希、commit、通过项及未覆盖项，失败时保留 UI/动态链接日志。
-容器不运行 systemd PID 1，服务文件检查不证明真实服务启动；真实服务生命周期和内核网络仍待对应系统验收。
-只上传 `experimental-loongarch-*` artifacts；RPM 未签名，不公开分发。
-首次验证失败应依据依赖或编译日志调整候选配置，不能通过关闭包签名策略或伪造通过证据规避。
-确认工具链、依赖及 Core/UI 构建均通过后，再决定是否纳入正式包支持；不重复执行 Debian 完整 VM 验收。
+RPM 基线是 openEuler 24.03 LTS SP4：下载官方容器归档并核对固定 SHA256，再用归档中的 image ID 启动。
+软件包使用该版本官方 OS/everything/EPOL/update 仓库及原有签名，托盘使用系统提供的 AppIndicator。
+Arch 使用固定 digest 的 pkgforge Loong Arch Linux 镜像和完整滚动更新。
+它们与 Debian DEB 共用 `scripts/loongarch/build-target.sh`，避免重复维护编译、包结构和 ABI 检查。
+`targets.json` 分别定义 `deb-loong64`、`rpm-loong64`、`archlinux-loong64`，从 1.1.8 起进入发布清单。
+其他 CPU 架构的 Linux 构建基线不变。
+
+运行验证先删除构建容器，再启动干净镜像；依次检查 Core 独立安装、Core/UI 依赖解析、动态链接、
+服务文件安装、普通用户 Xvfb/WebKit 前端握手、重装和卸载，测试工具在产品依赖检查之后安装。
+`runtime-validation.json` 记录精确包哈希及源码 commit；失败保留 UI/动态链接日志。
+容器不运行 systemd PID 1，因此文件检查不证明服务启动、内核网络或升级状态保留；这些仍需发布前对应系统验收。
+快速草稿不能直接公开，发布脚本继续要求同 commit、同包哈希的完整 LoongArch 验收证据。
+Deepin、Anolis 仅作为兼容性调查目标，未通过之前不进入支持声明或安装器。
 
 ### 正式 Linux 安装包
 

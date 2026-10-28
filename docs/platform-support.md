@@ -23,10 +23,12 @@ Linux 目标以 [targets.json](../packaging/linux/targets.json) 为唯一机器�
 | Ubuntu | 22.04、24.04、26.04 LTS；26.10 | amd64、arm64 | deb |
 | Fedora | 43、44 | amd64、arm64 | RPM |
 | Arch Linux | 完整更新的 rolling 系统 | amd64 | pkg.tar.zst |
+| Loong Arch Linux 新世界 | 固定社区镜像及完整滚动更新 | loong64 | pkg.tar.zst |
+| openEuler 新世界 | 24.03 LTS SP4，官方校验和固定的容器 | loong64 | RPM |
 | openSUSE Leap | 16.0 | amd64、arm64 | RPM |
 | openSUSE Tumbleweed | 完整更新的 rolling 系统 | amd64、arm64 | RPM |
 
-这些构建目标共 22 个发行版/架构组合，生成 12 个 Core/UI 安装包（含 LoongArch），不为每个发行版另编译一份。Alpine/apk、Arch Linux ARM 以及 Fedora Atomic、openSUSE Aeon/Kalpa/MicroOS 等不可变系统不在普通包支持范围内。发行版发布、EOL 或滚动 ABI 变化时须重新核对清单、依赖和 CI。
+这些构建目标共 24 个发行版/架构组合，生成 16 个 Core/UI 安装包（含 LoongArch），不为每个发行版另编译一份。Alpine/apk、Arch Linux ARM 以及 Fedora Atomic、openSUSE Aeon/Kalpa/MicroOS 等不可变系统不在普通包支持范围内。发行版发布、EOL 或滚动 ABI 变化时须重新核对清单、依赖和 CI。
 
 ## 共用原则
 
@@ -144,3 +146,6 @@ PC quickBarManager 与鸿蒙智联设备入口不能替代手机连接开关，�
 实名认证开发者账号，通过 HapSign 或 HAP Resigner 获取设备绑定调试签名并安装，通常需要电脑。
 功能已通过云真机调试验证；维护者暂无华为实体设备，跨账号同包名申请 Test Profile 及自行安装
 的完整链路尚未验证，不承诺普通设备直接点击 HAP 即可安装。具体步骤见根 README。
+
+LoongArch RPM 使用 openEuler 构建；系统托盘使用该系统提供的原版 AppIndicator，其他基线继续使用 Ayatana。
+Deepin 25、Anolis 23 暂为兼容性调查目标，不列入安装器支持范围；ALT、Fedora Remix、openSUSE LoongArch 不作为当前发布基线。

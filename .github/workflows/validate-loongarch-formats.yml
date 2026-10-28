@@ -1,5 +1,24 @@
-name: Validate LoongArch RPM and Arch builds
+name: Build LoongArch RPM and Arch
 on:
+  workflow_call:
+    inputs:
+      ref:
+        type: string
+        required: true
+      version:
+        type: string
+        default: ''
+      release:
+        type: boolean
+        default: false
+      runtime_validation:
+        type: boolean
+        default: false
+    secrets:
+      RPM_SIGNING_PRIVATE_KEY:
+        required: false
+      RPM_SIGNING_PASSPHRASE:
+        required: false
   workflow_dispatch:
     inputs:
       target:
@@ -7,6 +26,15 @@ on:
         type: choice
         options: [both, rpm, archlinux]
         default: both
+      version:
+        type: string
+        default: ''
+      release:
+        type: boolean
+        default: false
+      runtime_validation:
+        type: boolean
+        default: true
       ref:
         description: Source branch or commit (validation only)
         type: string
@@ -34,7 +62,7 @@ jobs:
           from pathlib import Path
           sys.path.insert(0, 'scripts')
           from linux_support import experimental_matrix
-          matrix = experimental_matrix(os.environ['SELECTED_FORMAT'])
+          matrix = experimental_matrix(os.environ['SELECTED_FORMAT'] or 'both')
           with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
               output.write('matrix=' + json.dumps(matrix) + '\n')
           PY
@@ -49,6 +77,11 @@ jobs:
     env:
       TARGET: ${{ matrix.target }}
       IMAGE: ${{ matrix.image }}
+      RELEASE: ${{ inputs.release && '1' || '0' }}
+      RELEASE_COMMIT: ${{ inputs.ref }}
+      RELEASE_VERSION: ${{ inputs.version }}
+      DIST_DIR: /workspace/dist/linux
+      GODEBUG: http2client=0
       REPOSITORY_PROBE: ${{ matrix.repository_probe }}
       REPOSITORY_FORMAT: ${{ matrix.repository_format }}
       IMAGE_ARCHIVE: ${{ matrix.image_archive }}
@@ -86,7 +119,10 @@ jobs:
         run: |
           npm --prefix ui/frontend ci
           npm --prefix ui/frontend run build
-          GOOS=linux GOARCH=loong64 CGO_ENABLED=0 GOBIN='' go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.40.0
+          for attempt in 1 2 3; do
+            GOOS=linux GOARCH=loong64 CGO_ENABLED=0 GOBIN='' go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.40.0 && break
+            test "$attempt" != 3 || exit 1
+          done
           mkdir -p "$RUNNER_TEMP/format-tools"
           cp "$(go env GOPATH)/bin/linux_loong64/nfpm" "$RUNNER_TEMP/format-tools/"
           python3 - <<'PY'
@@ -105,7 +141,7 @@ jobs:
           docker load -i "$RUNNER_TEMP/candidate.tar.xz"
       - name: Start pinned candidate image
         run: |
-          docker run -d --platform linux/loong64 --name fncpn-format -e TARGET -v "$GITHUB_WORKSPACE:/workspace" -v "$RUNNER_TEMP/format-tools:/opt/tools:ro" "$IMAGE" sleep infinity
+          docker run -d --platform linux/loong64 --name fncpn-format -e TARGET -e RELEASE -e RELEASE_COMMIT -e RELEASE_VERSION -e DIST_DIR -e GODEBUG -v "$GITHUB_WORKSPACE:/workspace" -v "$RUNNER_TEMP/format-tools:/opt/tools:ro" "$IMAGE" sleep infinity
           docker exec fncpn-format mkdir -p /opt
           docker cp "$RUNNER_TEMP/go.tar.gz" fncpn-format:/opt/go.tar.gz
       - name: Verify dependency availability
@@ -114,27 +150,34 @@ jobs:
         run: docker exec fncpn-format tar -xzf /opt/go.tar.gz -C /opt
       - name: Verify native C and official Go toolchains
         run: docker exec fncpn-format bash /workspace/scripts/loongarch/probe-format.sh toolchain
+      - name: Install release RPM signing tools
+        if: inputs.release && startsWith(matrix.target, 'rpm')
+        run: docker exec fncpn-format dnf install -y gnupg2 rpm-build
       - name: Build and inspect matching Core and UI packages
-        run: docker exec fncpn-format bash /workspace/scripts/loongarch/probe-format.sh build
+        env:
+          RPM_SIGNING_PRIVATE_KEY: ${{ secrets.RPM_SIGNING_PRIVATE_KEY }}
+          RPM_SIGNING_PASSPHRASE: ${{ secrets.RPM_SIGNING_PASSPHRASE }}
+        run: docker exec -e RPM_SIGNING_PRIVATE_KEY -e RPM_SIGNING_PASSPHRASE fncpn-format bash /workspace/scripts/loongarch/probe-format.sh build
       - name: Install and start candidates in a clean runtime image
+        if: inputs.runtime_validation
         run: |
           docker rm -f fncpn-format
           # Allow the real WebKit/image sandbox in the disposable test container.
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
-          docker run -d --privileged --shm-size=1g --platform linux/loong64 --name fncpn-format -e TARGET -v "$GITHUB_WORKSPACE:/workspace" "$IMAGE" sleep infinity
+          docker run -d --privileged --shm-size=1g --platform linux/loong64 --name fncpn-format -e TARGET -e RELEASE -e RELEASE_COMMIT -e RELEASE_VERSION -e DIST_DIR -e GODEBUG -v "$GITHUB_WORKSPACE:/workspace" "$IMAGE" sleep infinity
           docker exec fncpn-format bash /workspace/scripts/loongarch/probe-format.sh runtime-bootstrap
           docker exec fncpn-format python3 /workspace/scripts/loongarch/runtime-format.py
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: experimental-loongarch-${{ matrix.target }}
+          name: linux-packages-${{ matrix.target }}-loong64
           path: |
-            dist/loongarch-formats/**/*.rpm
-            dist/loongarch-formats/**/*.pkg.tar.zst
-            dist/loongarch-formats/**/*.json
-            dist/loongarch-formats/**/*.txt
-            dist/loongarch-formats/**/*.log
-            dist/loongarch-formats/**/SHA256SUMS
+            dist/linux/**/*.rpm
+            dist/linux/**/*.pkg.tar.zst
+            dist/linux/**/*.json
+            dist/linux/**/*.txt
+            dist/linux/**/*.log
+            dist/linux/**/SHA256SUMS
           if-no-files-found: warn
           retention-days: 14
       - name: Remove disposable candidate

@@ -42,7 +42,7 @@ class InstallerTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             path = pathlib.Path(temporary)/'os-release'
             for profile in catalog['targets']:
-                path.write_text(f'ID={profile["osID"]}\nVERSION_ID={shlex.quote(profile["osVersion"])}\nVERSION_CODENAME={profile.get("osCodename", "")}\n')
+                path.write_text(f'ID={profile["osID"]}\nVERSION_ID={shlex.quote(profile["osVersion"])}\nVERSION_CODENAME={profile.get("osCodename", "")}\nVERSION="24.03 (LTS-SP4)"\n')
                 result = self.shell(f'detect_distribution {shlex.quote(str(path))}; echo "$FORMAT"')
                 self.assertEqual(result.stdout.strip(), profile['format'])
             for name, version in [('alpine','3.22'), ('nixos','26.05'), ('ubuntu','20.04'), ('fedora','42'), ('opensuse-leap','15.6'), ('linuxmint','22')]:

@@ -1,0 +1,10 @@
+#!/bin/sh
+set -eu
+# Check before package maintenance touches an existing installation.
+reject() { echo 'FnCPN loong64 requires the new-world lp64d loader and Linux >= 5.19.' >&2; exit 1; }
+[ "$(uname -m)" = loongarch64 ] || reject
+[ -r /lib64/ld-linux-loongarch-lp64d.so.1 ] || reject
+kernel=$(uname -r)
+major=${kernel%%.*}; minor=${kernel#*.}; minor=${minor%%.*}
+case "$major:$minor" in *[!0-9:]*|:*) reject ;; esac
+[ "$major" -gt 5 ] || { [ "$major" -eq 5 ] && [ "$minor" -ge 19 ]; } || reject
