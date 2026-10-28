@@ -133,12 +133,6 @@ jobs:
           environment = json.loads(Path('scripts/loongarch/environment.json').read_text())
           download(environment['goURL'], Path(os.environ['RUNNER_TEMP']) / 'go.tar.gz', environment['goSHA256'])
           PY
-      - name: Load checksum-pinned official image archive
-        if: matrix.image_archive != ''
-        run: |
-          curl --fail --location --retry 2 --connect-timeout 15 --max-time 180 "$IMAGE_ARCHIVE" -o "$RUNNER_TEMP/candidate.tar.xz"
-          echo "$IMAGE_ARCHIVE_SHA256  $RUNNER_TEMP/candidate.tar.xz" | sha256sum -c -
-          docker load -i "$RUNNER_TEMP/candidate.tar.xz"
       - name: Select compiler cache epoch
         id: compiler-epoch
         run: echo "month=$(date -u +%Y-%m)" >> "$GITHUB_OUTPUT"
@@ -149,16 +143,31 @@ jobs:
           key: loongarch-compiler-${{ matrix.target }}-${{ steps.compiler-epoch.outputs.month }}-${{ hashFiles('go.sum', 'ui/go.sum') }}-${{ github.sha }}
           restore-keys: |
             loongarch-compiler-${{ matrix.target }}-${{ steps.compiler-epoch.outputs.month }}-${{ hashFiles('go.sum', 'ui/go.sum') }}-
+      - name: Restore clean builder environment
+        run: python3 scripts/loongarch/builder-cache.py restore
+      - name: Load checksum-pinned official image archive
+        if: matrix.image_archive != '' && (env.BUILDER_CACHE_HIT != '1' || inputs.runtime_validation)
+        run: |
+          curl --fail --location --retry 2 --connect-timeout 15 --max-time 180 "$IMAGE_ARCHIVE" -o "$RUNNER_TEMP/candidate.tar.xz"
+          echo "$IMAGE_ARCHIVE_SHA256  $RUNNER_TEMP/candidate.tar.xz" | sha256sum -c -
+          docker load -i "$RUNNER_TEMP/candidate.tar.xz"
       - name: Start pinned candidate image
         run: |
           mkdir -p "$HOME/.cache/fncpn-loongarch-formats/$TARGET/go-build" "$HOME/.cache/fncpn-loongarch-formats/$TARGET/go-mod"
-          docker run -d --platform linux/loong64 -v "$HOME/.cache/fncpn-loongarch-formats/$TARGET/go-build:/root/.cache/go-build" -v "$HOME/.cache/fncpn-loongarch-formats/$TARGET/go-mod:/root/go/pkg/mod" --name fncpn-format -e TARGET -e RELEASE -e RELEASE_COMMIT -e RELEASE_VERSION -e DIST_DIR -e GODEBUG -v "$GITHUB_WORKSPACE:/workspace" -v "$RUNNER_TEMP/format-tools:/opt/tools:ro" "$IMAGE" sleep infinity
+          builder="$IMAGE"
+          if [ "$BUILDER_CACHE_HIT" = 1 ]; then builder="$BUILDER_IMAGE"; fi
+          docker run -d --platform linux/loong64 -v "$HOME/.cache/fncpn-loongarch-formats/$TARGET/go-build:/root/.cache/go-build" -v "$HOME/.cache/fncpn-loongarch-formats/$TARGET/go-mod:/root/go/pkg/mod" --name fncpn-format -e TARGET -e RELEASE -e RELEASE_COMMIT -e RELEASE_VERSION -e DIST_DIR -e GODEBUG -v "$GITHUB_WORKSPACE:/workspace" -v "$RUNNER_TEMP/format-tools:/opt/tools:ro" "$builder" sleep infinity
           docker exec fncpn-format mkdir -p /opt
           docker cp "$RUNNER_TEMP/go.tar.gz" fncpn-format:/opt/go.tar.gz
       - name: Verify dependency availability
+        if: env.BUILDER_CACHE_HIT != '1'
         run: docker exec fncpn-format bash /workspace/scripts/loongarch/probe-format.sh bootstrap
       - name: Extract official Go after bootstrap tools are installed
+        if: env.BUILDER_CACHE_HIT != '1'
         run: docker exec fncpn-format tar -xzf /opt/go.tar.gz -C /opt
+      - name: Save clean builder environment
+        if: env.BUILDER_CACHE_HIT != '1'
+        run: python3 scripts/loongarch/builder-cache.py save
       - name: Verify native C and official Go toolchains
         run: docker exec fncpn-format bash /workspace/scripts/loongarch/probe-format.sh toolchain
       - name: Install release RPM signing tools

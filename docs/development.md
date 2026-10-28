@@ -277,6 +277,8 @@ python3 scripts/check-linux-packages.py dist/linux/deb-loong64/loong64 deb-loong
 手动输入 `target=both/rpm/archlinux`、完整 `ref` SHA；`release=true` 时还需匹配源码的 `version`，RPM 使用项目正式密钥签名。
 `runtime_validation=true` 进行一次干净安装及完整 VM 启动检查，默认草稿构建不重复执行。
 失败时只重试对应格式；Go 模块下载保留校验并进行有界重试。
+Go 模块和编译结果按格式缓存；工具环境按月份、目标配置和准备脚本指纹缓存，缓存建立于产品编译和签名前，不包含产品、用户数据或签名私钥。
+配置或工具链变化自动重建工具环境；运行验收始终另起干净用户空间。
 
 RPM 基线是 openEuler 24.03 LTS SP4：下载官方容器归档并核对固定 SHA256，再用归档中的 image ID 启动。
 软件包使用该版本官方 OS/everything/EPOL/update 仓库及原有签名，托盘使用系统提供的 AppIndicator。
