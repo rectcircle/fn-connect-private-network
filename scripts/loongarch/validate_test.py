@@ -16,6 +16,20 @@ spec.loader.exec_module(validation)
 
 
 class EvidenceTests(unittest.TestCase):
+    def test_container_output_can_be_replaced_without_writing_old_inode(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            source = Path(temporary) / 'candidate'
+            source.write_bytes(b'new executable')
+            source.chmod(0o755)
+            destination = Path(temporary) / 'fncpn-ui'
+            destination.write_bytes(b'old container output')
+            destination.chmod(0o444)
+            validation.replace_binary(source, destination)
+            self.assertEqual(destination.read_bytes(), b'new executable')
+            self.assertEqual(destination.stat().st_mode & 0o777, 0o755)
+            self.assertEqual(source.read_bytes(), b'new executable')
+            self.assertEqual(sorted(p.name for p in Path(temporary).iterdir()), ['candidate', 'fncpn-ui'])
+
     def test_guest_evidence_requires_a_success_marker(self):
         for marker in (None, b'1\n', b'0\n'):
             with self.subTest(marker=marker), tempfile.TemporaryDirectory() as temporary:

@@ -90,6 +90,19 @@ def read_guest_results(archive, destination, code):
         raise RuntimeError('Guest did not complete all checks; see serial.log and system/guest.log')
 
 
+def replace_binary(source, destination):
+    # Docker's root owns the previous bind-mounted UI output. The runner owns
+    # its parent directory, so replace the inode instead of truncating that file.
+    descriptor, name = tempfile.mkstemp(prefix=destination.name + '.', dir=destination.parent)
+    os.close(descriptor)
+    temporary = Path(name)
+    try:
+        shutil.copy2(source, temporary)
+        temporary.replace(destination)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
 def compile_tests():
     environment = dict(os.environ, GOOS='linux', GOARCH='loong64', CGO_ENABLED='0')
     packages = subprocess.check_output(['go', 'list', './...'], cwd=ROOT, env=environment, text=True).splitlines()
@@ -270,7 +283,7 @@ def main():
                 'timeout', '--kill-after=10s', '1800s', 'bash', '/workspace/scripts/loongarch/build-packages.sh'], timeout=1900)
             if packaged:
                 for binary in ('fncpn', 'fncpn-ui'):
-                    shutil.copy2(PACKAGE_OUT / binary, OUT / binary)
+                    replace_binary(PACKAGE_OUT / binary, OUT / binary)
                 subprocess.run(['docker', 'run', '-d', '--platform', 'linux/loong64', '--name', runtime_container,
                     '-v', f'{ROOT}:/workspace', ENVIRONMENT['image'], 'sleep', 'infinity'], check=True)
                 ready = report.check('runtime-provision', ['docker', 'exec', '-e', 'RUNTIME_ONLY=1', runtime_container,
@@ -306,6 +319,7 @@ def main():
                             print(log.read_text(errors='replace')[-4000:], flush=True)
     except Exception as error:
         report.data['checks']['infrastructure'] = {'status': 'failed', 'error': str(error)}
+        print(f'[infrastructure] FAILED: {error}', flush=True)
         raise
     finally:
         for name in (container, runtime_container):
