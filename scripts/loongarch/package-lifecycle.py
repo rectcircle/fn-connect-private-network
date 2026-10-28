@@ -33,7 +33,10 @@ def user(*args):
 
 
 def install(paths, reinstall=False):
-    run('apt-get', 'install', '-y', '--no-install-recommends', '--no-download',
+    # APT's --no-download path rejects local DEBs before unpacking them.
+    # The guest has no NIC: cached dependencies remain mandatory, while APT
+    # must be allowed to acquire the explicitly supplied local archives.
+    run('apt-get', 'install', '-y', '--no-install-recommends', '-o', 'Acquire::Retries=0',
         *(['--reinstall'] if reinstall else []), *map(str, paths))
 
 
