@@ -107,6 +107,9 @@ def replace_binary(source, destination):
 def compile_tests():
     environment = dict(os.environ, GOOS='linux', GOARCH='loong64', CGO_ENABLED='0')
     packages = subprocess.check_output(['go', 'list', './...'], cwd=ROOT, env=environment, text=True).splitlines()
+    if os.environ.get('FNCPN_ROOT_REGRESSION') == '0':
+        required = ('/internal/client', '/internal/privileged', '/internal/platform/linux')
+        packages = [package for package in packages if package.endswith(required)]
     manifest = []
     directory = OUT / 'tests'
     directory.mkdir(exist_ok=True)
@@ -230,6 +233,7 @@ def start_container(report, name, runtime=False):
     image = f'fncpn-loongarch-{role}:{digest}'
     archive = cache / 'environments' / f'{role}-{digest}.tar'
     provision = 'runtime-provision' if runtime else 'provision'
+    report.data.setdefault('environmentCache', {})[role] = {'hit': archive.exists(), 'image': image}
     if archive.exists():
         subprocess.run(['docker', 'load', '--input', str(archive)], check=True)
     command = ['docker', 'run', '-d', '--platform', 'linux/loong64', '--name', name,
@@ -264,6 +268,169 @@ def start_container(report, name, runtime=False):
     return True
 
 
+def root_regression_paths(paths):
+    # Separate Go modules cannot affect root-package tests. Keep root Go files
+    # even inside a normally documentation/platform-only directory.
+    excluded = ('ios/', 'docs/', 'website/', 'platform/macos/')
+    return sorted(path for path in paths if not path.startswith(('mobile/', 'ui/'))
+                  and (path.endswith('.go') or (not path.startswith(excluded)
+                  and path not in ('README.md', 'CHANGELOG.md', 'TODO.txt'))))
+
+
+def root_regression_fingerprint():
+    paths = subprocess.check_output(['git', 'ls-files', '-z'], cwd=ROOT).decode().strip('\0').split('\0')
+    digest = hashlib.sha256(b'loongarch-root-regression-v1')
+    digest.update(json.dumps(ENVIRONMENT, sort_keys=True).encode())
+    digest.update(datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m').encode())
+    digest.update(subprocess.check_output(['go', 'env', 'GOVERSION'], cwd=ROOT))
+    for path in root_regression_paths(paths):
+        digest.update(path.encode() + b'\0' + (ROOT / path).read_bytes())
+    return digest.hexdigest()
+
+
+def root_regression_plan(cache, fingerprint, force=False):
+    receipt = cache / 'root-tests' / f'{fingerprint}.json'
+    try:
+        proof = json.loads(receipt.read_text())
+    except (OSError, ValueError):
+        proof = {}
+    if not isinstance(proof, dict):
+        proof = {}
+    commit = proof.get('commit', '')
+    valid_commit = isinstance(commit, str) and len(commit) == 40 and all(c in '0123456789abcdef' for c in commit)
+    reuse = (not force and proof.get('passed') is True and proof.get('fingerprint') == fingerprint and valid_commit)
+    return {'fingerprint': fingerprint, 'reused': reuse, 'previousCommit': commit if reuse else None}
+
+
+def load_report():
+    report = Report.__new__(Report)
+    report.directory = OUT
+    report.data = json.loads((OUT / 'report.json').read_text())
+    commit = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip()
+    if report.data['commit'] != commit:
+        raise RuntimeError('Stage source commit differs from the prepared candidate')
+    return report
+
+
+def phase(stage):
+    container, runtime = 'fncpn-loongarch-validation', 'fncpn-loongarch-runtime'
+    work = ROOT / 'dist/loongarch-work'
+    cache = Path.home() / '.cache/fncpn-loongarch'
+    environment = dict(os.environ, GOOS='linux', GOARCH='loong64', CGO_ENABLED='0')
+    if stage == 'prepare':
+        if OUT.exists():
+            shutil.rmtree(OUT)
+        if work.exists():
+            shutil.rmtree(work)
+        work.mkdir(parents=True)
+        commit = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip()
+        report = Report(OUT, required=['host-tools', 'core-build', 'test-build', 'frontend', 'container',
+            'provision', 'core-runtime', 'unit-tests', 'ui-tests', 'packaging-tool', 'package-build',
+            'runtime-provision', 'offline-dependencies', 'full-system'],
+            commit=commit, environment=ENVIRONMENT, deferredToFullSystem=[DEFERRED_TEST],
+            notValidated=['physical hardware and GPU', 'real fnOS login/OTP and end-to-end session recovery',
+                          'historical release compatibility (upgrade fixture uses candidate code)',
+                          'Wayland, interactive tray and polkit flows', 'old-world ABI'])
+        (OUT / 'commit').write_text(commit + '\n')
+        (OUT / 'environment.json').write_text(json.dumps(ENVIRONMENT, indent=2) + '\n')
+    else:
+        report = load_report()
+        commit = report.data['commit']
+    started = time.monotonic()
+    try:
+        if stage == 'prepare':
+            report.check('host-tools', ['bash', '-ec', 'go version; node --version; docker version; qemu-system-loongarch64 --version'])
+            fingerprint = root_regression_fingerprint()
+            scope = root_regression_plan(cache, fingerprint, os.environ.get('FORCE_ROOT_REGRESSION') == '1')
+            reuse = scope['reused']
+            report.data['rootRegression'] = scope
+            report.check('core-build', ['go', 'build', '-trimpath', '-ldflags',
+                f'-X github.com/rectcircle/fn-connect-private-network/internal/version.Revision={commit}',
+                '-o', str(OUT / 'fncpn'), './cmd/fncpn'], env=environment)
+            report.check('test-build', [sys.executable, __file__, 'compile-tests'], timeout=1200,
+                         env=dict(os.environ, FNCPN_ROOT_REGRESSION='0' if reuse else '1'))
+            report.check('frontend', ['bash', '-ec', 'npm --prefix ui/frontend ci && npm --prefix ui/frontend run build'], timeout=600)
+            for directory in ('go-build', 'go-mod', 'toolchain/bin/linux_loong64'):
+                (cache / directory).mkdir(parents=True, exist_ok=True)
+            report.check('packaging-tool', ['go', 'install', 'github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.40.0'],
+                         env=dict(environment, GOBIN='', GOPATH=str(cache / 'toolchain')))
+        elif stage == 'builder':
+            start_container(report, container)
+        elif stage == 'tests':
+            report.check('core-runtime', ['docker', 'exec', container, '/workspace/dist/loongarch-validation/fncpn', 'version'])
+            scope = report.data['rootRegression']
+            if scope['reused']:
+                report.data['checks']['unit-tests'] = {'status': 'passed', 'reused': True,
+                    'fingerprint': scope['fingerprint'], 'previousCommit': scope['previousCommit'], 'seconds': 0}
+                print('Reusing unchanged root regression:', scope, flush=True)
+            elif report.check('unit-tests', ['docker', 'exec', container, 'timeout', '--kill-after=10s', '2300s',
+                'python3', '/workspace/scripts/loongarch/validate.py', 'userspace-tests'], timeout=2400):
+                receipt = cache / 'root-tests' / (scope['fingerprint'] + '.json')
+                receipt.parent.mkdir(parents=True, exist_ok=True)
+                receipt.write_text(json.dumps({'passed': True, 'fingerprint': scope['fingerprint'], 'commit': commit}) + '\n')
+            archive = work / 'go.tar.gz'
+            download(ENVIRONMENT['goURL'], archive, ENVIRONMENT['goSHA256'])
+            subprocess.run(['docker', 'cp', str(archive), f'{container}:/tmp/go.tar.gz'], check=True)
+            subprocess.run(['docker', 'exec', container, 'bash', '-ec', 'mkdir -p /opt; tar -xzf /tmp/go.tar.gz -C /opt; rm /tmp/go.tar.gz'], check=True)
+            report.check('ui-tests', ['docker', 'exec', container, 'timeout', '--kill-after=10s', '3500s',
+                         'bash', '/workspace/scripts/loongarch/build-ui.sh'], timeout=3600)
+        elif stage == 'packages':
+            if report.check('package-build', ['docker', 'exec',
+                '-e', 'RELEASE=' + os.environ.get('RELEASE', '0'),
+                '-e', 'RELEASE_COMMIT=' + os.environ.get('RELEASE_COMMIT', ''),
+                '-e', 'RELEASE_VERSION=' + os.environ.get('RELEASE_VERSION', ''), container,
+                'timeout', '--kill-after=10s', '1800s', 'bash', '/workspace/scripts/loongarch/build-packages.sh'], timeout=1900):
+                for binary in ('fncpn', 'fncpn-ui'):
+                    replace_binary(PACKAGE_OUT / binary, OUT / binary)
+        elif stage == 'runtime':
+            if start_container(report, runtime, runtime=True):
+                subprocess.run(['docker', 'exec', runtime, 'mkdir', '-p', '/validation'], check=True)
+                subprocess.run(['docker', 'cp', str(PACKAGE_OUT), f'{runtime}:/validation/packages'], check=True)
+                subprocess.run(['docker', 'cp', str(OUT / 'upgrade-fixture'), f'{runtime}:/validation/packages/upgrade-fixture'], check=True)
+                report.check('offline-dependencies', ['docker', 'exec', runtime, 'bash', '-ec',
+                    'apt-get install -y --no-install-recommends --download-only /validation/packages/*.deb '
+                    'xvfb xauth fonts-dejavu-core libgl1-mesa-dri'], timeout=900)
+            subprocess.run(['docker', 'rm', '-f', container], check=True)
+        elif stage == 'system':
+            system_vm(runtime, work)
+            source = OUT / 'system/package-evidence.json'
+            if json.loads(source.read_text()).get('passed') is not True:
+                raise RuntimeError('Installed-package lifecycle did not pass')
+            compatibility = ROOT / 'dist/linux-compat'
+            compatibility.mkdir(exist_ok=True)
+            shutil.copy2(source, compatibility / 'debian-forky-loong64.json')
+            report.data['checks']['full-system'] = {'status': 'passed', 'seconds': round(time.monotonic() - started, 2)}
+        elif stage == 'finish':
+            for name in (container, runtime):
+                subprocess.run(['docker', 'rm', '-f', name], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            if cache.exists():
+                subprocess.run(['sudo', 'chown', '-R', f'{os.getuid()}:{os.getgid()}', str(cache)], check=True)
+            report.save()
+            lines = ['# LoongArch 新世界 DEB 构建与验收', '', f'Commit: `{commit}`', '',
+                     '| 检查 | 结果 | 秒数 |', '| --- | --- | --- |']
+            lines += [f'| {name} | {item["status"]} | {item.get("seconds", "")} |' for name, item in report.data['checks'].items()]
+            lines += ['', '环境缓存：`' + json.dumps(report.data.get('environmentCache', {})) + '`',
+                      '', '根模块回归：`' + json.dumps(report.data.get('rootRegression', {})) + '`', '', '未验证：']
+            lines += ['- ' + item for item in report.data['notValidated']]
+            (OUT / 'summary.md').write_text('\n'.join(lines) + '\n')
+            if not report.data['passed']:
+                raise RuntimeError('Incomplete or failed LoongArch checks')
+        else:
+            raise ValueError('Unknown stage: ' + stage)
+    except Exception as error:
+        report.data['checks']['stage-' + stage] = {'status': 'failed', 'error': str(error)}
+        if stage == 'system':
+            for log in (OUT / 'serial.log', OUT / 'system/guest.log'):
+                if log.exists():
+                    print(log.read_text(errors='replace')[-6000:], flush=True)
+        raise
+    finally:
+        report.data.setdefault('stages', {})[stage] = {'seconds': round(time.monotonic() - started, 2)}
+        report.save()
+    if any(item['status'] == 'failed' for item in report.data['checks'].values()):
+        raise SystemExit(1)
+
+
 def main():
     if sys.argv[1:] == ['compile-tests']:
         compile_tests()
@@ -271,115 +438,18 @@ def main():
     if sys.argv[1:] == ['userspace-tests']:
         userspace_tests()
         return
-    if sys.argv[1:]:
-        raise SystemExit('No arguments, compile-tests or userspace-tests')
     if sys.platform != 'linux' or os.environ.get('GITHUB_ACTIONS') != 'true':
         raise SystemExit('Run on a disposable GitHub Actions Linux runner')
-    commit = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip()
-    if OUT.exists():
-        shutil.rmtree(OUT)
-    report = Report(OUT, required=['host-tools', 'core-build', 'test-build', 'frontend', 'container',
-                                  'provision', 'core-runtime', 'unit-tests', 'ui-tests', 'packaging-tool', 'package-build',
-                                  'runtime-provision', 'offline-dependencies', 'full-system'],
-                    commit=commit, environment=ENVIRONMENT,
-                    deferredToFullSystem=[DEFERRED_TEST],
-                    notValidated=['physical hardware and GPU', 'real fnOS login/OTP and end-to-end session recovery',
-                                  'historical release compatibility (upgrade fixture uses candidate code)',
-                                  'Wayland, interactive tray and polkit flows', 'old-world ABI'])
-    (OUT / 'commit').write_text(commit + '\n')
-    (OUT / 'environment.json').write_text(json.dumps(ENVIRONMENT, indent=2) + '\n')
-    container = 'fncpn-loongarch-validation'
-    runtime_container = 'fncpn-loongarch-runtime'
-    environment = dict(os.environ, GOOS='linux', GOARCH='loong64', CGO_ENABLED='0')
+    if len(sys.argv) == 3 and sys.argv[1] == '--stage':
+        phase(sys.argv[2])
+        return
+    if sys.argv[1:]:
+        raise SystemExit('Use --stage STAGE, compile-tests or userspace-tests')
     try:
-        report.check('host-tools', ['bash', '-ec', 'go version; node --version; docker version; qemu-system-loongarch64 --version'])
-        core = report.check('core-build', ['go', 'build', '-trimpath', '-ldflags',
-                            f'-X github.com/rectcircle/fn-connect-private-network/internal/version.Revision={commit}',
-                            '-o', str(OUT / 'fncpn'), './cmd/fncpn'], env=environment)
-        tests = report.check('test-build', [sys.executable, __file__, 'compile-tests'], timeout=1200)
-        frontend = report.check('frontend', ['bash', '-ec', 'npm --prefix ui/frontend ci && npm --prefix ui/frontend run build'], timeout=600)
-        cache = Path.home() / '.cache/fncpn-loongarch'
-        for directory in ('go-build', 'go-mod', 'toolchain/bin/linux_loong64'):
-            (cache / directory).mkdir(parents=True, exist_ok=True)
-        tool_env = dict(os.environ, GOOS='linux', GOARCH='loong64', CGO_ENABLED='0', GOBIN='', GOPATH=str(cache / 'toolchain'))
-        # Build the packaging tool natively rather than compiling it under QEMU.
-        if not report.check('packaging-tool', ['go', 'install', 'github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.40.0'], env=tool_env):
-            return
-        ready = start_container(report, container)
-        if not ready:
-            return
-        if core:
-            report.check('core-runtime', ['docker', 'exec', container, '/workspace/dist/loongarch-validation/fncpn', 'version'])
-        if tests:
-            report.check('unit-tests', ['docker', 'exec', container, 'timeout', '--kill-after=10s', '2300s',
-                                       'python3', '/workspace/scripts/loongarch/validate.py', 'userspace-tests'], timeout=2400)
-        with tempfile.TemporaryDirectory(prefix='fncpn-loongarch-') as temporary:
-            temporary = Path(temporary)
-            if frontend:
-                archive = temporary / 'go.tar.gz'
-                download(ENVIRONMENT['goURL'], archive, ENVIRONMENT['goSHA256'])
-                subprocess.run(['docker', 'cp', str(archive), f'{container}:/tmp/go.tar.gz'], check=True)
-                subprocess.run(['docker', 'exec', container, 'bash', '-ec', 'mkdir -p /opt; tar -xzf /tmp/go.tar.gz -C /opt; rm /tmp/go.tar.gz'], check=True)
-                report.check('ui-tests', ['docker', 'exec', '-e', f'VALIDATION_COMMIT={commit}', container,
-                                         'timeout', '--kill-after=10s', '3500s', 'bash',
-                                         '/workspace/scripts/loongarch/build-ui.sh'], timeout=3600)
-            packaged = report.check('package-build', ['docker', 'exec',
-                '-e', 'RELEASE=' + os.environ.get('RELEASE', '0'),
-                '-e', 'RELEASE_COMMIT=' + os.environ.get('RELEASE_COMMIT', ''),
-                '-e', 'RELEASE_VERSION=' + os.environ.get('RELEASE_VERSION', ''), container,
-                'timeout', '--kill-after=10s', '1800s', 'bash', '/workspace/scripts/loongarch/build-packages.sh'], timeout=1900)
-            if packaged:
-                for binary in ('fncpn', 'fncpn-ui'):
-                    replace_binary(PACKAGE_OUT / binary, OUT / binary)
-                ready = start_container(report, runtime_container, runtime=True)
-                if ready:
-                    subprocess.run(['docker', 'exec', runtime_container, 'mkdir', '-p', '/validation'], check=True)
-                    subprocess.run(['docker', 'cp', str(PACKAGE_OUT), f'{runtime_container}:/validation/packages'], check=True)
-                    subprocess.run(['docker', 'cp', str(OUT / 'upgrade-fixture'), f'{runtime_container}:/validation/packages/upgrade-fixture'], check=True)
-                    ready = report.check('offline-dependencies', ['docker', 'exec', runtime_container, 'bash', '-ec',
-                        'apt-get install -y --no-install-recommends --download-only /validation/packages/*.deb '
-                        'xvfb xauth fonts-dejavu-core libgl1-mesa-dri'], timeout=900)
-                # Free the compiler rootfs before creating the boot disk.
-                subprocess.run(['docker', 'rm', '-f', container], check=True)
-            if core and tests and packaged and ready:
-                # Keep system validation independent of unit/UI failure. A missing UI
-                # is an explicit guest failure after the kernel checks have run.
-                try:
-                    print('[full-system] boot disposable LoongArch kernel', flush=True)
-                    system_vm(runtime_container, temporary)
-                    source = OUT / 'system/package-evidence.json'
-                    evidence = json.loads(source.read_text())
-                    if evidence.get('passed') is not True:
-                        raise RuntimeError('Installed-package lifecycle did not pass')
-                    compatibility = ROOT / 'dist/linux-compat'
-                    compatibility.mkdir(exist_ok=True)
-                    shutil.copy2(source, compatibility / 'debian-forky-loong64.json')
-                    report.data['checks']['full-system'] = {'status': 'passed'}
-                except Exception as error:
-                    report.data['checks']['full-system'] = {'status': 'failed', 'error': str(error)}
-                    print(f'[full-system] FAILED: {error}', flush=True)
-                    for log in (OUT / 'serial.log', OUT / 'system/guest.log'):
-                        if log.exists():
-                            print(log.read_text(errors='replace')[-4000:], flush=True)
-    except Exception as error:
-        report.data['checks']['infrastructure'] = {'status': 'failed', 'error': str(error)}
-        print(f'[infrastructure] FAILED: {error}', flush=True)
-        raise
+        for stage in ('prepare', 'builder', 'tests', 'packages', 'runtime', 'system'):
+            phase(stage)
     finally:
-        for name in (container, runtime_container):
-            subprocess.run(['docker', 'rm', '-f', name], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        cache = Path.home() / '.cache/fncpn-loongarch'
-        if cache.exists():
-            subprocess.run(['sudo', 'chown', '-R', f'{os.getuid()}:{os.getgid()}', str(cache)], check=True)
-        report.save()
-        lines = ['# LoongArch 新世界 DEB 构建与验收', '', f'Commit: `{commit}`', '',
-                 '| 检查 | 结果 |', '| --- | --- |']
-        lines += [f'| {name} | {item["status"]} |' for name, item in report.data['checks'].items()]
-        lines += ['', '**此流程不公开 Release；包验收不能替代以下未验证项。**', '', '未验证：']
-        lines += ['- ' + item for item in report.data['notValidated']]
-        (OUT / 'summary.md').write_text('\n'.join(lines) + '\n')
-        if not report.data['passed']:
-            raise SystemExit(1)
+        phase('finish')
 
 
 if __name__ == '__main__':

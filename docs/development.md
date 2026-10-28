@@ -206,7 +206,9 @@ Windows CI 使用 `windows-2022` 与 `Visual Studio 17 2022`，调整工具链�
 工作流只上传 Actions artifacts，不创建 tag、不上传或公开 GitHub Release。
 不再保留实验分支 push 触发；日常 PR 不自动执行完整模拟器验收。
 
-普通 `ubuntu-26.04` runner（QEMU ≥ 10）执行 `python3 scripts/loongarch/validate.py`：
+普通 `ubuntu-26.04` runner（QEMU ≥ 10）按 prepare、builder、tests、packages、runtime、system、finish
+七个可见步骤执行 `python3 scripts/loongarch/validate.py --stage <阶段>`，同一 job 内保留容器和报告；
+每阶段核对源码 commit，finish 始终清理环境并检查完整证据。仍可无参数执行整个流程：
 
 1. 原生交叉编译 Core 和测试二进制，原生 Node 构建同 commit 前端资源。
 2. 在固定 digest 的 Debian forky loong64 容器中运行用户态测试和 UI Go/DBus activation 测试；
@@ -242,6 +244,13 @@ Windows CI 使用 `windows-2022` 与 `Visual Studio 17 2022`，调整工具链�
 构建镜像不安装内核，运行镜像保留干净的无 GUI 基线。环境、准备脚本或月份变化时重新准备环境；
 删除对应 `loongarch-*` cache 可强制刷新当前月份的 APT 依赖。命中缓存仍记录依赖版本并重新运行全部包/VM 验收。
 缓存容量不足或被 GitHub 回收时自动走冷构建，首次运行不能代表缓存命中后的耗时。
+摘要及 JSON 分别记录阶段耗时、编译/运行环境缓存命中状态，完整 VM 阶段也单独计时。
+根模块通用用户态回归通过后保存源码内容指纹、环境和月份对应的通过记录。指纹保守包含根模块源码、
+内嵌资源、依赖、打包/测试脚本和未知文件；只排除明确属于移动端、独立 UI、iOS、macOS、文档及官网的输入。
+仅这些独立输入变化时可复用匹配的通过记录，仍重新编译 VM 必需测试及 probe，并对最终包执行全部系统验收。
+报告显式记录复用来源 commit；记录缺失、损坏、环境变化或指纹不符时运行完整回归。
+手动运行可设置 `full_regression=true` 强制完整根模块回归。UI 测试及实际 DEB 的安装、升级、重装、卸载、
+UI 启动、WireGuard 与 DNS 验收不采用该复用机制。
 无需龙芯实机；所有提权、包安装与网络操作均限于一次性容器/VM。
 
 手工在匹配的新世界环境构建：

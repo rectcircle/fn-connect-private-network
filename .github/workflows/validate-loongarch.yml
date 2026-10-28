@@ -8,6 +8,9 @@ on:
       version:
         type: string
         default: ''
+      full_regression:
+        type: boolean
+        default: false
       release:
         type: boolean
         default: false
@@ -20,6 +23,9 @@ on:
       version:
         type: string
         default: ''
+      full_regression:
+        type: boolean
+        default: false
       release:
         description: Enforce clean same-commit candidate (does not publish)
         type: boolean
@@ -34,6 +40,11 @@ jobs:
     # QEMU >= 10 supports this firmware's 16 MiB LoongArch ROM layout.
     runs-on: ubuntu-26.04
     timeout-minutes: 150
+    env:
+      RELEASE: ${{ inputs.release && '1' || '0' }}
+      RELEASE_COMMIT: ${{ inputs.ref }}
+      RELEASE_VERSION: ${{ inputs.version }}
+      FORCE_ROOT_REGRESSION: ${{ inputs.full_regression && '1' || '0' }}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -65,12 +76,21 @@ jobs:
         uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
         with:
           platforms: loong64
-      - name: Validate source in user mode and a disposable LoongArch kernel
-        env:
-          RELEASE: ${{ inputs.release && '1' || '0' }}
-          RELEASE_COMMIT: ${{ inputs.ref }}
-          RELEASE_VERSION: ${{ inputs.version }}
-        run: python3 scripts/loongarch/validate.py
+      - name: Cross-compile Core, tests and packaging tool
+        run: python3 scripts/loongarch/validate.py --stage prepare
+      - name: Restore or prepare compilation environment
+        run: python3 scripts/loongarch/validate.py --stage builder
+      - name: Run source regressions and UI tests
+        run: python3 scripts/loongarch/validate.py --stage tests
+      - name: Build final Core and UI DEBs
+        run: python3 scripts/loongarch/validate.py --stage packages
+      - name: Restore clean runtime and cache package dependencies
+        run: python3 scripts/loongarch/validate.py --stage runtime
+      - name: Validate installed packages and real kernel in VM
+        run: python3 scripts/loongarch/validate.py --stage system
+      - name: Finalize evidence and clean disposable environments
+        if: always()
+        run: python3 scripts/loongarch/validate.py --stage finish
       - name: Publish experiment report
         if: always()
         run: |

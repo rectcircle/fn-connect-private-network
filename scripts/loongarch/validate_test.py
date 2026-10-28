@@ -17,10 +17,40 @@ spec.loader.exec_module(validation)
 
 
 class EvidenceTests(unittest.TestCase):
+    def test_root_regression_receipt_requires_matching_success_and_commit(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            cache = Path(temporary)
+            receipt = cache / 'root-tests/fingerprint.json'
+            receipt.parent.mkdir()
+            self.assertFalse(validation.root_regression_plan(cache, 'fingerprint')['reused'])
+            for contents in ('broken JSON', '[]', json.dumps({'passed': False}),
+                             json.dumps({'passed': True, 'fingerprint': 'foreign', 'commit': 'a' * 40}),
+                             json.dumps({'passed': True, 'fingerprint': 'fingerprint', 'commit': 'invalid'})):
+                receipt.write_text(contents)
+                self.assertFalse(validation.root_regression_plan(cache, 'fingerprint')['reused'])
+            receipt.write_text(json.dumps({'passed': True, 'fingerprint': 'fingerprint', 'commit': 'a' * 40}))
+            self.assertTrue(validation.root_regression_plan(cache, 'fingerprint')['reused'])
+            self.assertFalse(validation.root_regression_plan(cache, 'fingerprint', force=True)['reused'])
+
+    def test_root_scope_keeps_embedded_and_unknown_inputs(self):
+        paths = ['mobile/view.go', 'ui/main.go', 'docs/development.md', 'README.md',
+                 'internal/server/web/index.html', 'internal/client/client.go', 'go.sum',
+                 'scripts/loongarch/validate.py', 'new-build-input', 'docs/fixture.go']
+        self.assertEqual(validation.root_regression_paths(paths), sorted(paths[4:]))
+
+    def test_stage_resume_rejects_another_candidate(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            out = Path(temporary)
+            (out / 'report.json').write_text(json.dumps({'commit': 'old'}))
+            with patch.object(validation, 'OUT', out), patch.object(validation.subprocess, 'check_output', return_value='new'):
+                with self.assertRaisesRegex(RuntimeError, 'commit differs'):
+                    validation.load_report()
+
     def test_cached_runtime_is_saved_before_candidate_state_and_reused(self):
         with tempfile.TemporaryDirectory() as temporary:
             calls = []
             class Report:
+                data = {}
                 def check(self, name, command, **kwargs):
                     calls.append((name, command))
                     return True
