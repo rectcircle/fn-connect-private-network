@@ -49,6 +49,13 @@ func newLoginEntry(password bool, onFocus func(fyne.CanvasObject)) *loginEntry {
 	entry.ExtendBaseWidget(entry)
 	return entry
 }
+
+// The headless test driver executes fyne.Do inline, so tests supply a manual
+// scheduler instead of allowing wall-clock callbacks to mutate their canvas.
+var scheduleLoginReveal = func(delay time.Duration, callback func()) {
+	time.AfterFunc(delay, func() { fyne.Do(callback) })
+}
+
 func (e *loginEntry) FocusGained() {
 	e.Entry.FocusGained()
 	if e.onKeyboard != nil {
@@ -58,12 +65,14 @@ func (e *loginEntry) FocusGained() {
 		}
 		e.onKeyboard(action)
 	}
-	time.AfterFunc(350*time.Millisecond, func() {
-		fyne.Do(func() {
-			if fyne.CurrentApp().Driver().CanvasForObject(e) != nil && fyne.CurrentApp().Driver().CanvasForObject(e).Focused() == e && e.onFocus != nil {
-				e.onFocus(e)
-			}
-		})
+	if e.onFocus == nil {
+		return
+	}
+	scheduleLoginReveal(350*time.Millisecond, func() {
+		c := fyne.CurrentApp().Driver().CanvasForObject(e)
+		if c != nil && c.Focused() == e && e.onFocus != nil {
+			e.onFocus(e)
+		}
 	})
 }
 func (e *loginEntry) FocusLost() {
