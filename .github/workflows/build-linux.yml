@@ -50,6 +50,30 @@ jobs:
         run: |
           echo "matrix=$(python3 scripts/linux_support.py build-matrix)" >> "$GITHUB_OUTPUT"
           echo "compatibility=$(python3 scripts/linux_support.py native-matrix)" >> "$GITHUB_OUTPUT"
+  source-checks:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.27.1'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.14.0'
+      - name: Check shared packaging policies and frontend once
+        run: |
+          python3 scripts/rpm_signing_test.py
+          python3 scripts/install_linux_test.py
+          python3 scripts/linux_support_test.py
+          python3 scripts/linux_compatibility_test.py
+          python3 scripts/release_manifest_test.py
+          python3 scripts/publish_release_test.py
+          bash -n scripts/install-linux.sh scripts/build-linux-core.sh scripts/build-linux-ui.sh scripts/test-debian13.sh
+          for script in packaging/linux/scripts/*; do sh -n "$script"; done
+          npm --prefix ui/frontend ci
+          npm --prefix ui/frontend test
   loongarch:
     uses: ./.github/workflows/validate-loongarch.yml
     with:
@@ -61,7 +85,7 @@ jobs:
     name: ${{ matrix.target }} ${{ matrix.arch }}
     strategy:
       fail-fast: false
-      max-parallel: 4
+      max-parallel: 6
       matrix: ${{ fromJSON(needs.targets.outputs.matrix) }}
     runs-on: ${{ matrix.runner }}
     container:
@@ -123,23 +147,14 @@ jobs:
           go install github.com/wailsapp/wails/v2/cmd/wails@v2.17.0
           go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.40.0
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
-      - name: Verify source, scripts and unit tests
+      - name: Verify native Go, UI and distribution integration
         run: |
           test "$(go env GOARCH)" = "$ARCH"
           python3 scripts/sync-version.py --check
           sh scripts/test-linux-activation.sh
           go test ./...
           go vet ./...
-          python3 scripts/rpm_signing_test.py
-          python3 scripts/install_linux_test.py
-          python3 scripts/linux_support_test.py
-          python3 scripts/linux_compatibility_test.py
-          python3 scripts/release_manifest_test.py
-          python3 scripts/publish_release_test.py
-          bash -n scripts/install-linux.sh scripts/build-linux-core.sh scripts/build-linux-ui.sh scripts/test-debian13.sh
-          for script in packaging/linux/scripts/*; do sh -n "$script"; done
           npm --prefix ui/frontend ci
-          npm --prefix ui/frontend test
           npm --prefix ui/frontend run build
           (cd ui && go test -tags webkit2_41 ./... && go vet -tags webkit2_41 ./...)
           desktop-file-validate packaging/linux/desktop/fncpn.desktop
@@ -169,7 +184,12 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: linux-packages-${{ matrix.target }}-${{ matrix.arch }}
-          path: dist/linux/
+          path: |
+            dist/linux/**/*.deb
+            dist/linux/**/*.rpm
+            dist/linux/**/*.pkg.tar.zst
+            dist/linux/**/build-manifest.json
+            dist/linux/**/SHA256SUMS
           if-no-files-found: error
 
   compatibility:
@@ -178,7 +198,7 @@ jobs:
     name: Compatibility ${{ matrix.target }} ${{ matrix.arch }}
     strategy:
       fail-fast: false
-      max-parallel: 4
+      max-parallel: 6
       matrix: ${{ fromJSON(needs.targets.outputs.compatibility) }}
     runs-on: ${{ matrix.runner }}
     container:

@@ -9,6 +9,7 @@ import sys
 import tarfile
 import tempfile
 import unittest
+from unittest.mock import patch
 
 spec = importlib.util.spec_from_file_location('validation', Path(__file__).with_name('validate.py'))
 validation = importlib.util.module_from_spec(spec)
@@ -16,6 +17,29 @@ spec.loader.exec_module(validation)
 
 
 class EvidenceTests(unittest.TestCase):
+    def test_cached_runtime_is_saved_before_candidate_state_and_reused(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            calls = []
+            class Report:
+                def check(self, name, command, **kwargs):
+                    calls.append((name, command))
+                    return True
+            def docker(command, **kwargs):
+                calls.append(('docker', command))
+                if command[:2] == ['docker', 'save']:
+                    Path(command[3]).write_bytes(b'provisioned environment')
+            with patch.object(validation.Path, 'home', return_value=Path(temporary)), patch.object(validation.subprocess, 'run', side_effect=docker):
+                self.assertTrue(validation.start_container(Report(), 'runtime', runtime=True))
+                archives = list(Path(temporary).rglob('runtime-*.tar'))
+                self.assertEqual(len(archives), 1)
+                self.assertTrue(any('RUNTIME_ONLY=1' in cmd for _, cmd in calls))
+                self.assertFalse(any('docker' in cmd and 'cp' in cmd for _, cmd in calls))
+                calls.clear()
+                self.assertTrue(validation.start_container(Report(), 'runtime', runtime=True))
+                self.assertTrue(any(cmd[:2] == ['docker', 'load'] for _, cmd in calls))
+                self.assertFalse(any('RUNTIME_ONLY=1' in cmd for _, cmd in calls))
+                self.assertTrue(any('runtime-provision' == name for name, _ in calls))
+
     def test_container_output_can_be_replaced_without_writing_old_inode(self):
         with tempfile.TemporaryDirectory() as temporary:
             source = Path(temporary) / 'candidate'

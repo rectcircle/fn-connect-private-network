@@ -1,0 +1,21 @@
+name: Classify CI changes
+on:
+  workflow_call:
+    outputs:
+      run:
+        value: ${{ jobs.changes.outputs.run }}
+permissions:
+  contents: read
+jobs:
+  changes:
+    runs-on: ubuntu-24.04
+    outputs:
+      run: ${{ steps.changes.outputs.run }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - id: changes
+        env:
+          CI_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: python3 scripts/ci_changes.py

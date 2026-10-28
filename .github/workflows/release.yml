@@ -10,6 +10,10 @@ on:
         description: Full candidate commit SHA (40 lowercase hex characters)
         required: true
         type: string
+      artifacts_only:
+        description: Build and verify candidate artifacts without modifying any GitHub Release
+        default: false
+        type: boolean
       publish:
         description: Make the verified draft public
         default: false
@@ -29,22 +33,18 @@ jobs:
         with:
           ref: ${{ inputs.commit }}
           fetch-depth: 0
+      - name: Reject conflicting release modes
+        env:
+          PUBLISH: ${{ inputs.publish }}
+          ARTIFACTS_ONLY: ${{ inputs.artifacts_only }}
+        run: test "$PUBLISH:$ARTIFACTS_ONLY" != true:true
       - name: Validate immutable candidate
         env:
           RELEASE_COMMIT: ${{ inputs.commit }}
           RELEASE_VERSION: ${{ inputs.version }}
         run: python3 scripts/check-release-candidate.py
-  nix-dependencies:
-    needs: candidate
-    if: ${{ !inputs.publish }}
-    uses: ./.github/workflows/check-nix.yml
-    permissions:
-      contents: read
-    with:
-      ref: ${{ inputs.commit }}
-      build: false
   windows-build:
-    needs: nix-dependencies
+    needs: candidate
     if: ${{ !inputs.publish }}
     # Match the native build generator (Visual Studio 17 2022).
     # windows-2025 now defaults to VS 2026.
@@ -127,14 +127,14 @@ jobs:
             dist/windows-native/x64/build-manifest.json
           if-no-files-found: error
   nix-check:
-    needs: nix-dependencies
+    needs: candidate
     if: ${{ !inputs.publish }}
     uses: ./.github/workflows/check-nix.yml
     with:
       ref: ${{ inputs.commit }}
       build: true
   fnos-check:
-    needs: nix-dependencies
+    needs: candidate
     if: ${{ !inputs.publish }}
     uses: ./.github/workflows/check-fnos.yml
     permissions:
@@ -142,7 +142,7 @@ jobs:
     with:
       ref: ${{ inputs.commit }}
   linux-build:
-    needs: nix-dependencies
+    needs: candidate
     if: ${{ !inputs.publish }}
     uses: ./.github/workflows/build-linux.yml
     secrets:
@@ -155,7 +155,7 @@ jobs:
       version: ${{ inputs.version }}
       release: true
   android-build:
-    needs: nix-dependencies
+    needs: candidate
     if: ${{ !inputs.publish }}
     uses: ./.github/workflows/build-android.yml
     permissions:
@@ -183,9 +183,9 @@ jobs:
     with:
       version: ${{ inputs.version }}
       ref: ${{ inputs.commit }}
-  release:
+  macos-fnos-build:
     if: ${{ !inputs.publish }}
-    needs: [windows-build, linux-build, nix-check, android-build, ios-build, harmonyos-build, fnos-check]
+    needs: candidate
     runs-on: macos-15
     env:
       DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
@@ -219,6 +219,54 @@ jobs:
         run: ./scripts/check-release.sh
       - name: Verify root-owned fnOS state recovery
         run: sudo bash scripts/test-fnos-state-permissions.sh
+      - name: Build macOS and fnOS candidates
+        run: |
+          scripts/build-fpk.sh
+          ARCH=arm64 scripts/build-macos-pkg.sh
+          ARCH=x64 scripts/build-macos-pkg.sh
+      - name: Record native build environment
+        run: |
+          python3 - <<'PYENV'
+          import json, os, subprocess
+          from pathlib import Path
+          def tool(*args):
+              return subprocess.check_output(args, text=True).strip()
+          Path('dist/macos-fnos-build.json').write_text(json.dumps({
+              'version': os.environ['RELEASE_VERSION'], 'commit': os.environ['RELEASE_COMMIT'],
+              'go': tool('go', 'version'), 'xcode': tool('xcodebuild', '-version'),
+              'sdk': tool('xcrun', '--show-sdk-version'),
+              'deploymentTarget': os.environ['MACOSX_DEPLOYMENT_TARGET']}) + '\n')
+          PYENV
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-fnos-release-candidates-${{ inputs.commit }}
+          path: |
+            dist/*-macos-*-unsigned.pkg
+            dist/*-fnos-*.fpk
+            dist/macos-fnos-build.json
+          if-no-files-found: error
+  release:
+    if: ${{ !inputs.publish }}
+    needs: [macos-fnos-build, windows-build, linux-build, nix-check, android-build, ios-build, harmonyos-build, fnos-check]
+    runs-on: ubuntu-24.04
+    env:
+      RELEASE: '1'
+      DIST_DIR: ${{ github.workspace }}/dist
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_TAG: v${{ inputs.version }}
+      RELEASE_COMMIT: ${{ inputs.commit }}
+      RELEASE_VERSION: ${{ inputs.version }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.commit }}
+          fetch-depth: 0
+      - name: Verify candidate
+        run: python3 scripts/check-release-candidate.py
+      - uses: actions/download-artifact@v4
+        with:
+          name: macos-fnos-release-candidates-${{ inputs.commit }}
+          path: dist/
       - uses: actions/download-artifact@v4
         if: ${{ !inputs.publish }}
         with:
@@ -246,19 +294,19 @@ jobs:
         with:
           name: harmonyos-release-candidates-${{ inputs.commit }}
           path: dist/harmonyos
-      - name: Build release draft
-        if: ${{ !inputs.publish }}
-        run: ./scripts/build-all.sh
+      - name: Assemble same-commit release inventory
+        run: python3 scripts/release-manifest.py "$DIST_DIR" "$RELEASE_VERSION" "$RELEASE_COMMIT" arm64
       - uses: actions/upload-artifact@v4
         with:
           name: candidate-${{ inputs.commit }}
           path: dist/
           if-no-files-found: error
       - name: Upload and verify release draft
+        if: ${{ !inputs.artifacts_only }}
         run: python3 scripts/publish-release.py "$DIST_DIR"
   publish:
     needs: candidate
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.publish }}
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.publish && !inputs.artifacts_only }}
     runs-on: ubuntu-latest
     env:
       GH_TOKEN: ${{ github.token }}
@@ -280,7 +328,7 @@ jobs:
         run: python3 scripts/publish-release.py "$DIST_DIR" --publish
   mirror-quark:
     needs: publish
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.publish }}
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.publish && !inputs.artifacts_only }}
     permissions:
       contents: read
     uses: ./.github/workflows/mirror-quark.yml
@@ -290,7 +338,7 @@ jobs:
       QUARK_AUTH: ${{ secrets.QUARK_AUTH }}
   update-cask:
     needs: publish
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.publish }}
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.publish && !inputs.artifacts_only }}
     runs-on: ubuntu-latest
     env:
       GH_TOKEN: ${{ github.token }}

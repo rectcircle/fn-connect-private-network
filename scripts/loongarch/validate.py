@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Build and gate new-world LoongArch packages; never publishes a release."""
 import hashlib
+import datetime
 import json
 import os
 from pathlib import Path
@@ -218,6 +219,51 @@ def system_vm(container, temporary):
             subprocess.run(['sudo', 'umount', str(mount)], check=True)
 
 
+def start_container(report, name, runtime=False):
+    """Cache only provisioned system dependencies, before any candidate is copied."""
+    cache = Path.home() / '.cache/fncpn-loongarch'
+    epoch = datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m')
+    digest = hashlib.sha256((ROOT / 'scripts/loongarch/provision.sh').read_bytes()
+                            + json.dumps(ENVIRONMENT, sort_keys=True).encode()
+                            + epoch.encode()).hexdigest()[:20]
+    role = 'runtime' if runtime else 'builder'
+    image = f'fncpn-loongarch-{role}:{digest}'
+    archive = cache / 'environments' / f'{role}-{digest}.tar'
+    provision = 'runtime-provision' if runtime else 'provision'
+    if archive.exists():
+        subprocess.run(['docker', 'load', '--input', str(archive)], check=True)
+    command = ['docker', 'run', '-d', '--platform', 'linux/loong64', '--name', name,
+               '-v', f'{ROOT}:/workspace']
+    if not runtime:
+        command += ['-v', f'{ROOT}:{ROOT}:ro',
+                    '-v', f'{cache / "go-build"}:/root/.cache/go-build',
+                    '-v', f'{cache / "go-mod"}:/root/go/pkg/mod',
+                    '-v', f'{cache / "toolchain/bin/linux_loong64"}:/opt/tools:ro']
+    command += [image if archive.exists() else ENVIRONMENT['image'], 'sleep', 'infinity']
+    if not report.check('runtime-container' if runtime else 'container', command):
+        return False
+    if archive.exists():
+        # Re-record the exact cached package versions in this run's evidence.
+        record = 'runtime-base-packages.tsv' if runtime else 'packages.tsv'
+        return report.check(provision, ['docker', 'exec', name, 'bash', '-ec',
+            'test "$(dpkg --print-architecture)" = loong64; '
+            "dpkg-query -W -f='${Package}\\t${Version}\\t${Architecture}\\n' > /workspace/dist/loongarch-validation/" + record])
+    arguments = ['docker', 'exec']
+    if runtime:
+        arguments += ['-e', 'RUNTIME_ONLY=1']
+    if not report.check(provision, arguments + [name, 'timeout', '--kill-after=10s', '2300s',
+                         'bash', '/workspace/scripts/loongarch/provision.sh'], timeout=2400):
+        return False
+    # Bind mounts (checkout, Go caches and tools) are excluded by docker commit.
+    # Runtime images are saved before packages, users or test state are added.
+    archive.parent.mkdir(parents=True, exist_ok=True)
+    subprocess.run(['docker', 'commit', name, image], check=True)
+    partial = archive.with_suffix('.partial')
+    subprocess.run(['docker', 'save', '--output', str(partial), image], check=True)
+    partial.replace(archive)
+    return True
+
+
 def main():
     if sys.argv[1:] == ['compile-tests']:
         compile_tests()
@@ -233,7 +279,7 @@ def main():
     if OUT.exists():
         shutil.rmtree(OUT)
     report = Report(OUT, required=['host-tools', 'core-build', 'test-build', 'frontend', 'container',
-                                  'provision', 'core-runtime', 'unit-tests', 'ui-build', 'package-build',
+                                  'provision', 'core-runtime', 'unit-tests', 'ui-tests', 'packaging-tool', 'package-build',
                                   'runtime-provision', 'offline-dependencies', 'full-system'],
                     commit=commit, environment=ENVIRONMENT,
                     deferredToFullSystem=[DEFERRED_TEST],
@@ -252,13 +298,14 @@ def main():
                             '-o', str(OUT / 'fncpn'), './cmd/fncpn'], env=environment)
         tests = report.check('test-build', [sys.executable, __file__, 'compile-tests'], timeout=1200)
         frontend = report.check('frontend', ['bash', '-ec', 'npm --prefix ui/frontend ci && npm --prefix ui/frontend run build'], timeout=600)
-        started = report.check('container', ['docker', 'run', '-d', '--platform', 'linux/loong64', '--name', container,
-                               '-v', f'{ROOT}:/workspace', '-v', f'{ROOT}:{ROOT}:ro',
-                               ENVIRONMENT['image'], 'sleep', 'infinity'])
-        if not started:
+        cache = Path.home() / '.cache/fncpn-loongarch'
+        for directory in ('go-build', 'go-mod', 'toolchain/bin/linux_loong64'):
+            (cache / directory).mkdir(parents=True, exist_ok=True)
+        tool_env = dict(os.environ, GOOS='linux', GOARCH='loong64', CGO_ENABLED='0', GOBIN='', GOPATH=str(cache / 'toolchain'))
+        # Build the packaging tool natively rather than compiling it under QEMU.
+        if not report.check('packaging-tool', ['go', 'install', 'github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.40.0'], env=tool_env):
             return
-        ready = report.check('provision', ['docker', 'exec', container, 'timeout', '--kill-after=10s', '2300s',
-                                         'bash', '/workspace/scripts/loongarch/provision.sh'], timeout=2400)
+        ready = start_container(report, container)
         if not ready:
             return
         if core:
@@ -273,7 +320,7 @@ def main():
                 download(ENVIRONMENT['goURL'], archive, ENVIRONMENT['goSHA256'])
                 subprocess.run(['docker', 'cp', str(archive), f'{container}:/tmp/go.tar.gz'], check=True)
                 subprocess.run(['docker', 'exec', container, 'bash', '-ec', 'mkdir -p /opt; tar -xzf /tmp/go.tar.gz -C /opt; rm /tmp/go.tar.gz'], check=True)
-                report.check('ui-build', ['docker', 'exec', '-e', f'VALIDATION_COMMIT={commit}', container,
+                report.check('ui-tests', ['docker', 'exec', '-e', f'VALIDATION_COMMIT={commit}', container,
                                          'timeout', '--kill-after=10s', '3500s', 'bash',
                                          '/workspace/scripts/loongarch/build-ui.sh'], timeout=3600)
             packaged = report.check('package-build', ['docker', 'exec',
@@ -284,10 +331,7 @@ def main():
             if packaged:
                 for binary in ('fncpn', 'fncpn-ui'):
                     replace_binary(PACKAGE_OUT / binary, OUT / binary)
-                subprocess.run(['docker', 'run', '-d', '--platform', 'linux/loong64', '--name', runtime_container,
-                    '-v', f'{ROOT}:/workspace', ENVIRONMENT['image'], 'sleep', 'infinity'], check=True)
-                ready = report.check('runtime-provision', ['docker', 'exec', '-e', 'RUNTIME_ONLY=1', runtime_container,
-                    'timeout', '--kill-after=10s', '2300s', 'bash', '/workspace/scripts/loongarch/provision.sh'], timeout=2400)
+                ready = start_container(report, runtime_container, runtime=True)
                 if ready:
                     subprocess.run(['docker', 'exec', runtime_container, 'mkdir', '-p', '/validation'], check=True)
                     subprocess.run(['docker', 'cp', str(PACKAGE_OUT), f'{runtime_container}:/validation/packages'], check=True)
@@ -324,6 +368,9 @@ def main():
     finally:
         for name in (container, runtime_container):
             subprocess.run(['docker', 'rm', '-f', name], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        cache = Path.home() / '.cache/fncpn-loongarch'
+        if cache.exists():
+            subprocess.run(['sudo', 'chown', '-R', f'{os.getuid()}:{os.getgid()}', str(cache)], check=True)
         report.save()
         lines = ['# LoongArch 新世界 DEB 构建与验收', '', f'Commit: `{commit}`', '',
                  '| 检查 | 结果 |', '| --- | --- |']
