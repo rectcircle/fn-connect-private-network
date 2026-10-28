@@ -49,7 +49,13 @@ jobs:
       - id: targets
         run: |
           echo "matrix=$(python3 scripts/linux_support.py build-matrix)" >> "$GITHUB_OUTPUT"
-          echo "compatibility=$(python3 scripts/linux_support.py matrix)" >> "$GITHUB_OUTPUT"
+          echo "compatibility=$(python3 scripts/linux_support.py native-matrix)" >> "$GITHUB_OUTPUT"
+  loongarch:
+    uses: ./.github/workflows/validate-loongarch.yml
+    with:
+      ref: ${{ inputs.ref || github.sha }}
+      version: ${{ inputs.version || '' }}
+      release: ${{ inputs.release == true }}
   build:
     needs: targets
     name: ${{ matrix.target }} ${{ matrix.arch }}

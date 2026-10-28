@@ -17,6 +17,7 @@ import (
 	"time"
 
 	mdns "github.com/miekg/dns"
+	"github.com/rectcircle/fn-connect-private-network/internal/client"
 	"github.com/rectcircle/fn-connect-private-network/internal/ipc"
 	"github.com/rectcircle/fn-connect-private-network/internal/model"
 	"github.com/rectcircle/fn-connect-private-network/internal/peer"
@@ -25,6 +26,45 @@ import (
 	"golang.zx2c4.com/wireguard/wgctrl"
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 )
+
+// Seed/check real config and root-owned credentials through the installed helper.
+// This validates package maintenance, not migration from a historical client.
+func TestPackageState(t *testing.T) {
+	mode := os.Getenv("FNCPN_PACKAGE_STATE")
+	if mode == "" {
+		t.Skip("installed-package fixture only")
+	}
+	if runtime.GOARCH != "loong64" || os.Getuid() != 1000 {
+		t.Fatal("requires the package validation guest's ordinary user")
+	}
+	secrets := client.NewPlatformSecretStore(t.Context(), ipc.Client{SocketPath: "/run/fncpn/1000/privileged.sock", Timeout: 5 * time.Second})
+	store := client.NewConfigStore("/home/fncpn-validation/.config/fncpn/config.json", secrets)
+	if mode == "seed" {
+		key, err := store.EnsureWireGuardKey("validation-fixture")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err = store.Save(client.LocalConfig{FNID: "validation-fixture", PublicKey: key.PublicKey().String(), AutoConnect: false}); err != nil {
+			t.Fatal(err)
+		}
+		return
+	}
+	if mode != "check" {
+		t.Fatal("unknown fixture operation")
+	}
+	config, err := store.Load()
+	if err != nil || config == nil || config.FNID != "validation-fixture" || config.AutoConnect {
+		t.Fatalf("configuration/intent not preserved: %v", err)
+	}
+	value, found, err := secrets.Get(privileged.WireGuardSecret, "validation-fixture")
+	if err != nil || !found {
+		t.Fatalf("credential not retained: %v", err)
+	}
+	key, err := wgtypes.ParseKey(string(value))
+	if err != nil || key.PublicKey().String() != config.PublicKey {
+		t.Fatal("WireGuard identity changed")
+	}
+}
 
 func requireVM(t *testing.T) {
 	t.Helper()

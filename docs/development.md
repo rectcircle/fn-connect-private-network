@@ -194,56 +194,62 @@ Windows CI 使用 `windows-2022` 与 `Visual Studio 17 2022`，调整工具链�
 
 平台范围与选择依据见 [平台支持](platform-support.md#linux)，安装脚本命令见 [README](../README.md#linux自动安装)。Core 可交叉构建；UI 必须在 [targets.json](../packaging/linux/targets.json) 指定的对应架构基线环境构建。
 
-### LoongArch 新世界实验验证
+### LoongArch 新世界构建与验收
 
-第一阶段使用独立的 `Validate LoongArch (experimental)` GitHub Actions 工作流，
-不加入正式支持矩阵、不生成安装包或公开 Release。只验证新世界 `linux/loong64`，不支持旧世界 ABI 或 MIPS 龙芯。
-在 Actions 中选择该工作流 → Run workflow → 选择待验证分支；实验分支
-`codex/loongarch-validation` 推送相关代码时也会触发，方便首次工作流尚未进入默认分支时验证。
+首批包目标为 Debian forky 新世界 ABI 的 `loong64`，使用独立 `deb-loong64` 基线；
+不复用 Ubuntu 22.04 的 amd64/arm64 DEB 基线，不承诺麒麟、UOS、Loongnix 或旧世界兼容。
+构建目标、镜像和依赖以 `packaging/linux/targets.json` 为准。新增平台复用已有协议与版本准入，
+不增加服务端要求，也不创建平台专用产品版本。
 
-普通 `ubuntu-26.04` runner（QEMU ≥ 10，支持所用固件的 16 MiB ROM）执行 `python3 scripts/loongarch/validate.py`：
+`Build LoongArch DEB and validate` 工作流可在 Actions 中手动运行，也由正式 Linux 构建工作流调用。
+`ref` 可选择源码分支；发布候选须使用完整 commit SHA、匹配的 `version` 和 `release=true`。
+工作流只上传 Actions artifacts，不创建 tag、不上传或公开 GitHub Release。
+实验分支 `codex/loongarch-validation` 推送相关代码时也会触发，方便工作流尚未合入默认分支时验收。
 
-1. 原生交叉编译 Core、根 module 的测试二进制和独立内核探针；原生 Node 构建前端。
-2. QEMU 用户态模拟运行 Debian forky loong64 容器，执行根 module 测试；容器内安装官方
-   LoongArch Go，直接用 Wails production/desktop build tags 编译 UI，执行 UI Go 与 DBus activation 测试。
-   复用仓库绑定与前端资源，不修改 Wails 上游或正式构建脚本。
-   容器同时保留编译时的源码绝对路径，以便跨编译测试的 `runtime.Caller` 读取源码夹具；
-   UI 使用与 Wails 一致的 `-buildvcs=false`，commit 仍通过显式 ldflags 写入并由握手核验。
-3. 将容器用户空间导出为临时 ext4 磁盘，使用配套 Debian 内核、initramfs 和固定 SHA256 的
-   LoongArch UEFI 固件，启动 TCG `virt` 完整虚拟机。容器模拟与全系统模拟分别记录，互不替代。
-4. systemd 启动实验测试服务，验证项目内核 client engine 的创建、崩溃清理、WireGuard
-   握手和 HTTP 数据、底层链路断开恢复、主动断开重连、netfilter forwarding；验证真实
-   systemd-resolved D-Bus、stub 查询与 DNS 链路清理；以普通用户执行真实 WebKit 前端握手。
+普通 `ubuntu-26.04` runner（QEMU ≥ 10）执行 `python3 scripts/loongarch/validate.py`：
 
-QEMU 用户态对 `getsockopt(SO_BINDTODEVICE)` 返回 EINVAL；对应的
-`TestLinuxLocalProbeBindsPhysicalInterface` 明确移交完整 VM 执行，并在 JSON 报告中记录。
-该测试不被删除或忽略，完整 VM 必须找到并通过这个测试，实验才能成功。
+1. 原生交叉编译 Core 和测试二进制，原生 Node 构建同 commit 前端资源。
+2. 在固定 digest 的 Debian forky loong64 容器中运行用户态测试和 UI Go/DBus activation 测试；
+   安装官方 Go 及固定版本 nFPM，调用正式 `build-linux-core.sh`、`build-linux-ui.sh` 生成匹配 Core/UI DEB、
+   ABI 清单和 SHA256。Wails CLI 未列入 loong64，故 UI 使用已验证的 `desktop,production,webkit2_41` Go tags
+   及 `-buildvcs=false`，仍通过显式 ldflags 和真实前端握手校验 commit。
+3. 准备另一份无 GTK/WebKit 的干净运行环境。下载包依赖供离线使用，使用配套 Debian 内核、initramfs、
+   固定 SHA256 的 UEFI 固件启动 QEMU TCG 完整虚拟机。VM 没有外部网卡，不需要 fnOS 账号或仓库 secrets。
+4. 在 VM 安装实际 DEB：Core-only 不拉入 GUI 库，UI 依赖可解析，安装后文件与构建产物逐字节相同。
+   真实 systemd 用户服务和 root helper 启动后，通过 IPC 保存普通用户配置、WireGuard 身份和 root 凭据；
+   验证升级、重装保留数据和服务，普通用户真实 WebKit 前端握手，卸载停止服务并保留数据。
+5. 同时验证项目 WireGuard 内核引擎、崩溃清理、IPv6 直连承载的握手/HTTP、底层链路恢复、断开重连、
+   netfilter forwarding 及真实 systemd-resolved D-Bus/stub 查询。底层地址由测试夹具恢复，产品不接管物理网络。
 
-VM 无外部网卡，网络夹具全部位于 guest 的 veth/netns 内；不修改 runner 的路由或 DNS，
-结果通过独立 virtio serial 端口回传压缩日志和退出码，不依赖宿主重新挂载新内核写过的根文件系统。
-缺失、损坏的结果包、缺少成功退出码或 QEMU 非正常退出均判定失败。
-Guest 各项测试独立记录到 `system/steps.tsv`，某项失败仍执行其他独立检查，但最终退出码保持失败。
-模拟底层链路恢复时重新配置夹具的 IPv6 地址，并先验证 IPv6 连通性，再验证 WireGuard；
-接口 DOWN 默认会清除静态全局 IPv6 地址，夹具负责模拟系统网络管理器恢复地址，产品引擎不接管物理接口配置。
-无需部署 fnOS、提供账号或配置仓库 secrets。WireGuard peer 仅为数据面夹具，不能代替真实 fnOS 登录、OTP、
-控制面选路或会话恢复验收。全流程超时或缺少 UI/完成标记都会失败，失败时保留日志。
+用户态 QEMU 无法读取 `getsockopt(SO_BINDTODEVICE)`，对应的
+`TestLinuxLocalProbeBindsPhysicalInterface` 明确移交完整 VM，必须执行并通过，不能省略。
+各项 VM 测试独立记录到 `system/steps.tsv`，某项失败仍检查其他独立项，最终退出码保持失败。
+结果通过 virtio serial 回传，不依赖宿主重新挂载 guest 写过的文件系统；缺失、损坏或没有成功退出码均失败。
 
-运行摘要列出各阶段状态；下载 `loongarch-validation-<commit>` artifact，重点查看
-`report.json`、`summary.md`、`packages.tsv`、`unit-tests/`、`serial.log` 和 `system/`。
-Core/UI 单独放在 `loongarch-experimental-binaries-<commit>` artifact，仅用于实验，不是发行安装包。
-`environment.json` 固定社区容器 digest、官方 Go
-及社区固件 SHA256；APT 从 forky 当前仓库解析，实际依赖版本写入 `packages.tsv`，不是完整依赖快照锁定。
-首次执行须核实 guest 内核及系统依赖可用；模拟器结果不能作为真机、显卡、Wayland、托盘交互、
-polkit 弹窗、安装升级卸载或历史正式版本兼容的验收证据。
+升级夹具使用**当前候选程序加较低 DEB 版本号**，仅验证包维护流程和当前格式数据保留，
+不冒充历史正式版本或历史 schema 迁移。首个 LoongArch 正式包发布后应保存原始产物，后续补充真实历史包升级验收。
+本流程仍不覆盖真机/显卡、Wayland/托盘交互、polkit 弹窗、真实 fnOS 登录/OTP 或完整历史协议兼容。
 
-本地可检查实验脚本（不需要 Docker/QEMU）：
+成功后上传：
+
+- `linux-packages-deb-loong64-loong64`：`linux/deb-loong64/loong64/` 下的 Core/UI DEB、构建清单与校验和。
+- `linux-compat-debian-forky-loong64`：同 commit、同包哈希的系统及安装生命周期验收证据，正式发布汇总必须验证。
+- `loongarch-validation-<commit>`：JSON/摘要、实际依赖版本、用户态测试、串口、journal 和 VM 分项结果。
+
+固定的基础镜像、Go 和固件在 `scripts/loongarch/environment.json` 中；APT 使用 forky 当前仓库，
+依赖版本记录在 `packages.tsv`、`runtime-base-packages.tsv`，不宣称整个依赖树已快照锁定。
+无需龙芯实机；所有提权、包安装与网络操作均限于一次性容器/VM。
+
+手工在匹配的新世界环境构建：
 
 ```sh
-python3 scripts/loongarch/validate_test.py
-actionlint .github/workflows/validate-loongarch.yml
-CGO_ENABLED=0 GOOS=linux GOARCH=loong64 go test -c -tags loongarch_validation \
-  -o /tmp/fncpn-loongarch-probe.test ./scripts/loongarch/probe
+TARGET=deb-loong64 ARCH=loong64 bash scripts/build-linux-core.sh
+TARGET=deb-loong64 ARCH=loong64 bash scripts/build-linux-ui.sh
+python3 scripts/check-linux-packages.py dist/linux/deb-loong64/loong64 deb-loong64 loong64
 ```
+
+本地无需 Docker 的检查入口：`python3 scripts/loongarch/validate_test.py`、
+`python3 scripts/linux_support_test.py`、`python3 scripts/install_linux_test.py`、`python3 scripts/release_manifest_test.py`。
 
 ### 正式 Linux 安装包
 

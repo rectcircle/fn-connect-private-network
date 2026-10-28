@@ -3,6 +3,21 @@
 本文件只保留版本级验收结论与支持边界，不记录日常部署或逐次排障。
 操作命令见[开发文档](development.md)，判定依据见[版本契约](versioning-and-compatibility.md)。
 
+## 1.1.8 LoongArch 新世界候选（2026-10-28，未发布）
+
+- [第一步 GitHub 验证](https://github.com/rectcircle/fn-connect-private-network/actions/runs/40668515602)
+  成功，源码 commit `88b0a0be9429d300fede97121a141f4b127ec989`；JSON 报告 `passed=true`。
+  19 个根 module 测试包交叉编译，用户态回归通过；socket 查询移交完整 VM 并通过。
+- `local-socket`、`kernel-client`、`dns-bridge`、`netfilter`、`network-and-resolved`、`ui`
+  六项 VM 检查均通过。真实内核 WireGuard 握手/HTTP、IPv6 底层恢复、断开重连、resolved D-Bus/stub 查询与清理已验证。
+  普通用户 WebKit 返回 `frontendReady=true`、平台 linux、产品版本 1.1.8 和上述精确 commit。
+- 环境为固定 digest 的社区 Debian forky 新世界用户空间、官方 Go 1.27.1、配套 Debian 内核及 QEMU TCG。
+  完整依赖与内核版本保留在该运行的日志和 artifact 中；没有龙芯物理设备。
+- 第二步新增独立 DEB 基线及 Core/UI 包、安装识别、发布清单门槛和干净 VM 安装/升级/重装/卸载测试。
+  **当前包验收尚待新工作流结果，不将第一步裸二进制成功记作安装包验收通过。**
+  升级夹具使用当前代码配较低包版本，只证明包维护行为，不证明历史程序或 schema 迁移。
+- 真实 fnOS 登录/OTP、历史正式版本协议、真机 GPU、Wayland/托盘和 polkit 弹窗仍未验收；不支持旧世界。
+
 ## 1.1.8 HarmonyOS 审核修复候选（2026-10-28，未发布）
 
 - 用户提供的 1.1.7 真机 JsCrash 定位为窗口销毁后调用 `off(windowSizeChange)` 抛出 1300002。

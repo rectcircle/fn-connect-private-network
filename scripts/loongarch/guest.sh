@@ -54,6 +54,7 @@ check_step() {
   fi
 }
 # qemu-user cannot translate getsockopt(SO_BINDTODEVICE); do not drop coverage.
+check_step packages-prepare python3 /validation/package-lifecycle.py prepare
 check_step local-socket run_test /validation/client.test TestLinuxLocalProbeBindsPhysicalInterface
 # These tests execute the real project engines and crash-recovery logic.
 FNCPN_KERNEL_TESTS=1 check_step kernel-client run_test /validation/linux.test TestKernelClientCapability
@@ -62,11 +63,12 @@ FNCPN_NETFILTER_TEST=1 check_step netfilter run_test /validation/linux.test Test
 # Separate test exercises the real resolved service (the existing bridge test
 # deliberately mocks its D-Bus calls), plus WireGuard traffic and reconnect.
 check_step network-and-resolved /validation/probe -test.v -test.timeout=180s
-if [ -x /validation/fncpn-ui ]; then
-  check_step ui python3 /validation/scripts/linux-ui-smoke.py /validation/fncpn-ui "$out" "$(cat /validation/version)" "$(cat /validation/commit)"
+if [ -x /usr/bin/fncpn-ui ]; then
+  check_step ui python3 /validation/scripts/linux-ui-smoke.py /usr/bin/fncpn-ui "$out" "$(cat /validation/version)" "$(cat /validation/commit)"
 else
   echo 'UI binary missing: the experiment cannot pass.'
   failed=1
   printf 'ui\tfailed\n' >> "$out/steps.tsv"
 fi
+check_step packages-finish python3 /validation/package-lifecycle.py finish
 exit "$failed"

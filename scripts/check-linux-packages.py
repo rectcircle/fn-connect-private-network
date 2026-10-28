@@ -94,14 +94,14 @@ def inspect(path):
                 k,v=line.split(' = ',1);values.setdefault(k,[]).append(v)
         fields={'Package':values['pkgname'][0],'Version':values['pkgver'][0].rsplit('-',1)[0],
                 'Architecture':values['arch'][0],'Depends':', '.join(values.get('depend',[]))}
-    architecture={'x86_64':'amd64','aarch64':'arm64'}.get(fields['Architecture'],fields['Architecture'])
+    architecture={'x86_64':'amd64','aarch64':'arm64','loongarch64':'loong64'}.get(fields['Architecture'],fields['Architecture'])
     fields['Architecture']=architecture
     name=fields['Package']
     if name not in ('fncpn-core','fncpn-ui'):raise ValueError('Unexpected package '+name)
     binary='usr/bin/fncpn' if name=='fncpn-core' else 'usr/bin/fncpn-ui'
     if binary not in payload:raise ValueError('Missing '+binary)
     mode,uid,gid,elf=payload[binary]
-    if elf[:5]!=b'\x7fELF\x02' or struct.unpack('<H',elf[18:20])[0]!={'arm64':183,'amd64':62}[architecture]:raise ValueError('Wrong ELF architecture')
+    if len(elf)<20 or elf[:6]!=b'\x7fELF\x02\x01' or struct.unpack('<H',elf[18:20])[0]!={'arm64':183,'amd64':62,'loong64':258}.get(architecture):raise ValueError('Wrong ELF architecture')
     if mode&0o111==0 or uid!=0 or gid!=0:raise ValueError('Invalid binary owner or mode')
     expected=['usr/lib/systemd/user/fncpn-client.service','usr/lib/systemd/system/fncpn-client-privileged@.service',
               'usr/libexec/fncpn/enable-client','usr/libexec/fncpn/wait-ready',

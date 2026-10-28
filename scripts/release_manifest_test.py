@@ -84,6 +84,7 @@ class ReleaseInventoryTest(unittest.TestCase):
             (lambda m: m.update(_testEvidence='foreign'), 'compatibility evidence does not match'),
             (lambda m: m.update(_testEvidence='failed'), 'compatibility evidence does not match'),
             (lambda m: m.update(_testEvidence='no-ui'), 'compatibility evidence does not match'),
+            (lambda m: m.update(_testEvidence='no-loongarch-kernel'), 'compatibility evidence does not match'),
         ):
             with self.subTest(message=message), tempfile.TemporaryDirectory() as directory:
                 root = pathlib.Path(directory)
@@ -100,7 +101,7 @@ class ReleaseInventoryTest(unittest.TestCase):
                             name=package_name(component,version,target,architecture)
                             (out/name).write_bytes(b'fixture')
                             entries.append({'path':name,'sha256':hashlib.sha256(b'fixture').hexdigest()})
-                        manifest={'productVersion':version,'commit':'commit','architecture':architecture,'distribution':target,'packageFormat':target,'workingTreeDirty':False,'artifacts':entries}
+                        manifest={'productVersion':version,'commit':'commit','architecture':architecture,'distribution':target,'packageFormat':profile.get('format',target),'workingTreeDirty':False,'artifacts':entries}
                         if target=='rpm': manifest['rpmSigning']=signing_identity()
                         if target=='deb' and architecture=='amd64': mutation(manifest)
                         (out/'build-manifest.json').write_text(json.dumps(manifest))
@@ -112,6 +113,9 @@ class ReleaseInventoryTest(unittest.TestCase):
                 for distro, profile in TARGETS.items():
                     for architecture in profile['architectures']:
                         evidence={'target':distro,'architecture':architecture,'bundle':profile['format'],'productVersion':version,'commit':'commit','passed':True,'checks':['package-metadata','dependency-resolution','core-version','ui-dynamic-linking','core-only-install','elf-abi','ui-frontend-handshake','package-reinstall','package-remove'],'artifacts':{package_name(component,version,distro,architecture):hashlib.sha256(b'fixture').hexdigest() for component in ('core','ui')}}
+                        if architecture == 'loong64':
+                            evidence['checks'] += ['systemd-services','package-upgrade','upgrade-state-preserved','kernel-network','real-resolved']
+                            if mode == 'no-loongarch-kernel': evidence['checks'].remove('kernel-network')
                         if profile['format']=='rpm':
                             evidence['rpmSigning']=signing_identity()
                             if mode!='no-rpm-signature': evidence['checks'].append('rpm-signature')

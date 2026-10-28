@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Experimental new-world validation; never publishes or changes release targets."""
+"""Build and gate new-world LoongArch packages; never publishes a release."""
 import hashlib
 import json
 import os
@@ -16,6 +16,7 @@ import urllib.request
 ROOT = Path(__file__).resolve().parents[2]
 OUT = ROOT / 'dist/loongarch-validation'
 ENVIRONMENT = json.loads(Path(__file__).with_name('environment.json').read_text())
+PACKAGE_OUT = ROOT / 'dist/linux/deb-loong64/loong64'
 # qemu-user successfully sets SO_BINDTODEVICE but its getsockopt translation
 # returns EINVAL. Execute this exact test against the guest kernel instead.
 DEFERRED_TEST = 'TestLinuxLocalProbeBindsPhysicalInterface'
@@ -139,9 +140,10 @@ def system_vm(container, temporary):
         files[package + '.test'] = OUT / 'tests' / item['binary']
     for target, source in files.items():
         subprocess.run(['docker', 'cp', str(source), f'{container}:/validation/{target}'], check=True)
-    for name in ('linux-ui-smoke.py', 'linux-compatibility.py', 'linux_support.py', 'linux_abi.py', 'rpm_signing.py'):
+    for name in ('linux-ui-smoke.py', 'linux-compatibility.py', 'linux_support.py', 'linux_abi.py', 'rpm_signing.py', 'check-linux-packages.py'):
         subprocess.run(['docker', 'cp', str(ROOT / 'scripts' / name), f'{container}:/validation/scripts/{name}'], check=True)
     subprocess.run(['docker', 'cp', str(ROOT / 'packaging/linux/targets.json'), f'{container}:/validation/packaging/linux/targets.json'], check=True)
+    subprocess.run(['docker', 'cp', str(ROOT / 'scripts/loongarch/package-lifecycle.py'), f'{container}:/validation/package-lifecycle.py'], check=True)
     unit = temporary / 'fncpn-validation.service'
     unit.write_text('[Unit]\nAfter=local-fs.target dbus.service\nWants=dbus.service\n'
                     '[Service]\nType=oneshot\nEnvironment=FNCPN_LOONGARCH_VM=1\n'
@@ -218,15 +220,17 @@ def main():
     if OUT.exists():
         shutil.rmtree(OUT)
     report = Report(OUT, required=['host-tools', 'core-build', 'test-build', 'frontend', 'container',
-                                  'provision', 'core-runtime', 'unit-tests', 'ui-build', 'full-system'],
-                    commit=commit, environment=ENVIRONMENT, experimental=True,
+                                  'provision', 'core-runtime', 'unit-tests', 'ui-build', 'package-build',
+                                  'runtime-provision', 'offline-dependencies', 'full-system'],
+                    commit=commit, environment=ENVIRONMENT,
                     deferredToFullSystem=[DEFERRED_TEST],
                     notValidated=['physical hardware and GPU', 'real fnOS login/OTP and end-to-end session recovery',
-                                  'historical release compatibility', 'package installation/upgrade/uninstall',
+                                  'historical release compatibility (upgrade fixture uses candidate code)',
                                   'Wayland, interactive tray and polkit flows', 'old-world ABI'])
     (OUT / 'commit').write_text(commit + '\n')
     (OUT / 'environment.json').write_text(json.dumps(ENVIRONMENT, indent=2) + '\n')
     container = 'fncpn-loongarch-validation'
+    runtime_container = 'fncpn-loongarch-runtime'
     environment = dict(os.environ, GOOS='linux', GOARCH='loong64', CGO_ENABLED='0')
     try:
         report.check('host-tools', ['bash', '-ec', 'go version; node --version; docker version; qemu-system-loongarch64 --version'])
@@ -259,12 +263,40 @@ def main():
                 report.check('ui-build', ['docker', 'exec', '-e', f'VALIDATION_COMMIT={commit}', container,
                                          'timeout', '--kill-after=10s', '3500s', 'bash',
                                          '/workspace/scripts/loongarch/build-ui.sh'], timeout=3600)
-            if core and tests:
+            packaged = report.check('package-build', ['docker', 'exec',
+                '-e', 'RELEASE=' + os.environ.get('RELEASE', '0'),
+                '-e', 'RELEASE_COMMIT=' + os.environ.get('RELEASE_COMMIT', ''),
+                '-e', 'RELEASE_VERSION=' + os.environ.get('RELEASE_VERSION', ''), container,
+                'timeout', '--kill-after=10s', '1800s', 'bash', '/workspace/scripts/loongarch/build-packages.sh'], timeout=1900)
+            if packaged:
+                for binary in ('fncpn', 'fncpn-ui'):
+                    shutil.copy2(PACKAGE_OUT / binary, OUT / binary)
+                subprocess.run(['docker', 'run', '-d', '--platform', 'linux/loong64', '--name', runtime_container,
+                    '-v', f'{ROOT}:/workspace', ENVIRONMENT['image'], 'sleep', 'infinity'], check=True)
+                ready = report.check('runtime-provision', ['docker', 'exec', '-e', 'RUNTIME_ONLY=1', runtime_container,
+                    'timeout', '--kill-after=10s', '2300s', 'bash', '/workspace/scripts/loongarch/provision.sh'], timeout=2400)
+                if ready:
+                    subprocess.run(['docker', 'exec', runtime_container, 'mkdir', '-p', '/validation'], check=True)
+                    subprocess.run(['docker', 'cp', str(PACKAGE_OUT), f'{runtime_container}:/validation/packages'], check=True)
+                    subprocess.run(['docker', 'cp', str(OUT / 'upgrade-fixture'), f'{runtime_container}:/validation/packages/upgrade-fixture'], check=True)
+                    ready = report.check('offline-dependencies', ['docker', 'exec', runtime_container, 'bash', '-ec',
+                        'apt-get install -y --no-install-recommends --download-only /validation/packages/*.deb '
+                        'xvfb xauth fonts-dejavu-core libgl1-mesa-dri'], timeout=900)
+                # Free the compiler rootfs before creating the boot disk.
+                subprocess.run(['docker', 'rm', '-f', container], check=True)
+            if core and tests and packaged and ready:
                 # Keep system validation independent of unit/UI failure. A missing UI
                 # is an explicit guest failure after the kernel checks have run.
                 try:
                     print('[full-system] boot disposable LoongArch kernel', flush=True)
-                    system_vm(container, temporary)
+                    system_vm(runtime_container, temporary)
+                    source = OUT / 'system/package-evidence.json'
+                    evidence = json.loads(source.read_text())
+                    if evidence.get('passed') is not True:
+                        raise RuntimeError('Installed-package lifecycle did not pass')
+                    compatibility = ROOT / 'dist/linux-compat'
+                    compatibility.mkdir(exist_ok=True)
+                    shutil.copy2(source, compatibility / 'debian-forky-loong64.json')
                     report.data['checks']['full-system'] = {'status': 'passed'}
                 except Exception as error:
                     report.data['checks']['full-system'] = {'status': 'failed', 'error': str(error)}
@@ -276,12 +308,13 @@ def main():
         report.data['checks']['infrastructure'] = {'status': 'failed', 'error': str(error)}
         raise
     finally:
-        subprocess.run(['docker', 'rm', '-f', container], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        for name in (container, runtime_container):
+            subprocess.run(['docker', 'rm', '-f', name], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         report.save()
-        lines = ['# LoongArch 新世界实验验证', '', f'Commit: `{commit}`', '',
+        lines = ['# LoongArch 新世界 DEB 构建与验收', '', f'Commit: `{commit}`', '',
                  '| 检查 | 结果 |', '| --- | --- |']
         lines += [f'| {name} | {item["status"]} |' for name, item in report.data['checks'].items()]
-        lines += ['', '**这不是正式平台支持或发布验收结论。**', '', '未验证：']
+        lines += ['', '**此流程不公开 Release；包验收不能替代以下未验证项。**', '', '未验证：']
         lines += ['- ' + item for item in report.data['notValidated']]
         (OUT / 'summary.md').write_text('\n'.join(lines) + '\n')
         if not report.data['passed']:

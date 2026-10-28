@@ -19,13 +19,14 @@ Linux 目标以 [targets.json](../packaging/linux/targets.json) 为唯一机器�
 | 系列 | 列入目标的版本 | 架构 | 格式 |
 | --- | --- | --- | --- |
 | Debian | 12、13 | amd64、arm64 | deb |
+| Debian forky 新世界（新增包候选） | 固定基础镜像，配套当前 forky 仓库 | loong64 | deb |
 | Ubuntu | 22.04、24.04、26.04 LTS；26.10 | amd64、arm64 | deb |
 | Fedora | 43、44 | amd64、arm64 | RPM |
 | Arch Linux | 完整更新的 rolling 系统 | amd64 | pkg.tar.zst |
 | openSUSE Leap | 16.0 | amd64、arm64 | RPM |
 | openSUSE Tumbleweed | 完整更新的 rolling 系统 | amd64、arm64 | RPM |
 
-这些目标共 21 个发行版/架构组合，共用 10 个 Core/UI 安装包，不为每个发行版另编译一份。Alpine/apk、Arch Linux ARM 以及 Fedora Atomic、openSUSE Aeon/Kalpa/MicroOS 等不可变系统不在普通包支持范围内。发行版发布、EOL 或滚动 ABI 变化时须重新核对清单、依赖和 CI。
+这些构建目标共 22 个发行版/架构组合，生成 12 个 Core/UI 安装包（含待包验收的 LoongArch 候选），不为每个发行版另编译一份。Alpine/apk、Arch Linux ARM 以及 Fedora Atomic、openSUSE Aeon/Kalpa/MicroOS 等不可变系统不在普通包支持范围内。发行版发布、EOL 或滚动 ABI 变化时须重新核对清单、依赖和 CI。
 
 ## 共用原则
 
@@ -71,10 +72,11 @@ RPM 使用项目专用 OpenPGP 密钥签名，无需购买签名服务。安装�
 
 草稿 CI 已覆盖 5 组基线构建和 21 组目标容器安装、ABI、真实 WebKit 前端启动、重装及卸载。发布证据须指向同 commit、同版本、同包哈希。容器检查不能证明真实 systemd、polkit 弹窗、Wayland/托盘、内核、DNS 或完整 fnOS 连接已验收；历史协议兼容仍须单独验证。
 
-LoongArch 处于独立实验验证阶段，只考虑新世界 ABI；尚未加入正式发行版/架构清单。
-通过 GitHub 上的 QEMU 用户态及完整内核模拟验证可构建性和运行能力，具体入口、覆盖范围及限制见
-[LoongArch 实验验证](development.md#loongarch-新世界实验验证)。工作流存在不代表验证已通过，
-通过模拟器也不等于完成真机或正式发布验收。
+LoongArch 只支持 Debian forky 的新世界 `loong64` 包目标，独立基线避免复用 amd64/arm64 的旧 ABI 假设。
+第一步的 Core/UI、真实内核网络和 WebKit 握手已通过 QEMU；第二步接入正式 DEB、安装识别与发布校验，
+当前同 commit 包的安装/升级/卸载验收仍待 CI。操作与边界见
+[LoongArch 构建与验收](development.md#loongarch-新世界构建与验收)。模拟器结果不等于真机或完整 fnOS 验收，
+不将麒麟/UOS/Loongnix、旧世界 ABI 或 MIPS 型号归入此目标。
 
 ### Nix / NixOS
 

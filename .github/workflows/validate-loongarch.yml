@@ -1,17 +1,42 @@
-name: Validate LoongArch (experimental)
+name: Build LoongArch DEB and validate
 on:
+  workflow_call:
+    inputs:
+      ref:
+        type: string
+        default: ''
+      version:
+        type: string
+        default: ''
+      release:
+        type: boolean
+        default: false
   workflow_dispatch:
+    inputs:
+      ref:
+        description: Source ref (full commit SHA for release candidates)
+        type: string
+        default: ''
+      version:
+        type: string
+        default: ''
+      release:
+        description: Enforce clean same-commit candidate (does not publish)
+        type: boolean
+        default: false
   # Bootstrap the experiment before the workflow is on the default branch.
   push:
     branches: [codex/loongarch-validation]
     paths:
       - '.github/workflows/validate-loongarch.yml'
       - 'scripts/loongarch/**'
+      - 'scripts/*linux*'
+      - 'packaging/linux/**'
       - 'internal/**'
 permissions:
   contents: read
 concurrency:
-  group: loongarch-validation-${{ github.ref }}
+  group: loongarch-${{ github.workflow }}-${{ inputs.ref || github.ref }}
   cancel-in-progress: true
 jobs:
   validate:
@@ -20,6 +45,11 @@ jobs:
     timeout-minutes: 150
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+          fetch-depth: 0
+      - id: source
+        run: echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
       - uses: actions/setup-go@v6
         with:
           go-version: '1.27.1'
@@ -37,6 +67,10 @@ jobs:
         with:
           platforms: loong64
       - name: Validate source in user mode and a disposable LoongArch kernel
+        env:
+          RELEASE: ${{ inputs.release && '1' || '0' }}
+          RELEASE_COMMIT: ${{ inputs.ref }}
+          RELEASE_VERSION: ${{ inputs.version }}
         run: python3 scripts/loongarch/validate.py
       - name: Publish experiment report
         if: always()
@@ -49,21 +83,32 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: loongarch-validation-${{ github.sha }}
+          name: loongarch-validation-${{ steps.source.outputs.commit }}
           path: |
             dist/loongarch-validation/
             !dist/loongarch-validation/tests/*.test
             !dist/loongarch-validation/fncpn
             !dist/loongarch-validation/fncpn-ui
             !dist/loongarch-validation/probe
+            !dist/loongarch-validation/upgrade-fixture/
           if-no-files-found: warn
           retention-days: 14
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: loongarch-experimental-binaries-${{ github.sha }}
+          name: loongarch-validation-binaries-${{ steps.source.outputs.commit }}
           path: |
             dist/loongarch-validation/fncpn
             dist/loongarch-validation/fncpn-ui
           if-no-files-found: ignore
           retention-days: 14
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-packages-deb-loong64-loong64
+          path: dist/linux/
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-compat-debian-forky-loong64
+          path: dist/linux-compat/
+          if-no-files-found: error

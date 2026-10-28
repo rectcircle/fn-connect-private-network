@@ -53,7 +53,7 @@ if tuple(map(int, version.split('.'))) >= (1, 1, 2):
                 raise SystemExit(f'Missing Linux {linux_target} {linux_arch} build manifest: {error}')
             if (build.get('productVersion') != version or build.get('commit') != revision or
                 build.get('architecture') != linux_arch or build.get('distribution') != linux_target or
-                build.get('packageFormat') != linux_target or build.get('workingTreeDirty') is not False):
+                build.get('packageFormat') != profile.get('format', linux_target) or build.get('workingTreeDirty') is not False):
                 raise SystemExit('Linux candidate must match the clean release version, commit, format and architecture')
             if linux_target == 'rpm' and build.get('rpmSigning') != signing_identity():
                 raise SystemExit('RPM signing evidence does not match the project key')
@@ -78,6 +78,8 @@ if tuple(map(int, version.split('.'))) >= (1, 1, 2):
                 raise SystemExit(f'Missing Linux compatibility evidence for {distro} {architecture}: {error}')
             expected = {linux_package_name(component,version,distro,architecture): by_name[linux_package_name(component,version,distro,architecture)] for component in ('core','ui')}
             expected_checks = {'package-metadata','dependency-resolution','core-version','ui-dynamic-linking','core-only-install','elf-abi','ui-frontend-handshake','package-reinstall','package-remove'}
+            if architecture == 'loong64':
+                expected_checks.update({'systemd-services', 'package-upgrade', 'upgrade-state-preserved', 'kernel-network', 'real-resolved'})
             if profile['format'] == 'rpm':
                 expected_checks.add('rpm-signature')
                 if evidence.get('rpmSigning') != signing_identity():
@@ -120,7 +122,7 @@ metadata = {"version": version, "commit": revision,
                       "windowsArchitectures": ["arm64", "x64"]}}
 if tuple(map(int, version.split('.'))) >= (1, 1, 2):
     metadata['build']['rpmSigning'] = signing_identity()
-    metadata['build']['linuxArchitectures'] = ['amd64', 'arm64']
+    metadata['build']['linuxArchitectures'] = sorted({arch for p in BUNDLES.values() for arch in p['architectures']})
     metadata['build']['linuxTargets'] = list(TARGETS)
     metadata['build']['linuxBundles'] = list(BUNDLES)
     metadata['build']['nixSystems'] = ['x86_64-linux', 'aarch64-linux']

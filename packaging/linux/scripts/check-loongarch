@@ -1,0 +1,14 @@
+#!/bin/sh
+set -eu
+# Embedded in loong64 DEB preinst before stopping any existing client services.
+reject() { echo 'FnCPN loong64 requires Debian forky new-world ABI, its lp64d loader and Linux >= 5.19.' >&2; exit 1; }
+[ "$(uname -m)" = loongarch64 ] || reject
+[ "$(dpkg --print-architecture)" = loong64 ] || reject
+[ -r /lib64/ld-linux-loongarch-lp64d.so.1 ] || reject
+ID= VERSION_CODENAME=
+. /etc/os-release
+[ "$ID:$VERSION_CODENAME" = debian:forky ] || reject
+kernel=$(uname -r)
+major=${kernel%%.*}; minor=${kernel#*.}; minor=${minor%%.*}
+case "$major:$minor" in *[!0-9:]*|:*) reject ;; esac
+[ "$major" -gt 5 ] || { [ "$major" -eq 5 ] && [ "$minor" -ge 19 ]; } || reject
