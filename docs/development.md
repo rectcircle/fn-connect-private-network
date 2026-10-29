@@ -458,6 +458,30 @@ swift scripts/generate-icons.swift /tmp/harmonyos-icons --harmonyos-root apps/ha
 执行外层签名；交付前分别执行官方 `verify-app` 验证内部 HAP（含原生代码）及 APP。
 仅内部 HAP 验签通过不足以证明 APP 可上架。
 
+将已下载的未签名 HAP 转为上架 APP，无需重新编译：
+
+```sh
+bash scripts/sign-harmonyos-app.sh ~/Downloads/fncpn-1.1.8-harmonyos-arm64-unsigned.hap
+# 不使用 macOS 钥匙串时，在终端交互输入密码
+bash scripts/sign-harmonyos-app.sh ~/Downloads/fncpn-1.1.8-harmonyos-arm64-unsigned.hap --password-source prompt
+```
+
+需要已安装的固定 HarmonyOS CLI 和 Java。默认复用 `~/.harmonyos/signing/` 下的
+`release.p12`、`release.cer`、`profiles/fncpn-release.p7b`，alias 为 `release`；可通过
+上文四个 `HARMONYOS_*` 环境变量覆盖路径及 alias。默认从 macOS 登录钥匙串
+service `harmonyos-signing-release`、account 为 alias 的条目读取密码；service 可用
+`HARMONYOS_SIGNING_KEYCHAIN_SERVICE` 覆盖。密钥密码需与密钥库密码一致；密码不经命令行参数、
+环境变量或文件传递，不输出包含密码或证书身份信息的签名日志。
+
+脚本从输入包读取版本与构建号，检查正式系统 VPN 包结构；若同目录存在
+`release-<版本>.json`，自动验证清单、源码 commit 和 HAP 摘要，也可用 `--manifest` 指定。
+没有清单时仍可签名，但结果清单明确不记录已验证的源码 commit。脚本先签 HAP（含原生代码），
+保留内层签名打包，再签 APP，分别验签并逐字节检查编译内容和内部 HAP 未改动。
+默认输出到 `dist/harmonyos/appgallery-<版本>-<输入摘要前8位>/`；可用 `--output-dir` 指定新目录。
+已有目录拒绝覆盖，失败不保留半成品。输出包括上架 `.app`、已签名 `entry-default.hap`、
+`submission-manifest.json` 和 `SHA256SUMS`；不会上传 AppGallery、修改 GitHub 草稿或公开发布。
+
+
 ### HarmonyOS CI、官网与夸克分发
 
 官网提供 HarmonyOS 中英下载页签；显式 HarmonyOS/OpenHarmony UA 优先于 Android 兼容标记，
