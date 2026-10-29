@@ -2,6 +2,7 @@
 import json
 from pathlib import Path
 import subprocess
+import time
 from urllib.parse import quote
 
 
@@ -50,3 +51,19 @@ def upload_asset(repository, release_id, name, source, command=run):
     return command('gh', 'api',
                    f'https://uploads.github.com/repos/{repository}/releases/{release_id}/assets?name={quote(name, safe="")}',
                    '--method', 'POST', '-H', 'Content-Type: application/octet-stream', '--input', str(source))
+
+
+def delete_draft_asset(repository, release_id, asset_id, command=run):
+    """Retry a draft-only deletion, accepting a lost response only after listing."""
+    for attempt in range(3):
+        try:
+            command('gh', 'api', f'repos/{repository}/releases/assets/{asset_id}', '--method', 'DELETE')
+            return
+        except subprocess.CalledProcessError:
+            # A timeout may occur after GitHub already deleted the asset. A
+            # successful list distinguishes that case from permission/API errors.
+            if not any(a['id'] == asset_id for a in assets(repository, release_id, command)):
+                return
+            if attempt == 2:
+                raise
+            time.sleep(2 ** (attempt + 1))

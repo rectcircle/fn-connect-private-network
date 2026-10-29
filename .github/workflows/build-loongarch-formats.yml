@@ -2,6 +2,9 @@ name: Build LoongArch RPM and Arch
 on:
   workflow_call:
     inputs:
+      target:
+        type: string
+        default: both
       ref:
         type: string
         required: true
@@ -11,7 +14,8 @@ on:
       release:
         type: boolean
         default: false
-      runtime_validation:
+      full_validation:
+        description: Prepare upgrade fixtures for the separate acceptance workflow
         type: boolean
         default: false
     secrets:
@@ -32,18 +36,19 @@ on:
       release:
         type: boolean
         default: false
-      runtime_validation:
+      full_validation:
+        description: Prepare upgrade fixtures for the separate acceptance workflow
         type: boolean
-        default: true
+        default: false
       ref:
-        description: Source branch or commit (validation only)
+        description: Source branch or full candidate commit
         type: string
         default: main
 permissions:
   contents: read
 concurrency:
-  group: loongarch-formats-${{ inputs.target }}-${{ inputs.ref || github.ref }}
-  cancel-in-progress: true
+  group: loongarch-formats-${{ github.workflow }}-${{ inputs.target }}-${{ inputs.ref || github.ref }}
+  cancel-in-progress: ${{ !inputs.release }}
 jobs:
   targets:
     runs-on: ubuntu-24.04
@@ -61,13 +66,13 @@ jobs:
           import json, os, sys
           from pathlib import Path
           sys.path.insert(0, 'scripts')
-          from linux_support import experimental_matrix
-          matrix = experimental_matrix(os.environ['SELECTED_FORMAT'] or 'both')
+          from linux_support import loongarch_build_matrix
+          matrix = loongarch_build_matrix(os.environ['SELECTED_FORMAT'] or 'both')
           with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
               output.write('matrix=' + json.dumps(matrix) + '\n')
           PY
   build:
-    name: Validate ${{ matrix.target }}
+    name: Build ${{ matrix.target }}
     needs: targets
     strategy:
       fail-fast: false
@@ -80,10 +85,10 @@ jobs:
       RELEASE: ${{ inputs.release && '1' || '0' }}
       RELEASE_COMMIT: ${{ inputs.ref }}
       RELEASE_VERSION: ${{ inputs.version }}
+      FULL_ACCEPTANCE: ${{ inputs.full_validation && '1' || '0' }}
       DIST_DIR: /workspace/dist/linux
       GODEBUG: http2client=0
       REPOSITORY_PROBE: ${{ matrix.repository_probe }}
-      REPOSITORY_FORMAT: ${{ matrix.repository_format }}
       IMAGE_ARCHIVE: ${{ matrix.image_archive }}
       IMAGE_ARCHIVE_SHA256: ${{ matrix.image_archive_sha256 }}
     steps:
@@ -99,12 +104,8 @@ jobs:
           python3 - <<'PYXML'
           import os, pathlib, xml.etree.ElementTree as ET
           path = pathlib.Path(os.environ['RUNNER_TEMP']) / 'repository-metadata'
-          if os.environ['REPOSITORY_FORMAT'] == 'apt-rpm':
-              content = path.read_text()
-              assert 'Origin: ALT Linux Team' in content and 'Architectures: loongarch64 noarch' in content and 'classic' in content, 'Unexpected ALT repository metadata'
-          else:
-              root = ET.parse(path).getroot()
-              assert root.tag == '{http://linux.duke.edu/metadata/repo}repomd', 'Candidate server did not return RPM repository metadata'
+          root = ET.parse(path).getroot()
+          assert root.tag == '{http://linux.duke.edu/metadata/repo}repomd', 'Candidate server did not return RPM repository metadata'
           PYXML
       - uses: actions/setup-go@v6
         with:
@@ -146,7 +147,7 @@ jobs:
       - name: Restore clean builder environment
         run: python3 scripts/loongarch/builder-cache.py restore
       - name: Load checksum-pinned official image archive
-        if: matrix.image_archive != '' && (env.BUILDER_CACHE_HIT != '1' || inputs.runtime_validation)
+        if: matrix.image_archive != '' && env.BUILDER_CACHE_HIT != '1'
         run: |
           curl --fail --location --retry 2 --connect-timeout 15 --max-time 180 "$IMAGE_ARCHIVE" -o "$RUNNER_TEMP/candidate.tar.xz"
           echo "$IMAGE_ARCHIVE_SHA256  $RUNNER_TEMP/candidate.tar.xz" | sha256sum -c -
@@ -156,7 +157,7 @@ jobs:
           mkdir -p "$HOME/.cache/fncpn-loongarch-formats/$TARGET/go-build" "$HOME/.cache/fncpn-loongarch-formats/$TARGET/go-mod"
           builder="$IMAGE"
           if [ "$BUILDER_CACHE_HIT" = 1 ]; then builder="$BUILDER_IMAGE"; fi
-          docker run -d --platform linux/loong64 -v "$HOME/.cache/fncpn-loongarch-formats/$TARGET/go-build:/root/.cache/go-build" -v "$HOME/.cache/fncpn-loongarch-formats/$TARGET/go-mod:/root/go/pkg/mod" --name fncpn-format -e TARGET -e RELEASE -e RELEASE_COMMIT -e RELEASE_VERSION -e DIST_DIR -e GODEBUG -v "$GITHUB_WORKSPACE:/workspace" -v "$RUNNER_TEMP/format-tools:/opt/tools:ro" "$builder" sleep infinity
+          docker run -d --platform linux/loong64 -v "$HOME/.cache/fncpn-loongarch-formats/$TARGET/go-build:/root/.cache/go-build" -v "$HOME/.cache/fncpn-loongarch-formats/$TARGET/go-mod:/root/go/pkg/mod" --name fncpn-format -e TARGET -e RELEASE -e RELEASE_COMMIT -e RELEASE_VERSION -e FULL_ACCEPTANCE -e DIST_DIR -e GODEBUG -v "$GITHUB_WORKSPACE:/workspace" -v "$RUNNER_TEMP/format-tools:/opt/tools:ro" "$builder" sleep infinity
           docker exec fncpn-format mkdir -p /opt
           docker cp "$RUNNER_TEMP/go.tar.gz" fncpn-format:/opt/go.tar.gz
       - name: Verify dependency availability
@@ -168,8 +169,6 @@ jobs:
       - name: Save clean builder environment
         if: env.BUILDER_CACHE_HIT != '1'
         run: python3 scripts/loongarch/builder-cache.py save
-      - name: Verify native C and official Go toolchains
-        run: docker exec fncpn-format bash /workspace/scripts/loongarch/probe-format.sh toolchain
       - name: Install release RPM signing tools
         if: inputs.release && startsWith(matrix.target, 'rpm')
         run: docker exec fncpn-format dnf install -y gnupg2 rpm-build
@@ -178,33 +177,6 @@ jobs:
           RPM_SIGNING_PRIVATE_KEY: ${{ secrets.RPM_SIGNING_PRIVATE_KEY }}
           RPM_SIGNING_PASSPHRASE: ${{ secrets.RPM_SIGNING_PASSPHRASE }}
         run: docker exec -e RPM_SIGNING_PRIVATE_KEY -e RPM_SIGNING_PASSPHRASE fncpn-format bash /workspace/scripts/loongarch/probe-format.sh build
-      - name: Select shared kernel cache epoch
-        if: inputs.runtime_validation
-        id: cache-epoch
-        run: echo "month=$(date -u +%Y-%m)" >> "$GITHUB_OUTPUT"
-      - uses: actions/cache/restore@v4
-        if: inputs.runtime_validation
-        with:
-          path: ~/.cache/fncpn-loongarch
-          key: loongarch-${{ steps.cache-epoch.outputs.month }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/loongarch/environment.json', 'scripts/loongarch/provision.sh', 'go.sum', 'ui/go.sum') }}-${{ github.sha }}
-          restore-keys: |
-            loongarch-${{ steps.cache-epoch.outputs.month }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/loongarch/environment.json', 'scripts/loongarch/provision.sh', 'go.sum', 'ui/go.sum') }}-
-      - name: Install full-system emulator for one-time acceptance
-        if: inputs.runtime_validation
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends qemu-system-misc e2fsprogs
-      - name: Install and start candidates in a clean runtime image
-        if: inputs.runtime_validation
-        run: |
-          docker rm -f fncpn-format
-          # Allow the real WebKit/image sandbox in the disposable test container.
-          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
-          docker run -d --privileged --shm-size=1g --platform linux/loong64 --name fncpn-format -e TARGET -e RELEASE -e RELEASE_COMMIT -e RELEASE_VERSION -e DIST_DIR -e GODEBUG -v "$GITHUB_WORKSPACE:/workspace" "$IMAGE" sleep infinity
-          docker exec fncpn-format bash /workspace/scripts/loongarch/probe-format.sh runtime-bootstrap
-          docker exec fncpn-format python3 /workspace/scripts/loongarch/runtime-format.py prepare
-          sudo chown -R "$(id -u):$(id -g)" dist
-          python3 scripts/loongarch/format-vm.py
       - name: Preserve compiler cache permissions
         if: always()
         run: sudo chown -R "$(id -u):$(id -g)" "$HOME/.cache/fncpn-loongarch-formats/$TARGET" || true
@@ -214,7 +186,7 @@ jobs:
           path: ~/.cache/fncpn-loongarch-formats/${{ matrix.target }}
           key: ${{ steps.compiler-cache.outputs.cache-primary-key }}
       - uses: actions/upload-artifact@v4
-        if: always()
+        if: success()
         with:
           name: linux-packages-${{ matrix.target }}-loong64
           path: |
@@ -224,7 +196,8 @@ jobs:
             dist/linux/**/*.txt
             dist/linux/**/*.log
             dist/linux/**/SHA256SUMS
-          if-no-files-found: warn
+          if-no-files-found: error
+          overwrite: true
           retention-days: 14
       - name: Remove disposable candidate
         if: always()

@@ -28,6 +28,23 @@ class ReleaseAssetsTest(unittest.TestCase):
         self.assertEqual(calls[0][2], 'https://uploads.github.com/repos/owner/repo/releases/42/assets?name=file%20name%2B1.apk')
         self.assertEqual(calls[0][-2:], ('--input', '/tmp/payload.apk'))
 
+    def test_draft_delete_rechecks_after_lost_response_and_bounds_retries(self):
+        for disappeared, succeeds, expected in [(True, False, 1), (False, True, 2), (False, False, 3)]:
+            deletes = []
+            def command(*args):
+                if 'DELETE' in args:
+                    deletes.append(args)
+                    if succeeds and len(deletes) == 2: return ''
+                    raise subprocess.CalledProcessError(1, args)
+                return json.dumps([[] if disappeared else [{'id': 7}]])
+            with self.subTest(disappeared=disappeared, succeeds=succeeds), patch.object(api.time, 'sleep'):
+                if not disappeared and not succeeds:
+                    with self.assertRaises(subprocess.CalledProcessError):
+                        api.delete_draft_asset('owner/repo', 42, 7, command)
+                else:
+                    api.delete_draft_asset('owner/repo', 42, 7, command)
+                self.assertEqual(len(deletes), expected)
+
     def test_download_binary_uses_asset_id_and_preserves_bytes(self):
         def command(args, stdout, check):
             self.assertTrue(check)

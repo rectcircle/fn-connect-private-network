@@ -5,59 +5,27 @@
 
 ## 1.1.8 LoongArch 新世界候选（2026-10-29，未发布）
 
-- [Arch 新世界格式验证](https://github.com/rectcircle/fn-connect-private-network/actions/runs/40731600172/job/122969194281)已通过：
-  commit `e4c924f`，固定镜像中 C lp64d、官方 Go、GTK/WebKit/AppIndicator、Core/UI 编译、包头与动态链接检查均成功。
-  该次仅覆盖编译，后续安装启动验收见下方记录。
-  [ALT Sisyphus RPM 构建验证](https://github.com/rectcircle/fn-connect-private-network/actions/runs/40745432371)
-  已通过，commit `f381cd5`；C/Go/UI 构建、包头和动态链接检查成功，尚不代表安装和启动通过。
-  ALT 仅保留历史构建记录，当前 RPM 构建基线为 openEuler。
-- [Loong Arch Linux 安装启动验收](https://github.com/rectcircle/fn-connect-private-network/actions/runs/40758620682/job/123064229333)
-  已通过，commit `fa1d53d`：干净镜像 Core 独立安装、UI 依赖解析与动态链接，完整 VM 内普通用户 WebKit 握手、
-  systemd 用户与特权服务及健康检查、同版本重装、卸载均成功。
-  VM 用户空间来自 Arch，内核/initramfs/模块复用 Debian 缓存；不代表物理硬件、历史升级或完整网络回归通过。
+当前真实草稿来自 `96c9c3628ad8ec11e58bf40fcf2ff2b15c30fcbd`：
+[全平台草稿构建 40810018580](https://github.com/rectcircle/fn-connect-private-network/actions/runs/40810018580)
+已成功上传并逐字节回读；26 个产品包与发布清单、校验和共 28 个资产，包含六个 LoongArch Core/UI 包。
+草稿中的 LoongArch 证据级别为 `build`，**尚不能公开**。
 
-- [openEuler RPM 完整 VM 验收](https://github.com/rectcircle/fn-connect-private-network/actions/runs/40759688694)
-  已通过，产物 commit `8486eb3`：项目正式签名、Core 独立安装、依赖与 ABI、普通用户 UI 前端握手、
-  systemd 服务及健康检查、重装、卸载成功；不包含完整网络回归和历史升级。
-- [deepin 25 兼容验收](https://github.com/rectcircle/fn-connect-private-network/actions/runs/40806923380/job/123227982370)
-  已通过：直接安装真实草稿 commit `8589b32` 的 DEB，验证脚本 commit `6270f93`，包哈希与草稿发布清单一致。
-  覆盖 Core 独立安装、依赖与动态链接、完整 VM 内 UI 握手、真实服务、重装和卸载。
-  用户空间来自官方固定 SHA256 的 rootfs，内核复用 Debian；完整 DDE/磐石安装事务及物理设备未验收。
-  上游说明 DEB 仍经 apt/dpkg 安装，无需关闭只读保护，见 [deepin 磐石 Q&A](https://www.deepin.org/zh/qa-deepin-25-qa-2/)。
-- [Anolis 23.5 兼容检查](https://github.com/rectcircle/fn-connect-private-network/actions/runs/40808530635/job/123233118625)
-  未通过，不列入支持范围：同一草稿 RPM 的正式签名、Core/UI 安装和动态链接通过，但最新完整 VM 中
-  UI 在 JavaScriptCore 初始化时 SIGABRT，服务与后续生命周期未完成；不能将前一次局部 UI 成功当作稳定兼容。
-- [三种 LoongArch 格式真实草稿](https://github.com/rectcircle/fn-connect-private-network/actions/runs/40762080643)
-  已成功上传并回读验证，commit `8589b32`；26 个产品包与两份发布清单/校验和，共 28 个资产。
-  草稿仍未公开，LoongArch 发布证据级别为 `build`；最终同包完整发布验收仍由公开发布门槛强制检查。
+| 目标 | 最近已完成的验收 | 边界 |
+| --- | --- | --- |
+| Debian forky | [40694605149](https://github.com/rectcircle/fn-connect-private-network/actions/runs/40694605149)，commit `5403993`，14 项包/完整系统检查通过 | 包升级保留真实配置和身份、普通用户 WebKit、systemd、WireGuard/重连、resolved、重装卸载；不是当前草稿的同包证据 |
+| deepin 25 | [40812828549](https://github.com/rectcircle/fn-connect-private-network/actions/runs/40812828549)，产品及验证脚本均为 `96c9c36` | 精确当前草稿 DEB 哈希；Core 独立安装、依赖/ABI、VM 普通用户 UI、服务、重装与卸载；未覆盖完整网络/升级回归 |
+| openEuler 24.03 LTS SP4 | [40759688694](https://github.com/rectcircle/fn-connect-private-network/actions/runs/40759688694)，commit `8486eb3` | 项目签名、Core 独立安装、依赖/ABI、VM 普通用户 UI、服务、重装卸载；非当前最终包，未覆盖完整网络/升级回归 |
+| Loong Arch Linux | [40758620682](https://github.com/rectcircle/fn-connect-private-network/actions/runs/40758620682/job/123064229333)，commit `fa1d53d` | Core 独立安装、依赖/ABI、VM 普通用户 UI、服务、重装卸载；非当前最终包，未覆盖完整网络/升级回归 |
 
-- openSUSE LoongArch 兼容性尚未验证：2026-10-29 查询
-  [官方 OBS 项目元数据](https://api.opensuse.org/public/source/devel:LoongArch:Factory/_meta)，
-  `standard` 仓库列有 `loongarch64`，但项目设置 `<publish><disable/></publish>`；
-  `https://download.opensuse.org/repositories/devel:/LoongArch:/Factory/` 和
-  `https://download.opensuse.org/ports/loongarch/` 返回 HTTP 404。
-  这表明该开发项目目前没有公开发布的安装仓库，不能作为可复现的运行验收基线；
-  不据此断言 ALT 二进制不能运行，也不宣称不存在其他社区镜像。
-  要验证 openSUSE，仍需可核实的 LoongArch 新世界 rootfs/镜像及配套完整仓库，
-  然后对同一 openEuler 产物进行依赖解析、ABI 和启动检查。
+本次收尾将四个正式目标的最终包完整验收统一接入 Release，并将逐目标证据写入清单、由公开入口复核。
+**该新编排尚未完成 GitHub 实跑验收；本地回归与既有历史成功不能替代它。**
+下次最终草稿需以新 commit 开启 `loongarch_full_validation=true`，全部成功后才具备公开条件。
+升级夹具使用当前代码和较低包版本，只证明包维护行为，不证明历史程序或 schema 迁移；首个正式 LoongArch 发布后需归档真实旧包。
 
-
-- [第一步 GitHub 验证](https://github.com/rectcircle/fn-connect-private-network/actions/runs/40668515602)
-  成功，源码 commit `88b0a0be9429d300fede97121a141f4b127ec989`；JSON 报告 `passed=true`。
-  19 个根 module 测试包交叉编译，用户态回归通过；socket 查询移交完整 VM 并通过。
-- `local-socket`、`kernel-client`、`dns-bridge`、`netfilter`、`network-and-resolved`、`ui`
-  六项 VM 检查均通过。真实内核 WireGuard 握手/HTTP、IPv6 底层恢复、断开重连、resolved D-Bus/stub 查询与清理已验证。
-  普通用户 WebKit 返回 `frontendReady=true`、平台 linux、产品版本 1.1.8 和上述精确 commit。
-- 环境为固定 digest 的社区 Debian forky 新世界用户空间、官方 Go 1.27.1、配套 Debian 内核及 QEMU TCG。
-  完整依赖与内核版本保留在该运行的日志和 artifact 中；没有龙芯物理设备。
-- 第二步新增独立 DEB 基线及 Core/UI 包、安装识别、发布清单门槛和干净 VM 安装/升级/重装/卸载测试。
-  [第二步包验收](https://github.com/rectcircle/fn-connect-private-network/actions/runs/40694605149)成功，
-  源码 commit `5403993b9932593d0e9b24322252168e978018a3`，产品版本 1.1.8，包证据 `passed=true`。
-  14 项检查覆盖 Core 独立安装且无 GUI 库、Core/UI 依赖及 ABI、systemd 服务、升级保留配置和身份、
-  同版本重装、普通用户 WebKit 握手、真实内核网络及 resolved、卸载保留用户数据。
-  发布工作流复用该验收任务，发布清单要求同 commit、同版本、同包哈希的通过证据。
-  升级夹具使用当前代码配较低包版本，只证明包维护行为，不证明历史程序或 schema 迁移。
-- 真实 fnOS 登录/OTP、历史正式版本协议、真机 GPU、Wayland/托盘和 polkit 弹窗仍未验收；不支持旧世界。
+Anolis 23.5 [40808530635](https://github.com/rectcircle/fn-connect-private-network/actions/runs/40808530635/job/123233118625)
+未通过：签名、安装及动态链接通过，完整 VM 中 JavaScriptCore 初始化 SIGABRT；保留为显式候选，不列入支持清单和安装器。
+ALT 仅有历史编译验证，不是发布基线；Fedora Remix、openSUSE LoongArch 未完成可复现的运行兼容验收。
+所有模拟器结论均不代表物理 GPU、完整桌面/Wayland/托盘、polkit 弹窗、真实 fnOS 登录/OTP或历史正式协议兼容通过；不支持旧世界。
 
 ## 1.1.8 HarmonyOS 审核修复候选（2026-10-28，未发布）
 
@@ -71,7 +39,7 @@
 - 普通系统 VPN 与截图产品均已完成本地 release 构建。普通候选已打包签名 APP，内部 HAP 原生代码签名及
   APP 外层签名均通过官方工具校验；这是本地 dirty 候选，未上传、未公开，不代替原真机系统的审核复测。
 
-## 1.1.7 合入检查与 HarmonyOS 候选（2026-10-27，未发布）
+## 1.1.7 合入检查与 HarmonyOS 候选（2026-10-27，开发期历史记录）
 
 新增 HarmonyOS 平台沿用既有认证、版本准入和网络协议；PATCH 不要求服务端更新。
 本轮为工作树合入前检查，不是正式发布或完整历史版本验收。
@@ -91,7 +59,7 @@
 Go 依赖变更后的 Core vendor 哈希已由首轮 Linux x64 与 ARM64 CI 实际计算并交叉核对一致，
 已更新 `nix/go-hashes.json`；完整 Nix 依赖重建、源码隔离检查及两种架构的实际包构建均已在后续 CI 通过。
 当前 macOS 环境无 Linux Nix builder，不将主机脚本测试视为 Nix 实际构建通过。
-HarmonyOS 已接入发布资产汇总、公开与夸克镜像校验；构建工作流已改用 GitHub 托管 Ubuntu 24.04 x64、26.0.0.821 Linux CLI 社区镜像（固定 SHA256）及原固定 commit 社区 Go；只提供未签名 HAP，不需要外部签名材料。本地 macOS 保留 26.0.0.851。Linux 安装逻辑已通过离线测试；Linux 完整 HAP 构建、未签名结构核验及 CI artifact 上传已通过。线上草稿汇总仍待全平台检查通过，不等于已公开发布。
+HarmonyOS 已接入发布资产汇总、公开与夸克镜像校验；构建工作流已改用 GitHub 托管 Ubuntu 24.04 x64、26.0.0.821 Linux CLI 社区镜像（固定 SHA256）及原固定 commit 社区 Go；只提供未签名 HAP，不需要外部签名材料。本地 macOS 保留 26.0.0.851。Linux 安装逻辑已通过离线测试；Linux 完整 HAP 构建、未签名结构核验及 CI artifact 上传已通过。当时尚未完成全平台草稿汇总；当前 1.1.8 汇总结果见本页开头，均不替代设备场景验收。
 
 ### 仍需发布验收的场景
 

@@ -42,6 +42,7 @@ on:
         default: false
 permissions:
   contents: read
+  actions: read
 jobs:
   targets:
     runs-on: ubuntu-24.04
@@ -73,6 +74,7 @@ jobs:
           python3 scripts/rpm_signing_test.py
           python3 scripts/install_linux_test.py
           python3 scripts/linux_support_test.py
+          python3 scripts/linux_acceptance_test.py
           python3 scripts/linux_compatibility_test.py
           python3 scripts/release_manifest_test.py
           python3 scripts/publish_release_test.py
@@ -81,22 +83,82 @@ jobs:
           npm --prefix ui/frontend ci
           npm --prefix ui/frontend test
   loongarch:
-    uses: ./.github/workflows/validate-loongarch.yml
+    uses: ./.github/workflows/build-loongarch-deb.yml
     with:
       ref: ${{ inputs.ref || github.sha }}
       version: ${{ inputs.version || '' }}
       release: ${{ inputs.release == true }}
       full_validation: ${{ inputs.loongarch_full_validation == true }}
-  loongarch-formats:
-    uses: ./.github/workflows/validate-loongarch-formats.yml
+  loongarch-rpm:
+    uses: ./.github/workflows/build-loongarch-formats.yml
     with:
+      target: rpm
       ref: ${{ inputs.ref || github.sha }}
       release: ${{ inputs.release == true }}
       version: ${{ inputs.version || '' }}
-      runtime_validation: false
+      full_validation: ${{ inputs.loongarch_full_validation == true }}
     secrets:
       RPM_SIGNING_PRIVATE_KEY: ${{ secrets.RPM_SIGNING_PRIVATE_KEY }}
       RPM_SIGNING_PASSPHRASE: ${{ secrets.RPM_SIGNING_PASSPHRASE }}
+  loongarch-arch:
+    uses: ./.github/workflows/build-loongarch-formats.yml
+    with:
+      target: archlinux
+      ref: ${{ inputs.ref || github.sha }}
+      release: ${{ inputs.release == true }}
+      version: ${{ inputs.version || '' }}
+      full_validation: ${{ inputs.loongarch_full_validation == true }}
+    secrets:
+      RPM_SIGNING_PRIVATE_KEY: ${{ secrets.RPM_SIGNING_PRIVATE_KEY }}
+      RPM_SIGNING_PASSPHRASE: ${{ secrets.RPM_SIGNING_PASSPHRASE }}
+  loongarch-tests:
+    if: inputs.loongarch_full_validation
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.27.1'
+      - name: Cross-compile shared VM acceptance tests once
+        run: python3 scripts/loongarch/prepare-acceptance.py tests
+      - uses: actions/upload-artifact@v4
+        with:
+          name: loongarch-acceptance-tests
+          path: dist/loongarch-validation/
+          if-no-files-found: error
+          overwrite: true
+  loongarch-acceptance-rpm:
+    needs: [loongarch-rpm, loongarch-tests]
+    if: inputs.loongarch_full_validation
+    uses: ./.github/workflows/accept-loongarch-packages.yml
+    with:
+      ref: ${{ inputs.ref || github.sha }}
+      version: ${{ inputs.version || '' }}
+      target: openeuler
+      tests_artifact: loongarch-acceptance-tests
+      full_validation: true
+  loongarch-acceptance-arch:
+    needs: [loongarch-arch, loongarch-tests]
+    if: inputs.loongarch_full_validation
+    uses: ./.github/workflows/accept-loongarch-packages.yml
+    with:
+      ref: ${{ inputs.ref || github.sha }}
+      version: ${{ inputs.version || '' }}
+      target: archlinux
+      tests_artifact: loongarch-acceptance-tests
+      full_validation: true
+  loongarch-acceptance-deepin:
+    needs: [loongarch, loongarch-tests]
+    if: inputs.loongarch_full_validation
+    uses: ./.github/workflows/accept-loongarch-packages.yml
+    with:
+      ref: ${{ inputs.ref || github.sha }}
+      version: ${{ inputs.version || '' }}
+      target: deepin
+      tests_artifact: loongarch-acceptance-tests
+      full_validation: true
   build:
     needs: targets
     name: ${{ matrix.target }} ${{ matrix.arch }}
@@ -200,6 +262,7 @@ jobs:
         run: python3 scripts/linux-build-manifest.py "dist/linux/$TARGET/$ARCH" "$TARGET" "$ARCH"
       - uses: actions/upload-artifact@v4
         with:
+          overwrite: true
           name: linux-packages-${{ matrix.target }}-${{ matrix.arch }}
           path: |
             dist/linux/**/*.deb
@@ -272,6 +335,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
+          overwrite: true
           name: linux-compat-${{ matrix.target }}-${{ matrix.arch }}
           path: dist/linux-compat/
           if-no-files-found: error

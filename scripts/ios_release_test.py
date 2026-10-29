@@ -18,12 +18,12 @@ def binary(platform=2, signature=False):
     return struct.pack('<8I', 0xfeedfacf, 0x100000c, 0, 2, 2 if signature else 1, len(commands), 0, 0) + commands
 
 
-def fixture(path, platform=2, signature=False, profile=False):
+def fixture(path, platform=2, signature=False, profile=False, version='1.1.5'):
     with zipfile.ZipFile(path, 'w') as archive:
         for suffix, executable in [('', 'FnCPN'), ('/PlugIns/PacketTunnel.appex', 'PacketTunnel')]:
             root = 'Payload/FnCPN.app' + suffix
             info = {'CFBundleIdentifier': 'cn.rectcircle.fncpn' + ('.PacketTunnel' if suffix else ''),
-                    'CFBundleShortVersionString': '1.1.5', 'CFBundleVersion': '2',
+                    'CFBundleShortVersionString': version, 'CFBundleVersion': '2',
                     'CFBundleExecutable': executable, 'MinimumOSVersion': '15.0'}
             if suffix:
                 info['NSExtension'] = {'NSExtensionPointIdentifier': 'com.apple.networkextension.packet-tunnel'}

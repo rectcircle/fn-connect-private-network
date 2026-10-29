@@ -1,4 +1,4 @@
-name: Build LoongArch DEB and validate
+name: Build LoongArch DEB
 on:
   workflow_call:
     inputs:
@@ -103,7 +103,7 @@ jobs:
       - name: Finalize evidence and clean disposable environments
         if: always()
         run: python3 scripts/loongarch/validate.py --stage finish
-      - name: Publish experiment report
+      - name: Publish build and acceptance report
         if: always()
         run: |
           if [ -f dist/loongarch-validation/summary.md ]; then
@@ -114,6 +114,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
+          overwrite: true
           name: loongarch-validation-${{ steps.source.outputs.commit }}
           path: |
             dist/loongarch-validation/
@@ -127,6 +128,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
+          overwrite: true
           name: loongarch-validation-binaries-${{ steps.source.outputs.commit }}
           path: |
             dist/loongarch-validation/fncpn
@@ -135,6 +137,7 @@ jobs:
           retention-days: 14
       - uses: actions/upload-artifact@v4
         with:
+          overwrite: true
           name: linux-packages-deb-loong64-loong64
           path: |
             dist/linux/**/*.deb
@@ -142,10 +145,12 @@ jobs:
             dist/linux/**/*.pkg.tar.zst
             dist/linux/**/build-manifest.json
             dist/linux/**/SHA256SUMS
+            dist/linux/**/upgrade-fixture/**
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
         if: inputs.full_validation
         with:
+          overwrite: true
           name: linux-compat-debian-forky-loong64
           path: dist/linux-compat/
           if-no-files-found: error

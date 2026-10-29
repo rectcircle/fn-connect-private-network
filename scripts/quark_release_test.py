@@ -6,6 +6,7 @@ import importlib.util
 import io
 import json
 import subprocess
+import shutil
 from pathlib import Path
 import tempfile
 import unittest
@@ -169,7 +170,27 @@ class InventoryTest(unittest.TestCase):
                 for _, _, _, name in mirror.release_packages(version):
                     (root/name).write_bytes(name.encode())
                     artifacts.append({'file':name,'sha256':mirror.digest(root/name)})
-            (root/f'release-{version}.json').write_text(json.dumps({'version':version, 'commit':'abc', 'channel':'stable','artifacts':artifacts}))
+            build = {}
+            from android_release import ABIS, certificate_fingerprint
+            from ios_release import CHECKS as IOS_CHECKS
+            from ios_release_test import fixture as ipa_fixture
+            from harmonyos_release_test import fixture as hap_fixture
+            for name in mirror.android_packages(version):
+                (root/name).write_bytes(name.encode())
+                artifacts.append({'file': name, 'sha256': mirror.digest(root/name)})
+                build['android'] = {'certificateSha256': certificate_fingerprint(), 'abis': list(ABIS), 'versionCode': 2}
+            for name in mirror.ios_packages(version):
+                ipa_fixture(root/name, version=version)
+                artifacts.append({'file': name, 'sha256': mirror.digest(root/name)})
+                build['ios'] = {'productVersion': version, 'commit': 'abc', 'workingTreeDirty': False,
+                    'configuration': 'Release', 'signed': False, 'architecture': 'arm64', 'buildNumber': 2,
+                    'checks': sorted(IOS_CHECKS)}
+            if mirror.harmonyos_packages(version):
+                path, build['harmonyos'] = hap_fixture(root, version, 'abc')
+                shutil.move(path, root/path.name)
+                shutil.rmtree(path.parent)
+                artifacts.append({'file': path.name, 'sha256': mirror.digest(root/path.name)})
+            (root/f'release-{version}.json').write_text(json.dumps({'version':version, 'commit':'abc', 'channel':'stable','artifacts':artifacts, 'build': build}))
             (root/f'SHA256SUMS-{version}').write_text(''.join(f"{a['sha256']}  {a['file']}\n" for a in artifacts))
             release={'assets':[{'name':p.name,'size':p.stat().st_size,'digest':'sha256:'+mirror.digest(p)} for p in root.iterdir()]}
             if tamper: tamper(root, release)
@@ -189,6 +210,31 @@ class InventoryTest(unittest.TestCase):
                 path.write_text(json.dumps(manifest))
             with self.subTest(mode=mode), self.assertRaisesRegex(ValueError,'platform inventory'):
                 self.exercise(tamper,version='1.1.2')
+
+    def test_current_inventory_contains_28_assets_and_all_six_loongarch_packages(self):
+        inventory = self.exercise(version='1.1.8')
+        self.assertEqual(len(inventory), 28)
+        names = [name for name in inventory if '-linux-loong64.' in name]
+        self.assertEqual(len(names), 6)
+        self.assertEqual({name.rsplit('.', 1)[1] for name in names}, {'deb', 'rpm', 'zst'})
+        self.assertEqual(len(self.exercise(version='1.1.7')), 22)
+
+    def test_each_loongarch_package_is_required_unique_and_immutable(self):
+        names = [name for _, arch, _, name in mirror.release_packages('1.1.8') if arch == 'loong64']
+        for name in names:
+            for mode in ('missing', 'duplicate', 'tamper'):
+                def tamper(root, release):
+                    path = root/'release-1.1.8.json'
+                    record = json.loads(path.read_text())
+                    if mode == 'missing':
+                        record['artifacts'] = [a for a in record['artifacts'] if a['file'] != name]
+                    elif mode == 'duplicate':
+                        record['artifacts'].append(next(a for a in record['artifacts'] if a['file'] == name))
+                    else:
+                        (root/name).write_bytes(b'tampered')
+                    path.write_text(json.dumps(record))
+                with self.subTest(name=name, mode=mode), self.assertRaises(ValueError):
+                    self.exercise(tamper, version='1.1.8')
 
     def test_modified_bytes_rejected(self):
         with self.assertRaises(ValueError):

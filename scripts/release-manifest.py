@@ -3,6 +3,7 @@
 import hashlib, json, os, pathlib, sys, subprocess
 from linux_support import TARGETS, BUNDLES, package_name as linux_package_name
 from rpm_signing import signing_identity
+from linux_acceptance import validate_evidence
 from android_release import candidates as android_candidates
 from ios_release import candidates as ios_candidates
 from harmonyos_release import candidates as harmonyos_candidates
@@ -78,20 +79,10 @@ if tuple(map(int, version.split('.'))) >= (1, 1, 2):
                 evidence = json.loads((root/'linux-compat'/f'{distro}-{architecture}.json').read_text())
             except (OSError, json.JSONDecodeError) as error:
                 raise SystemExit(f'Missing Linux compatibility evidence for {distro} {architecture}: {error}')
-            expected = {linux_package_name(component,version,distro,architecture): by_name[linux_package_name(component,version,distro,architecture)] for component in ('core','ui')}
-            expected_checks = {'package-metadata','dependency-resolution','core-version','ui-dynamic-linking','core-only-install','elf-abi','ui-frontend-handshake','package-reinstall','package-remove'}
-            if architecture == 'loong64':
-                expected_checks.update({'systemd-services', 'package-upgrade', 'upgrade-state-preserved', 'kernel-network', 'real-resolved'})
-            if profile['format'] == 'rpm':
-                expected_checks.add('rpm-signature')
-                if evidence.get('rpmSigning') != signing_identity():
-                    raise SystemExit('RPM compatibility signing evidence does not match the project key')
-            if (evidence.get('target') != distro or evidence.get('architecture') != architecture or
-                evidence.get('bundle') != profile['format'] or evidence.get('productVersion') != version or
-                evidence.get('commit') != revision or evidence.get('artifacts') != expected or
-                evidence.get('passed') is not True or
-                set(evidence.get('checks', [])) != expected_checks):
-                raise SystemExit('Linux compatibility evidence does not match the release packages and commit')
+            try:
+                validate_evidence(evidence, distro, architecture, version, revision, by_name)
+            except ValueError as error:
+                raise SystemExit(str(error))
 
 android_build = None
 if tuple(map(int, version.split('.'))) >= (1, 1, 4):
@@ -143,7 +134,10 @@ if tuple(map(int, version.split('.'))) >= (1, 1, 8):
     metadata['build']['loongarchValidation'] = {
         'level': 'build' if os.environ.get('LOONGARCH_VALIDATION') == 'build' else 'full',
         'commit': revision,
-        'artifacts': {a['file']: a['sha256'] for a in artifacts if '-linux-loong64.' in a['file']}}
+        'artifacts': {a['file']: a['sha256'] for a in artifacts if '-linux-loong64.' in a['file']},
+        'targets': {} if os.environ.get('LOONGARCH_VALIDATION') == 'build' else {
+            name: json.loads((root/'linux-compat'/f'{name}-loong64.json').read_text())
+            for name, profile in TARGETS.items() if 'loong64' in profile['architectures']}}
 if harmonyos_build:
     metadata['build']['harmonyos'] = harmonyos_build
 if ios_build:

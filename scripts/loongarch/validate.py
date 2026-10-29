@@ -397,7 +397,6 @@ def phase(stage):
             if start_container(report, runtime, runtime=True):
                 subprocess.run(['docker', 'exec', runtime, 'mkdir', '-p', '/validation'], check=True)
                 subprocess.run(['docker', 'cp', str(PACKAGE_OUT), f'{runtime}:/validation/packages'], check=True)
-                subprocess.run(['docker', 'cp', str(OUT / 'upgrade-fixture'), f'{runtime}:/validation/packages/upgrade-fixture'], check=True)
                 report.check('offline-dependencies', ['docker', 'exec', runtime, 'bash', '-ec',
                     'apt-get install -y --no-install-recommends --download-only /validation/packages/*.deb '
                     'xvfb xauth fonts-dejavu-core libgl1-mesa-dri'], timeout=900)

@@ -196,71 +196,41 @@ Windows CI 使用 `windows-2022` 与 `Visual Studio 17 2022`，调整工具链�
 
 ### LoongArch 新世界构建与验收
 
-首批包目标为 Debian forky 新世界 ABI 的 `loong64`，使用独立 `deb-loong64` 基线；
-不复用 Ubuntu 22.04 的 amd64/arm64 DEB 基线，不承诺麒麟、UOS、Loongnix 或旧世界兼容。
-构建目标、镜像和依赖以 `packaging/linux/targets.json` 为准。新增平台复用已有协议与版本准入，
-不增加服务端要求，也不创建平台专用产品版本。
+只支持新世界 lp64d ABI。三种包从 1.1.8 起进入统一发布清单，Core/UI 同版本、同 commit；新增架构不改变协议或服务端要求。
 
-`Build LoongArch DEB and validate` 工作流可在 Actions 中手动运行，也由正式 Linux 构建工作流调用。
-`ref` 可选择源码分支；发布候选须使用完整 commit SHA、匹配的 `version` 和 `release=true`。
-工作流只上传 Actions artifacts，不创建 tag、不上传或公开 GitHub Release。
-默认 `full_validation=false` 只编译并生成正式 Core/UI DEB，检查 ELF、动态链接、包元数据和哈希，
-不执行源码回归、升级夹具、干净系统安装或内核 VM。需要平台验收时手动设置 `full_validation=true`。
-草稿发布同样默认快速构建；Release 的 `loongarch_full_validation=true` 会对本次候选执行完整验收。
-草稿清单明确标记 `loongarchValidation.level=build/full`，快速构建不冒充运行验收通过。
-公开前要求最终候选的完整验收及匹配 commit/包哈希；仅构建的草稿会被公开入口拒绝。
+| 包目标 | 编译基线 | 同包运行验收目标 |
+| --- | --- | --- |
+| `deb-loong64` | 固定 digest 的 Debian forky | Debian forky、官方固定 SHA256 rootfs 的 deepin 25 |
+| `rpm-loong64` | 官方固定 SHA256 容器的 openEuler 24.03 LTS SP4 | 同版本 openEuler |
+| `archlinux-loong64` | 固定 digest 的 Loong Arch Linux 社区镜像，完整滚动更新 | 对应 Loong Arch Linux |
 
-不再保留实验分支 push 触发；日常 PR 不自动执行完整模拟器验收。
+镜像、架构、包依赖以 [targets.json](../packaging/linux/targets.json) 为准；Go、固件等固定输入见
+[environment.json](../scripts/loongarch/environment.json)。基础镜像固定不代表整个软件仓库已快照锁定，实际依赖版本随构建记录。
+RPM 使用项目正式密钥签名，托盘使用 openEuler 提供的原版 AppIndicator；其他基线使用 Ayatana。
+DEB 的 t64/非 t64 包名别名保留从 ELF 推导的最低版本约束。
 
-普通 `ubuntu-26.04` runner（QEMU ≥ 10）按 prepare、builder、tests、packages、runtime、system、finish
-可见步骤执行 `python3 scripts/loongarch/validate.py --stage <阶段>`，同一 job 内保留容器和报告；
-每阶段核对源码 commit，finish 始终清理环境并检查所选范围证据。runtime/system 仅完整模式执行。
-无参数执行也默认快速构建，可用 `FULL_VALIDATION=1` 运行以下完整验收流程：
+Release 和 Build Linux 默认快速构建：只编译、打包、检查元数据、ABI、签名并生成清单，LoongArch 不安装 UI 运行依赖或启动 VM。
+DEB 工作流为 `Build LoongArch DEB`；RPM/Arch 工作流为 `Build LoongArch RPM and Arch`，
+后者可用 `target=both/rpm/archlinux` 独立重试对应格式。二者共用 `build-target.sh`，不再保留 C/Go hello 探针或 ALT 构建分支。
 
-1. 原生交叉编译 Core 和测试二进制，原生 Node 构建同 commit 前端资源。
-2. 在固定 digest 的 Debian forky loong64 容器中运行用户态测试和 UI Go/DBus activation 测试；
-   安装官方 Go，使用宿主交叉编译的固定版本 nFPM，调用正式 `build-linux-core.sh`、`build-linux-ui.sh` 生成匹配 Core/UI DEB、
-   ABI 清单和 SHA256。生产 UI 只构建一次，后续安装和握手验证使用该产物。Wails CLI 未列入 loong64，故 UI 使用已验证的 `desktop,production,webkit2_41` Go tags
-   及 `-buildvcs=false`，仍通过显式 ldflags 和真实前端握手校验 commit。
-3. 准备另一份无 GTK/WebKit 的干净运行环境。下载包依赖供离线使用，使用配套 Debian 内核、initramfs、
-   固定 SHA256 的 UEFI 固件启动 QEMU TCG 完整虚拟机。VM 没有外部网卡，不需要 fnOS 账号或仓库 secrets。
-4. 在 VM 安装实际 DEB：Core-only 不拉入 GUI 库，UI 依赖可解析，安装后文件与构建产物逐字节相同。
-   真实 systemd 用户服务和 root helper 启动后，通过 IPC 保存普通用户配置、WireGuard 身份和 root 凭据；
-   验证升级、重装保留数据和服务，普通用户真实 WebKit 前端握手，卸载停止服务并保留数据。
-5. 同时验证项目 WireGuard 内核引擎、崩溃清理、IPv6 直连承载的握手/HTTP、底层链路恢复、断开重连、
-   netfilter forwarding 及真实 systemd-resolved D-Bus/stub 查询。底层地址由测试夹具恢复，产品不接管物理网络。
+**公开前**必须对最终候选运行 Release 的 `loongarch_full_validation=true`：
 
-用户态 QEMU 无法读取 `getsockopt(SO_BINDTODEVICE)`，对应的
-`TestLinuxLocalProbeBindsPhysicalInterface` 明确移交完整 VM，必须执行并通过，不能省略。
-各项 VM 测试独立记录到 `system/steps.tsv`，某项失败仍检查其他独立项，最终退出码保持失败。
-结果通过 virtio serial 回传，不依赖宿主重新挂载 guest 写过的文件系统；缺失、损坏或没有成功退出码均失败。
+1. 构建最终三种 Core/UI 包，以及仅供 CI 使用的较低包版本升级夹具；RPM 夹具同样签名。
+2. Debian 工作流执行根模块回归（匹配源码指纹的通过记录可复用）、UI 测试和最终 DEB 的完整系统验收。
+3. RPM、Arch 构建各自完成后即可启动对应验收，无需等待 DEB 完整系统验收；deepin 随 DEB 工作流完成后启动。VM 专用 Go 测试程序交叉编译一次并按 commit/SHA256 共享。`Accept LoongArch packages in clean systems` 只下载目标格式的原始包，在 openEuler、Loong Arch Linux 和 deepin 25 的干净用户空间安装，再启动一次性 QEMU 完整系统。验收不重新编译产品。
+4. 每个正式目标检查独立安装 Core 不引入 GUI 库、依赖解析与 ELF ABI、普通用户 WebKit 前端握手、真实 systemd 服务、升级保留身份/配置、重装、真实内核网络与 resolved、卸载保留用户数据。RPM 额外验证项目签名。
+5. `linux-compat-<发行版>-loong64` 报告必须与候选的版本、产品/验证源码 commit、包 SHA256 完全一致。汇总清单嵌入四个正式目标的完整证据；公开入口重新校验各项证据，单独写入 `level=full` 无法通过。
 
-升级夹具使用**当前候选程序加较低 DEB 版本号**，仅验证包维护流程和当前格式数据保留，
-不冒充历史正式版本或历史 schema 迁移。首个 LoongArch 正式包发布后应保存原始产物，后续补充真实历史包升级验收。
-本流程仍不覆盖真机/显卡、Wayland/托盘交互、polkit 弹窗、真实 fnOS 登录/OTP 或完整历史协议兼容。
+完整系统中 RPM/Arch/deepin 仅借用 Debian 的内核、initramfs 和模块缓存，产品运行库、依赖、包管理器均来自目标系统；不关闭 WebKit 沙箱。
+基础构建环境、干净内核环境及 Go 编译缓存按目标、输入指纹和月份管理。缓存不含签名私钥、用户状态或验收成功的最终产品；命中缓存也须重新验收本次安装包。
+包升级夹具使用候选代码和更低的数字包版本，只证明包维护行为，不能证明历史程序或 schema 迁移。首个 LoongArch 正式包发布后须保留原始包供后续真实历史升级验收。
+模拟器不证明物理 GPU、完整桌面/Wayland/托盘、polkit 弹窗或真实 fnOS 登录连接；最新实测与待验证项统一见 [验证记录](validation.md)。
 
-成功后上传：
+需要只重试运行验收时，可手动运行 `accept-loongarch-packages.yml`：指定产物对应的 `ref`、构建运行号 `artifact_run_id`，
+选择 `target=supported/openeuler/archlinux/deepin`。完整模式要求原运行已生成升级夹具；普通模式仅做安装启动检查，不产生可公开的完整验收证据。
+`anolis` 是显式候选选项，失败不影响正式支持清单，也不能生成正式发布证据。旧世界、麒麟/UOS/Loongnix、ALT、Fedora Remix 和 openSUSE LoongArch 不属于当前已验收目标。
 
-- `linux-packages-deb-loong64-loong64`：`linux/deb-loong64/loong64/` 下的 Core/UI DEB、构建清单与校验和。
-- `linux-compat-debian-forky-loong64`：仅完整模式上传，同 commit、同包哈希的系统及安装生命周期验收证据。
-- `loongarch-validation-<commit>`：JSON/摘要、实际依赖版本、用户态测试、串口、journal 和 VM 分项结果。
-
-固定的基础镜像、Go 和固件在 `scripts/loongarch/environment.json` 中；APT 使用 forky 当前仓库，
-依赖版本记录在 `packages.tsv`、`runtime-base-packages.tsv`，不宣称整个依赖树已快照锁定。
-构建和运行环境的依赖镜像、Go 缓存保存在 Actions cache；镜像在复制产品包、用户或测试状态之前生成，
-构建镜像不安装内核，运行镜像保留干净的无 GUI 基线。环境、准备脚本或月份变化时重新准备环境；
-删除对应 `loongarch-*` cache 可强制刷新当前月份的 APT 依赖。命中缓存仍记录依赖版本并重新运行全部包/VM 验收。
-缓存容量不足或被 GitHub 回收时自动走冷构建，首次运行不能代表缓存命中后的耗时。
-摘要及 JSON 分别记录阶段耗时、编译/运行环境缓存命中状态，完整 VM 阶段也单独计时。
-根模块通用用户态回归通过后保存源码内容指纹、环境和月份对应的通过记录。指纹保守包含根模块源码、
-内嵌资源、依赖、打包/测试脚本和未知文件；只排除明确属于移动端、独立 UI、iOS、macOS、文档及官网的输入。
-仅这些独立输入变化时可复用匹配的通过记录，仍重新编译 VM 必需测试及 probe，并对最终包执行全部系统验收。
-报告显式记录复用来源 commit；记录缺失、损坏、环境变化或指纹不符时，在完整模式中运行根模块全部回归。
-手动运行可设置 `full_regression=true` 强制完整根模块回归。UI 测试及实际 DEB 的安装、升级、重装、卸载、
-UI 启动、WireGuard 与 DNS 验收在完整模式中始终执行，不采用该复用机制。
-无需龙芯实机；所有提权、包安装与网络操作均限于一次性容器/VM。
-
-手工在匹配的新世界环境构建：
+在匹配基线手工构建：
 
 ```sh
 TARGET=deb-loong64 ARCH=loong64 bash scripts/build-linux-core.sh
@@ -268,38 +238,12 @@ TARGET=deb-loong64 ARCH=loong64 bash scripts/build-linux-ui.sh
 python3 scripts/check-linux-packages.py dist/linux/deb-loong64/loong64 deb-loong64 loong64
 ```
 
-本地无需 Docker 的检查入口：`python3 scripts/loongarch/validate_test.py`、
-`python3 scripts/linux_support_test.py`、`python3 scripts/install_linux_test.py`、`python3 scripts/release_manifest_test.py`。
+本地回归入口：`python3 scripts/loongarch/validate_test.py`、`python3 scripts/linux_support_test.py`、
+`python3 scripts/linux_acceptance_test.py`、`python3 scripts/install_linux_test.py`、`python3 scripts/release_manifest_test.py`。
+无需本机龙芯设备，实际安装和网络操作仅发生在 CI 一次性环境中。
 
-### LoongArch RPM / Arch 构建与验收
-
-`Build LoongArch RPM and Arch` 既可单独手动运行，也由 Linux 草稿构建复用。
-手动输入 `target=both/rpm/archlinux`、完整 `ref` SHA；`release=true` 时还需匹配源码的 `version`，RPM 使用项目正式密钥签名。
-`runtime_validation=true` 进行一次干净安装及完整 VM 启动检查，默认草稿构建不重复执行。
-失败时只重试对应格式；Go 模块下载保留校验并进行有界重试。
-Go 模块和编译结果按格式缓存；工具环境按月份、目标配置和准备脚本指纹缓存，缓存建立于产品编译和签名前，不包含产品、用户数据或签名私钥。
-配置或工具链变化自动重建工具环境；运行验收始终另起干净用户空间。
-
-RPM 基线是 openEuler 24.03 LTS SP4：下载官方容器归档并核对固定 SHA256，再用归档中的 image ID 启动。
-软件包使用该版本官方 OS/everything/EPOL/update 仓库及原有签名，托盘使用系统提供的 AppIndicator。
-Arch 使用固定 digest 的 pkgforge Loong Arch Linux 镜像和完整滚动更新。
-它们与 Debian DEB 共用 `scripts/loongarch/build-target.sh`，避免重复维护编译、包结构和 ABI 检查。
-`targets.json` 分别定义 `deb-loong64`、`rpm-loong64`、`archlinux-loong64`，从 1.1.8 起进入发布清单。
-其他 CPU 架构的 Linux 构建基线不变。
-
-运行验证先删除构建容器，再启动干净镜像；依次检查 Core 独立安装、Core/UI 依赖解析、动态链接、
-服务文件安装，测试工具在产品依赖检查之后安装；再导出同一用户空间，在完整 VM 检查普通用户 Xvfb/WebKit 前端握手、真实服务启动、重装和卸载。
-`runtime-validation.json` 记录精确包哈希及源码 commit；失败保留 UI/动态链接日志。
-VM 仅复用 Debian 内核/initramfs/模块缓存，运行库与包管理器仍来自目标发行版，不禁用 WebKit 沙箱。它不重复执行整套网络回归，也不冒充历史版本升级验证。
-快速草稿不能直接公开，发布脚本继续要求同 commit、同包哈希的完整 LoongArch 验收证据。
-deepin 25 已通过官方 rootfs 安装启动检查，复用 Debian DEB 并加入安装器；Anolis 23.5 的最新 UI 启动失败，仍为候选，不进入支持声明或安装器。
-`Validate LoongArch derivative compatibility` 下载现有同 commit 草稿中的精确 DEB/RPM，按发布清单复核哈希后安装启动；不重新编译。
-Deepin 25 使用上游发布、固定 SHA256 的 rootfs；Anolis 23.5 使用官方签名 RPM 仓库创建干净 installroot。
-尚未通过的候选放在 `compatibilityCandidates`，与发布目标清单分开，失败不写成已支持；报告分别记录产物 commit 与验证脚本 commit。
-DEB 的 t64/非 t64 别名均保留从实际 ELF 符号推导的最低版本约束。
-显式草稿安装须提供有读取权限的 `GH_TOKEN` 并指定 `--version 1.1.8`；安装器通过 release ID 查找未打 tag 的草稿，`latest` 不会选择草稿。
-GitHub 对修改 workflow 的候选 commit 有额外权限限制：使用内置 token 构建草稿时，保持候选为 main HEAD，避免构建期间继续改动 workflow 导致更新草稿 HTTP 403。
-参见 [GitHub 权限说明](https://github.blog/changelog/2023-11-02-github-actions-enforcing-workflow-scope-when-creating-a-release/)。
+草稿安装须提供可读取草稿的 `GH_TOKEN` 并显式指定版本；安装器通过 release ID 读取未打 tag 的草稿，`latest` 只选公开正式版。
+使用内置 token 构建含 workflow 修改的草稿时，候选保持为 main HEAD；构建期间不要再推进相关 workflow，避免 GitHub 更新草稿的权限限制。
 
 ### 正式 Linux 安装包
 
@@ -968,7 +912,7 @@ Secrets 传递给 Linux 构建流程。仅 RPM 发布构建的签名步骤接收
 上传目录是 `dist/linux/`，不包含签名临时目录。
 
 流程顺序为：构建 Core/UI → 签名 RPM → 隔离公钥验签 → 生成构建清单和 SHA256 →
-在 Fedora/openSUSE 安装同一份签名包 → 统一发布清单。
+在对应 Fedora/openSUSE 或 openEuler 环境安装同一份签名包 → 统一发布清单。
 兼容性测试不再允许未签名本地 RPM，证据包含 `rpm-signature` 和公钥指纹；发布清单
 拒绝缺少签名证据或使用其他公钥的候选。发布后不得重新签名覆盖旧包。
 
@@ -1012,13 +956,14 @@ Linux 矩阵中的通用脚本/前端回归只执行一次，各基线的原生 
 调整发布编排时可手动设置 `artifacts_only=true`：运行完整候选构建与验收，仅上传 Actions artifact，
 不上传、覆盖或公开 GitHub Release；不得与 `publish=true` 同时使用。
 
-流水线固定 Go 1.27.1、Xcode 16.4 / 对应 SDK、Node 22.14.0 和 fnpack 1.2.3（下载验证 SHA256），使用 macOS 15 Apple Silicon runner。临时目录按构建随机隔离。
+流水线固定 Go 1.27.1、Node 22.14.0 和 fnpack 1.2.3（下载验证 SHA256）。macOS/fnOS 与 iOS 分别使用工作流指定的 Xcode/SDK，macOS 发布使用 Apple Silicon runner；实际工具版本写入构建清单，临时目录按构建随机隔离。
 本地首发环境可能不同，发布清单记录实际工具版本；两端同一 commit 不等于构建字节可复现。
 
 1. 更新 `internal/version/VERSION`（纯数字 `MAJOR.MINOR.PATCH`）、同步模板、更新 CHANGELOG，提交代码。
-2. 推送候选 commit 后运行 `gh workflow run release.yml --ref main -f version=1.1.7 -f commit="$(git rev-parse HEAD)"`（替换版本号）。流水线固定完整 SHA 检查、构建并上传草稿，不创建 tag、不自动公开。
+2. 推送候选 commit 后运行 `gh workflow run release.yml --ref main -f version=1.1.8 -f commit="$(git rev-parse HEAD)"`（替换版本号）。流水线固定完整 SHA 检查、构建并上传草稿，不创建 tag、不自动公开。
+   1.1.8 起，公开前的最终草稿必须加 `-f loongarch_full_validation=true` 完成全部 LoongArch 目标的同包验收；默认快速草稿不能公开。
 3. 草稿出错可修复、提交新 commit 后按新 SHA 重建及替换；版本 tag 在草稿期间必须不存在。Review 使用 `https://github.com/rectcircle/fn-connect-private-network/compare/v<上一正式版本>...<候选完整SHA>`。公开后兼容修复应升 PATCH。
-4. 候选验收后，推荐运行 `python3 scripts/quark-release.py dispatch v1.0.10`（替换为待发布版本），先检查本地夸克授权并通过 `gh secret set` 同步 Secret，再触发公开发布。仅需 GitHub 发布时仍可运行 `gh workflow run release.yml --ref main -f version=1.0.10 -f commit=<草稿清单中的完整SHA> -f publish=true`，但必须预先准备夸克 Secret，否则后续镜像 job 会失败。独立的 publish job 下载原草稿产物复核并公开，不依赖构建 job，不安装编译工具、不重建或重新上传资产；也可使用本地已验收的原始产物运行 `python3 scripts/publish-release.py dist --publish`，避免将另一批未经确认的构建视为已验收。
+4. 候选验收后，推荐运行 `python3 scripts/quark-release.py dispatch v1.1.8`（替换为待发布版本），先检查本地夸克授权并通过 `gh secret set` 同步 Secret，再触发公开发布。仅需 GitHub 发布时仍可运行 `gh workflow run release.yml --ref main -f version=1.1.8 -f commit=<草稿清单中的完整SHA> -f publish=true`，但必须预先准备夸克 Secret，否则后续镜像 job 会失败。独立的 publish job 下载原草稿产物复核并公开，不依赖构建 job，不安装编译工具、不重建或重新上传资产；也可使用本地已验收的原始产物运行 `python3 scripts/publish-release.py dist --publish`，避免将另一批未经确认的构建视为已验收。
 5. 草稿及其资产均按 Release ID 操作，更新草稿时显式保留 `tag_name`，支持尚无 Git tag 的草稿；下载入口使用 `python3 scripts/download-release.py v<版本> dist`。Release 说明从 CHANGELOG 对应版本条目提取；尚未登记版本时使用 Unreleased，公开前应完成版本条目。发布脚本下载远端所有资产逐字节复核后，在候选 commit 创建版本 tag，再公开；如创建 tag 后公开失败，重试仅允许复用相同 commit 的 tag；已公开版本只允许校验一致的幂等重试，不覆盖。
 6. `python3 scripts/update-cask.py <version>` 仅从公开稳定版发布清单生成 `Casks/fncpn.rb`；脚本拒绝非数字版本、草稿和 GitHub prerelease；公开任务自动提交并推送 Cask 更新。提交并推送生成文件。
 
@@ -1031,8 +976,8 @@ iOS 从 1.1.5 起提供 `fncpn-<version>-ios-arm64-unsigned.ipa`，独立 Xcode 
 候选构建同时启动 Android Release 构建，最终汇总 job 下载同 commit 的 APK 和验签证据，
 校验非调试包、签名指纹、版本、ABI 与 SHA256 后纳入统一清单；公开与夸克镜像同样要求双 ABI APK。
 
-macOS、Windows、fnOS 安装包命名使用小写 `fncpn-<version>-<os>-<arch>[-unsigned].<extension>`，系统为 `macos`、`windows`、`fnos`，架构为 `arm64`、`x64`。fnOS manifest 内的 `x86`/`arm` 平台标识保持不变，仅对外文件名统一。`release-<version>.json` 与 `SHA256SUMS-<version>` 为发布清单和校验和，沿用现有名称。Linux 使用 `fncpn-{core,ui}-<version>-linux-{amd64,arm64}.{deb,rpm,pkg.tar.zst}`，
-Arch 仅 amd64；两个组件必须成套更新，Nix 使用 Flake 源码构建。
+macOS、Windows、fnOS 安装包命名使用小写 `fncpn-<version>-<os>-<arch>[-unsigned].<extension>`，系统为 `macos`、`windows`、`fnos`，架构为 `arm64`、`x64`。fnOS manifest 内的 `x86`/`arm` 平台标识保持不变，仅对外文件名统一。`release-<version>.json` 与 `SHA256SUMS-<version>` 为发布清单和校验和，沿用现有名称。Linux 文件名为 `fncpn-{core,ui}-<version>-linux-<arch>.<包扩展名>`，格式与架构组合由 `targets.json` 定义，
+1.1.8 起增加 loong64 的 DEB/RPM/pkg.tar.zst，共 16 个 Linux 包；Arch 不支持 arm64。两个组件必须成套更新，Nix 使用 Flake 源码构建。
 已公开安装包不改名，Homebrew 生成器支持历史文件名。
 
 macOS 发布在 Apple Silicon runner 上构建 arm64 和 x64 两套 PKG，Swift 使用 `arm64`/`x86_64` target，Go 使用 `arm64`/`amd64` 并指定 cgo clang 架构。打包前校验 App 和 helper 的 Mach-O 架构。Intel 原生运行验证仍需 Intel Mac，不以交叉构建代替实机验收。
@@ -1095,10 +1040,10 @@ CODEX_CI=1 node "$HOME/.local/share/quark-cli/1.0.24/quark-drive.cjs" get-user-i
 
 ```bash
 # 草稿构建和验收完成后：检查本地授权、更新 Secret，然后公开并镜像。
-python3 scripts/quark-release.py dispatch v1.0.10
+python3 scripts/quark-release.py dispatch v1.1.8
 
 # 已公开版本的镜像失败后：更新授权并只重试镜像，不重建或替换 GitHub 资产。
-python3 scripts/quark-release.py dispatch v1.0.10 --mode mirror
+python3 scripts/quark-release.py dispatch v1.1.8 --mode mirror
 ```
 
 #### Token 获取与传递
@@ -1121,7 +1066,7 @@ runner 只提取固定版本 CLI 的运行文件并校验压缩包 SHA256，不�
 
 镜像流程：
 
-1. 拒绝草稿及 prerelease，从指定公开 tag 下载全部资产；校验清单版本、tag commit 和该版本的完整平台安装包清单（1.1.2 起包括 10 个 Linux 包）、
+1. 拒绝草稿及 prerelease，从指定公开 tag 下载全部资产；校验清单版本、tag commit 和该版本的完整平台安装包清单（1.1.2–1.1.7 含 10 个 Linux 包，1.1.8 起含 16 个；当前完整资产共 28 个）、
    `SHA256SUMS` 和 GitHub 提供的全部资产 SHA256，不构建或重新打包。
 2. 上传到未分享的 `/releases/fncpn-staging/v<版本>/`。重试时回读已有文件，只补传缺失文件；
    同名不同内容、重复名称或额外文件立即失败，不覆盖或删除远端内容。

@@ -1,0 +1,157 @@
+name: Accept LoongArch packages in clean systems
+on:
+  workflow_call:
+    inputs:
+      ref:
+        type: string
+        required: true
+      version:
+        type: string
+        default: ''
+      full_validation:
+        type: boolean
+        default: true
+      target:
+        type: string
+        default: supported
+      tests_artifact:
+        type: string
+        default: ''
+      artifact_run_id:
+        type: string
+        default: ''
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Product commit matching the build artifacts
+        type: string
+        required: true
+      version:
+        description: Optional matching product version
+        type: string
+        default: ''
+      artifact_run_id:
+        description: Run containing linux-packages artifacts (full acceptance requires upgrade fixtures)
+        type: string
+        required: true
+      full_validation:
+        description: Include real kernel, network and package upgrade acceptance
+        type: boolean
+        default: false
+      target:
+        type: choice
+        options: [supported, openeuler, archlinux, deepin, anolis]
+        default: supported
+permissions:
+  contents: read
+  actions: read
+jobs:
+  targets:
+    runs-on: ubuntu-24.04
+    outputs:
+      matrix: ${{ steps.select.outputs.matrix }}
+      tests: ${{ inputs.tests_artifact || steps.tests.outputs.name }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.ref }}
+      - id: select
+        env:
+          SELECTION: ${{ inputs.target }}
+        run: |
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import json, os, sys
+          sys.path.insert(0, 'scripts')
+          from linux_support import loongarch_acceptance_matrix
+          print('matrix=' + json.dumps(loongarch_acceptance_matrix(os.environ['SELECTION'])))
+          PY
+      - uses: actions/setup-go@v6
+        if: inputs.full_validation && inputs.tests_artifact == ''
+        with:
+          go-version: '1.27.1'
+      - id: tests
+        if: inputs.full_validation && inputs.tests_artifact == ''
+        run: |
+          python3 scripts/loongarch/prepare-acceptance.py tests
+          echo "name=loongarch-acceptance-tests-manual-${GITHUB_RUN_ID}" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v4
+        if: inputs.full_validation && inputs.tests_artifact == ''
+        with:
+          name: ${{ steps.tests.outputs.name }}
+          path: dist/loongarch-validation/
+          if-no-files-found: error
+          overwrite: true
+  compatibility:
+    needs: targets
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.targets.outputs.matrix) }}
+    runs-on: ubuntu-26.04
+    timeout-minutes: 90
+    env:
+      TARGET: ${{ matrix.target }}
+      VERSION: ${{ inputs.version }}
+      FULL_ACCEPTANCE: ${{ inputs.full_validation && '1' || '0' }}
+      RELEASE: '1'
+      DIST_DIR: /workspace/dist/linux
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.ref }}
+          fetch-depth: 0
+      - name: Identify candidate source
+        run: echo "FNCPN_VALIDATION_COMMIT=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+      - uses: actions/download-artifact@v4
+        if: inputs.full_validation
+        with:
+          name: ${{ needs.targets.outputs.tests }}
+          path: dist/loongarch-validation
+      - uses: actions/download-artifact@v4
+        with:
+          name: linux-packages-${{ matrix.bundle }}-loong64
+          path: dist/linux
+          run-id: ${{ inputs.artifact_run_id || github.run_id }}
+          github-token: ${{ github.token }}
+      - name: Select exact built archives and verify shared acceptance tests
+        run: python3 scripts/loongarch/prepare-acceptance.py
+      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1
+        with:
+          platforms: loong64
+      - id: cache-epoch
+        run: echo "month=$(date -u +%Y-%m)" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache/restore@v4
+        with:
+          path: ~/.cache/fncpn-loongarch
+          key: loongarch-${{ steps.cache-epoch.outputs.month }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/loongarch/environment.json', 'scripts/loongarch/provision.sh', 'go.sum', 'ui/go.sum') }}-${{ github.sha }}
+          restore-keys: |
+            loongarch-${{ steps.cache-epoch.outputs.month }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/loongarch/environment.json', 'scripts/loongarch/provision.sh', 'go.sum', 'ui/go.sum') }}-
+      - name: Install exact archives in clean upstream userspace and boot acceptance VM
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends qemu-system-misc e2fsprogs
+          python3 scripts/loongarch/prepare-compat.py
+          docker exec fncpn-format bash /workspace/scripts/loongarch/probe-format.sh runtime-bootstrap
+          docker exec fncpn-format python3 /workspace/scripts/loongarch/runtime-format.py prepare
+          sudo chown -R "$(id -u):$(id -g)" "dist/linux/$TARGET"
+          python3 scripts/loongarch/format-vm.py
+      - uses: actions/upload-artifact@v4
+        if: inputs.full_validation && matrix.target != 'anolis23-loong64'
+        with:
+          name: linux-compat-${{ matrix.target }}-loong64
+          path: dist/linux-compat/${{ matrix.target }}-loong64.json
+          if-no-files-found: error
+          overwrite: true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: loongarch-acceptance-${{ matrix.target }}
+          path: |
+            dist/linux/${{ matrix.target }}/**/*.json
+            dist/linux/${{ matrix.target }}/**/*.log
+            dist/linux/${{ matrix.target }}/**/*.txt
+            dist/linux/${{ matrix.target }}/**/guest-results.tar.gz
+          if-no-files-found: warn
+          overwrite: true
+      - name: Remove disposable environment
+        if: always()
+        run: docker rm -f fncpn-format fncpn-anolis-seed fncpn-format-kernel || true

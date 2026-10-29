@@ -6,9 +6,7 @@ from linux_support import package_profile
 
 profile=package_profile(sys.argv[1])
 packages=profile['buildDependencies']
-if profile.get('packageManager') == 'apt-rpm':
-    command=['apt-get', '-o', 'Acquire::Retries=2', '-o', 'Acquire::http::Timeout=20', 'install', '-y']
-elif profile['format']=='deb':
+if profile['format']=='deb':
     command=['apt-get','install','-y','--no-install-recommends']
 elif profile['format']=='archlinux':
     command=['pacman','-S','--needed','--noconfirm']
@@ -16,7 +14,7 @@ elif profile['osID'].startswith('opensuse'):
     command=['zypper','--non-interactive','install','--no-recommends']
 else:
     command=['dnf','install','-y','--setopt=install_weak_deps=False']
-    if profile.get('experimental'):
+    if profile.get('execution') == 'qemu':
         command += ['--setopt=timeout=20', '--setopt=retries=2', '--setopt=ip_resolve=4']
 subprocess.run(command+packages,check=True)
 # Fail here if a target's development package naming no longer supplies the ABI.

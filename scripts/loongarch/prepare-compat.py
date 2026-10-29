@@ -21,6 +21,12 @@ def main():
         if profile.get('rootfsURL'):
             download(profile['rootfsURL'], archive, profile['rootfsSHA256'])
             run('docker', 'import', '--platform=linux/loong64', str(archive), profile['image'])
+        elif profile['osID'] != 'anolis':
+            if profile.get('imageArchive'):
+                download(profile['imageArchive'], archive, profile['imageArchiveSHA256'])
+                run('docker', 'load', '-i', str(archive))
+            else:
+                run('docker', 'pull', '--platform=linux/loong64', profile['image'])
         else:
             baseline = package_profile('rpm-loong64')
             download(baseline['imageArchive'], archive, baseline['imageArchiveSHA256'])
@@ -28,7 +34,7 @@ def main():
             container = 'fncpn-anolis-seed'
             root = Path.cwd() / 'dist/anolis-root'
             root.mkdir(parents=True, exist_ok=True)
-            run('docker', 'run', '-d', '--privileged', '--platform=linux/loong64', '--name', container,
+            run('docker', 'run', '-d', '--platform=linux/loong64', '--name', container,
                 '-v', str(root) + ':/candidate', baseline['image'], 'sleep', 'infinity')
             try:
                 run('docker', 'exec', container, 'dnf', '--installroot=/candidate', '--releasever=23.5',
@@ -45,9 +51,9 @@ def main():
                 run('docker', 'import', '--platform=linux/loong64', str(exported), profile['image'])
             finally:
                 subprocess.run(['docker', 'rm', '-f', container], check=False)
-        run('docker', 'run', '-d', '--privileged', '--shm-size=1g', '--platform=linux/loong64',
+        run('docker', 'run', '-d', '--shm-size=1g', '--platform=linux/loong64',
             '--name', 'fncpn-format', '-e', 'TARGET', '-e', 'RELEASE', '-e', 'DIST_DIR',
-            '-e', 'FNCPN_RELEASE_INVENTORY', '-e', 'FNCPN_VALIDATION_COMMIT', '-v', str(Path.cwd()) + ':/workspace', profile['image'], 'sleep', 'infinity')
+            '-e', 'FULL_ACCEPTANCE', '-e', 'FNCPN_VALIDATION_COMMIT', '-v', str(Path.cwd()) + ':/workspace', profile['image'], 'sleep', 'infinity')
 
 
 if __name__ == '__main__':

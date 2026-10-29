@@ -709,7 +709,6 @@
       "execution": "qemu"
     }
   },
-  "experimentalTargets": [],
   "compatibilityCandidates": [
     {
       "id": "anolis23-loong64",

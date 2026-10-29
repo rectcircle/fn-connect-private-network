@@ -13,7 +13,7 @@ from android_release import validate_inventory as validate_android_inventory
 from ios_release import validate_inventory as validate_ios_inventory, verify_ipa
 from harmonyos_release import validate_inventory as validate_harmonyos_inventory, verify_hap
 from rpm_signing import signing_identity
-from release_assets import assets, download_asset, upload_asset, find_release
+from release_assets import assets, download_asset, upload_asset, find_release, delete_draft_asset
 
 
 def run(*args):
@@ -149,7 +149,7 @@ def publish(directory, repository, make_public=False):
                   f'fncpn-{version}-arm.fpk', f'fncpn-{version}-x86.fpk'}
         for asset in remote_assets:
             if asset['name'] in set(names) | legacy:
-                run('gh', 'api', f"repos/{repository}/releases/assets/{asset['id']}", '--method', 'DELETE')
+                delete_draft_asset(repository, release['id'], asset['id'], run)
         for name in names:
             upload_asset(repository, release['id'], name, sources.get(name, directory / name), run)
     # Never mutate a public release. Re-runs succeed only if every byte matches.

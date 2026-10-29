@@ -12,7 +12,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from linux_support import ROOT, TARGETS, BUNDLES, EXPERIMENTAL_TARGETS, experimental_matrix, build_matrix, ci_matrix, package_name, package_profile, runtime_profile, release_packages, target_profile, validate_loongarch_publication
+from linux_support import ROOT, TARGETS, BUNDLES, loongarch_acceptance_matrix, loongarch_build_matrix, build_matrix, ci_matrix, package_name, package_profile, runtime_profile, release_packages, target_profile, validate_loongarch_publication
 
 
 def module(name):
@@ -69,13 +69,20 @@ class LinuxSupportTest(unittest.TestCase):
         self.assertEqual(len(names),16)
         self.assertEqual(len(build_matrix()["include"]),5)
 
-    def test_experimental_format_can_be_retried_independently(self):
-        self.assertEqual(len(experimental_matrix()['include']), 2)
+    def test_loongarch_format_can_be_retried_independently(self):
+        self.assertEqual(len(loongarch_build_matrix()['include']), 2)
         for selected in ('rpm', 'archlinux'):
-            entries = experimental_matrix(selected)['include']
+            entries = loongarch_build_matrix(selected)['include']
             self.assertEqual(len(entries), 1)
             self.assertEqual(package_profile(entries[0]['target'])['format'], selected)
-        with self.assertRaises(ValueError): experimental_matrix('unsupported')
+        with self.assertRaises(ValueError): loongarch_build_matrix('unsupported')
+
+    def test_acceptance_matrix_selects_only_requested_real_jobs(self):
+        self.assertEqual(len(loongarch_acceptance_matrix()['include']), 3)
+        self.assertNotIn('anolis23-loong64', [r['target'] for r in loongarch_acceptance_matrix()['include']])
+        for selection, expected in [('deepin', 'deepin25-loong64'), ('anolis', 'anolis23-loong64')]:
+            self.assertEqual([r['target'] for r in loongarch_acceptance_matrix(selection)['include']], [expected])
+        with self.assertRaises(ValueError): loongarch_acceptance_matrix('both')
 
     def test_openeuler_uses_system_appindicator_and_official_archive(self):
         profile = package_profile('openeuler-loong64', 'loong64')
@@ -125,7 +132,30 @@ class LinuxSupportTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'runtime acceptance'):
                 validate_loongarch_publication(manifest)
         manifest['build']['loongarchValidation'] = {'level': 'full', 'commit': 'candidate', 'artifacts': files}
+        with self.assertRaisesRegex(ValueError, 'runtime acceptance'):
+            validate_loongarch_publication(manifest)
+        from linux_acceptance import BASE_CHECKS, SYSTEM_CHECKS
+        from rpm_signing import signing_identity
+        reports = {}
+        for name, profile in TARGETS.items():
+            if 'loong64' not in profile['architectures']: continue
+            reports[name] = {'target': name, 'architecture': 'loong64', 'bundle': profile['format'],
+                'productVersion': '1.1.8', 'commit': 'candidate', 'validationCommit': 'candidate',
+                'passed': True, 'artifacts': {package_name(c, '1.1.8', name, 'loong64'): files[package_name(c, '1.1.8', name, 'loong64')] for c in ('core', 'ui')},
+                'checks': sorted(BASE_CHECKS | SYSTEM_CHECKS)}
+            if profile['format'] == 'rpm':
+                reports[name]['checks'].append('rpm-signature')
+                reports[name]['rpmSigning'] = signing_identity()
+        proof = manifest['build']['loongarchValidation']
+        proof['targets'] = reports
         validate_loongarch_publication(manifest)
+        for name in reports:
+            original = reports[name]['artifacts'].copy()
+            reports[name]['artifacts'] = {}
+            with self.assertRaisesRegex(ValueError, 'runtime acceptance'): validate_loongarch_publication(manifest)
+            reports[name]['artifacts'] = original
+        proof['targets'].pop('deepin25-loong64')
+        with self.assertRaisesRegex(ValueError, 'runtime acceptance'): validate_loongarch_publication(manifest)
         validate_loongarch_publication({'version': '1.1.7'})
 
     def test_historical_releases_do_not_gain_loongarch_assets(self):

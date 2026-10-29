@@ -124,7 +124,7 @@ class ReleaseInventoryTest(unittest.TestCase):
                     for architecture in profile['architectures']:
                         if architecture == 'loong64' and mode == 'build-only-loongarch':
                             continue
-                        evidence={'target':distro,'architecture':architecture,'bundle':profile['format'],'productVersion':version,'commit':'commit','passed':True,'checks':['package-metadata','dependency-resolution','core-version','ui-dynamic-linking','core-only-install','elf-abi','ui-frontend-handshake','package-reinstall','package-remove'],'artifacts':{package_name(component,version,distro,architecture):hashlib.sha256(b'fixture').hexdigest() for component in ('core','ui')}}
+                        evidence={'target':distro,'architecture':architecture,'bundle':profile['format'],'productVersion':version,'commit':'commit','validationCommit':'commit','passed':True,'checks':['package-metadata','dependency-resolution','core-version','ui-dynamic-linking','core-only-install','elf-abi','ui-frontend-handshake','package-reinstall','package-remove'],'artifacts':{package_name(component,version,distro,architecture):hashlib.sha256(b'fixture').hexdigest() for component in ('core','ui')}}
                         if architecture == 'loong64':
                             evidence['checks'] += ['systemd-services','package-upgrade','upgrade-state-preserved','kernel-network','real-resolved']
                             if mode == 'no-loongarch-kernel': evidence['checks'].remove('kernel-network')

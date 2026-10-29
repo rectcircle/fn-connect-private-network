@@ -5,6 +5,7 @@ The product userspace remains openEuler or Arch. Debian supplies only the boot
 kernel/initramfs/modules, not product runtime libraries or package dependencies.
 """
 import json
+import hashlib
 import os
 from pathlib import Path
 import shutil
@@ -67,6 +68,13 @@ def main():
             run('sudo', 'mkdir', '-p', str(guest_output))
             run('sudo', 'cp', '-a', str(output) + '/.', str(guest_output))
             run('sudo', 'cp', '-a', str(temporary / 'modules'), str(mount / 'usr/lib/'))
+            if os.environ.get('FULL_ACCEPTANCE') == '1':
+                run('sudo', 'mkdir', '-p', str(mount / 'validation'))
+                run('sudo', 'cp', str(OUT / 'probe'), str(mount / 'validation/probe'))
+                tests = json.loads((OUT / 'tests/manifest.json').read_text())
+                for name in ('client', 'privileged', 'linux'):
+                    item = next(item for item in tests if item['package'].endswith('/' + name))
+                    run('sudo', 'cp', str(OUT / 'tests' / item['binary']), str(mount / f'validation/{name}.test'))
             guest = temporary / 'format-guest.sh'
             guest.write_text('''#!/bin/bash
 set -euo pipefail
@@ -79,7 +87,9 @@ finish() {
  printf '%s\\n' "$code" > "$out/exit-code"
  mkdir -p /validation/results
  cp "$out/"*.json "$out/"*.log "$out/"*.txt "$out/exit-code" /validation/results/ 2>/dev/null || true
- tar -C /validation/results -czf /dev/virtio-ports/fncpn.results .
+ if test -c /dev/virtio-ports/fncpn.results; then
+  tar -C /validation/results -czf /dev/virtio-ports/fncpn.results . || true
+ fi
  sync
  systemctl poweroff --no-block
 }
@@ -92,8 +102,8 @@ python3 /workspace/scripts/loongarch/runtime-format.py finish
             unit = temporary / 'fncpn-format-validation.service'
             unit.write_text('[Unit]\nAfter=local-fs.target dbus.service\nWants=dbus.service\n'
                             '[Service]\nType=oneshot\nStandardOutput=journal+console\n'
-                            f'Environment=TARGET={target} DIST_DIR=/workspace/dist/linux RELEASE={os.environ.get("RELEASE", "0")} FNCPN_RELEASE_INVENTORY={os.environ.get("FNCPN_RELEASE_INVENTORY", "")} FNCPN_VALIDATION_COMMIT={os.environ.get("FNCPN_VALIDATION_COMMIT", "")}\n'
-                            'ExecStart=/bin/bash /validation/format-guest.sh\nTimeoutStartSec=900\n'
+                            f'Environment=TARGET={target} DIST_DIR=/workspace/dist/linux FULL_ACCEPTANCE={os.environ.get("FULL_ACCEPTANCE", "0")} RELEASE={os.environ.get("RELEASE", "0")} FNCPN_VALIDATION_COMMIT={os.environ.get("FNCPN_VALIDATION_COMMIT", "")}\n'
+                            'ExecStart=/bin/bash /validation/format-guest.sh\nTimeoutStartSec=1800\n'
                             '[Install]\nWantedBy=multi-user.target\n')
             run('sudo', 'mkdir', '-p', str(mount / 'validation'), str(mount / 'etc/systemd/system/multi-user.target.wants'))
             run('sudo', 'cp', str(guest), str(mount / 'validation/format-guest.sh'))
@@ -111,8 +121,19 @@ python3 /workspace/scripts/loongarch/runtime-format.py finish
                        '-display', 'none', '-serial', 'stdio', '-monitor', 'none', '-no-reboot']
             try:
                 with (output / 'serial.log').open('w') as log:
-                    result = subprocess.run(command, stdout=log, stderr=subprocess.STDOUT, timeout=1000)
+                    result = subprocess.run(command, stdout=log, stderr=subprocess.STDOUT, timeout=1900)
                 read_guest_results(results, output, result.returncode)
+                evidence = json.loads((output / 'runtime-validation.json').read_text())
+                if not evidence.get('passed'):
+                    raise RuntimeError('Guest acceptance did not pass')
+                if os.environ.get('FULL_ACCEPTANCE') == '1' and target != 'anolis23-loong64':
+                    from linux_acceptance import validate_evidence
+                    build = json.loads((output / 'build-manifest.json').read_text())
+                    hashes = {a['path']: hashlib.sha256((output / a['path']).read_bytes()).hexdigest() for a in build['artifacts']}
+                    validate_evidence(evidence, target, 'loong64', build['productVersion'], build['commit'], hashes)
+                    receipt = ROOT / 'dist/linux-compat' / f'{target}-loong64.json'
+                    receipt.parent.mkdir(parents=True, exist_ok=True)
+                    receipt.write_text(json.dumps(evidence, indent=2) + '\n')
             finally:
                 if results.exists():
                     # Preserve a failed guest's diagnostic archive too.

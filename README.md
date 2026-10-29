@@ -6,7 +6,7 @@
 
 - Apple Silicon 或 Intel Mac，macOS 13 或更新版本。
 - Windows 客户端：Windows 10 22H2（build 19045）或更新的 ARM64/x64 系统，不支持 32 位或 Windows Server。Windows 10 和原生 x64 已由用户完成验收。
-- Linux 客户端：Debian 12/13、Ubuntu 22.04/24.04/26.04/26.10、Fedora 43/44、openSUSE Leap 16.0/Tumbleweed（amd64/arm64），以及官方 Arch Linux（amd64）；需要 systemd。NixOS 使用 [Flake 模块](docs/development.md#nix-flake-与-nixos)，不支持 Alpine。
+- Linux 客户端：Debian 12/13、Ubuntu 22.04/24.04/26.04/26.10、Fedora 43/44、openSUSE Leap 16.0/Tumbleweed（amd64/arm64），以及官方 Arch Linux（amd64）；1.1.8 起增加新世界 LoongArch64 的 Debian forky、deepin 25、openEuler 24.03 LTS SP4、Loong Arch Linux。需要 systemd。NixOS 使用 [Flake 模块](docs/development.md#nix-flake-与-nixos)，不支持 Alpine。
 - HarmonyOS 原生客户端：API20+、ARM64，支持手机（含折叠屏）、平板、PC/二合一；提供未签名 HAP，需用户自行调试签名安装，智慧屏暂不支持。
 - iOS/iPadOS 客户端：构建目标 iOS 15.0 起，ARM64；仅提供未签名 IPA，需具备 Packet Tunnel 权限的签名材料。安装教程：[中文](docs/ios-installation.zh-CN.md) / [English](docs/ios-installation.en.md)。
 - Android 客户端：Android 8.0 / API 26 起，ARM64 与 x86_64；大多数手机选择 ARM64。

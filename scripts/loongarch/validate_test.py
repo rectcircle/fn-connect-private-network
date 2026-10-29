@@ -17,6 +17,54 @@ spec.loader.exec_module(validation)
 
 
 class EvidenceTests(unittest.TestCase):
+    def test_upgrade_fixture_is_lower_and_rejects_tamper_and_path_traversal(self):
+        def load(name):
+            spec = importlib.util.spec_from_file_location(name, Path(__file__).with_name(name + '.py'))
+            module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
+            return module
+        fixture = load('upgrade-fixture')
+        runtime = load('runtime-format')
+        for current, lower in [('1.1.8', '1.1.7'), ('1.2.0', '1.1.0'), ('2.0.0', '1.0.0')]:
+            self.assertEqual(fixture.fixture_version(current), lower)
+        with self.assertRaises(ValueError): fixture.fixture_version('0.0.0')
+        with tempfile.TemporaryDirectory() as temporary:
+            out = Path(temporary); (out/'upgrade-fixture').mkdir()
+            metadata = {'kind': 'candidate-code-lower-package-version', 'productVersion': '1.1.8',
+                        'metadataVersion': '1.1.7', 'commit': 'candidate', 'artifacts': []}
+            for name in ('fncpn-core.rpm', 'fncpn-ui.rpm'):
+                (out/'upgrade-fixture'/name).write_bytes(name.encode())
+                metadata['artifacts'].append({'path': name, 'sha256': hashlib.sha256(name.encode()).hexdigest()})
+            build = {'commit': 'candidate', 'productVersion': '1.1.8', 'upgradeFixture': metadata}
+            receipt = out/'upgrade-fixture/fixture.json'
+            receipt.write_text(json.dumps(metadata))
+            self.assertEqual(len(runtime.fixture_packages(out, build)[0]), 2)
+            (out/'upgrade-fixture/fncpn-core.rpm').write_bytes(b'tampered')
+            with self.assertRaisesRegex(ValueError, 'checksum'): runtime.fixture_packages(out, build)
+            metadata['artifacts'][0]['path'] = '../outside.rpm'
+            receipt.write_text(json.dumps(metadata))
+            with self.assertRaisesRegex(ValueError, 'path'): runtime.fixture_packages(out, build)
+
+    def test_shared_acceptance_tests_require_candidate_hashes_and_restore_execute_mode(self):
+        spec = importlib.util.spec_from_file_location('acceptance', Path(__file__).with_name('prepare-acceptance.py'))
+        acceptance = importlib.util.module_from_spec(spec); spec.loader.exec_module(acceptance)
+        with tempfile.TemporaryDirectory() as temporary:
+            out = Path(temporary); (out/'tests').mkdir()
+            manifest = []
+            for index, package in enumerate(('internal/client', 'internal/privileged', 'internal/platform/linux')):
+                name = str(index)+'.test'; (out/'tests'/name).write_bytes(package.encode())
+                manifest.append({'package': 'project/'+package, 'binary': name})
+            (out/'tests/manifest.json').write_text(json.dumps(manifest))
+            (out/'probe').write_bytes(b'probe')
+            files = [out/'probe', *sorted((out/'tests').iterdir())]
+            record = {'commit': 'candidate', 'files': {str(p.relative_to(out)): hashlib.sha256(p.read_bytes()).hexdigest() for p in files}}
+            (out/'acceptance-tests.json').write_text(json.dumps(record))
+            with patch.object(acceptance, 'OUT', out):
+                acceptance.verify_tests('candidate')
+                self.assertEqual((out/'probe').stat().st_mode & 0o777, 0o755)
+                with self.assertRaisesRegex(ValueError, 'commit'): acceptance.verify_tests('foreign')
+                (out/'probe').write_bytes(b'tampered')
+                with self.assertRaisesRegex(ValueError, 'checksum'): acceptance.verify_tests('candidate')
+
     def test_root_regression_receipt_requires_matching_success_and_commit(self):
         with tempfile.TemporaryDirectory() as temporary:
             cache = Path(temporary)

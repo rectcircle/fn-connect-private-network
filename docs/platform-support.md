@@ -75,12 +75,13 @@ RPM 使用项目专用 OpenPGP 密钥签名，无需购买签名服务。安装�
 
 草稿 CI 已覆盖 5 组基线构建和 21 组目标容器安装、ABI、真实 WebKit 前端启动、重装及卸载。发布证据须指向同 commit、同版本、同包哈希。容器检查不能证明真实 systemd、polkit 弹窗、Wayland/托盘、内核、DNS 或完整 fnOS 连接已验收；历史协议兼容仍须单独验证。
 
-LoongArch 只支持 Debian forky 的新世界 `loong64` 包目标，独立基线避免复用 amd64/arm64 的旧 ABI 假设。
-Core/UI DEB 构建、安装识别与发布校验已接入；同 commit 包的干净安装、升级、重装、卸载、
-真实 systemd 服务、内核网络、DNS 和 WebKit 握手已通过 QEMU 验收。操作与边界见
-[LoongArch 构建与验收](development.md#loongarch-新世界构建与验收)。模拟器结果不等于真机或完整 fnOS 验收，
-不将麒麟/UOS/Loongnix、旧世界 ABI 或 MIPS 型号归入此目标。
-LoongArch 草稿默认只编译、打包和静态校验；完整系统验收按需显式开启，公开前要求最终包的匹配验收证据。
+LoongArch 只支持新世界 lp64d：Debian forky/deepin 25 复用 DEB，openEuler 24.03 LTS SP4 使用 RPM，Loong Arch Linux 使用 pkg.tar.zst。
+RPM 在 openEuler 编译，托盘使用其原版 AppIndicator。它们使用独立架构基线，避免复用 amd64/arm64 的 ABI 假设。
+草稿默认仅编译、打包和静态检查；公开前完整验收须覆盖上述四个正式目标的最终同 commit、同包哈希。
+已有实测与本次待执行的验收分开记录于 [验证记录](validation.md)，操作见 [构建与验收](development.md#loongarch-新世界构建与验收)。
+模拟器结果不等于真机、完整桌面或真实 fnOS 连接已验收；deepin 的完整 DDE/磐石安装事务尚未验证。
+Anolis 23.5 的签名、安装和动态链接检查通过，但最新完整 VM 的 JavaScriptCore 初始化失败，仍为候选，不进入安装器。
+麒麟/UOS/Loongnix、旧世界 ABI、MIPS、ALT、Fedora Remix 和 openSUSE LoongArch 不属于当前支持目标。
 
 ### Nix / NixOS
 
@@ -147,7 +148,3 @@ PC quickBarManager 与鸿蒙智联设备入口不能替代手机连接开关，�
 实名认证开发者账号，通过 HapSign 或 HAP Resigner 获取设备绑定调试签名并安装，通常需要电脑。
 功能已通过云真机调试验证；维护者暂无华为实体设备，跨账号同包名申请 Test Profile 及自行安装
 的完整链路尚未验证，不承诺普通设备直接点击 HAP 即可安装。具体步骤见根 README。
-
-LoongArch RPM 使用 openEuler 构建；系统托盘使用该系统提供的原版 AppIndicator，其他基线继续使用 Ayatana。
-deepin 25 复用 Debian DEB，已通过官方 rootfs 的完整 VM 安装、UI、服务、重装和卸载检查；完整 DDE 会话、磐石安装事务和物理设备尚未验收。
-Anolis 23.5 已通过签名、安装和动态链接检查，但最新完整 VM 中 JavaScriptCore 初始化 SIGABRT，未通过兼容验收，不列入支持清单和安装器。ALT、Fedora Remix、openSUSE LoongArch 不作为当前发布基线。

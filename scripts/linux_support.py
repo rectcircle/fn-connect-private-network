@@ -6,24 +6,22 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 CATALOG = json.loads((ROOT / 'packaging/linux/targets.json').read_text())
 TARGETS = {target['id']: target for target in CATALOG['targets']}
 BUNDLES = CATALOG['bundles']
-EXPERIMENTAL_TARGETS = {p['id']: dict(TARGETS[p['base']], **p, experimental=True)
-                        for p in CATALOG.get('experimentalTargets', [])}
 COMPATIBILITY_TARGETS = {p['id']: dict(TARGETS[p['base']], **p, compatibilityCandidate=True)
                          for p in CATALOG.get('compatibilityCandidates', [])}
 EXTENSIONS = {'deb': 'deb', 'rpm': 'rpm', 'archlinux': 'pkg.tar.zst'}
 
 
 def target_profile(name, architecture=None):
-    if name not in TARGETS and name not in EXPERIMENTAL_TARGETS and name not in COMPATIBILITY_TARGETS:
+    if name not in TARGETS and name not in COMPATIBILITY_TARGETS:
         raise ValueError(f'Unknown Linux target {name!r}; choose: {", ".join(TARGETS)}')
-    profile = (TARGETS | EXPERIMENTAL_TARGETS | COMPATIBILITY_TARGETS)[name]
+    profile = (TARGETS | COMPATIBILITY_TARGETS)[name]
     if architecture and architecture not in profile['architectures']:
         raise ValueError(f'{name} does not support architecture {architecture}')
     return profile
 
 
 def package_profile(name, architecture=None):
-    if name in EXPERIMENTAL_TARGETS or name in COMPATIBILITY_TARGETS:
+    if name in COMPATIBILITY_TARGETS:
         return dict(target_profile(name, architecture), bundle=name, baseline=name)
     profile = None if name in BUNDLES else target_profile(name, architecture)
     bundle = name if profile is None else profile.get('bundle', profile['format'])
@@ -60,24 +58,41 @@ def validate_loongarch_publication(manifest):
                 if '-linux-loong64.' in a['file']}
     if not isinstance(proof, dict):
         proof = {}
-    if (proof.get('level') != 'full' or proof.get('commit') != manifest['commit']
-            or len(expected) != 6 or proof.get('artifacts') != expected):
-        raise ValueError('LoongArch runtime acceptance is required before publication; rebuild with loongarch_full_validation=true')
+    from linux_acceptance import validate_evidence
+    targets = {name for name, p in TARGETS.items() if 'loong64' in p['architectures']}
+    try:
+        if (proof.get('level') != 'full' or proof.get('commit') != manifest['commit']
+                or len(expected) != 6 or proof.get('artifacts') != expected
+                or set(proof.get('targets', {})) != targets):
+            raise ValueError('Incomplete LoongArch acceptance inventory')
+        for name in targets:
+            validate_evidence(proof['targets'][name], name, 'loong64', manifest['version'], manifest['commit'], expected)
+    except (ValueError, KeyError, TypeError) as error:
+        raise ValueError('LoongArch runtime acceptance is required before publication; rebuild with loongarch_full_validation=true') from error
 
 
-def experimental_matrix(selected='both'):
+
+def loongarch_build_matrix(selected='both'):
     if selected not in ('both', 'rpm', 'archlinux'):
-        raise ValueError('Unknown experimental package format: ' + selected)
+        raise ValueError('Unknown LoongArch package format: ' + selected)
     profiles = {name: package_profile(name) for name, definition in BUNDLES.items()
                 if definition.get('execution') == 'qemu' and package_profile(name)['format'] != 'deb'}
     return {'include': [{'target': name, 'image': profile['image'],
                          'repository_probe': profile.get('repositoryProbe', ''),
-                         'repository_format': profile.get('repositoryProbeFormat', 'rpm-md'),
                          'image_archive': profile.get('imageArchive', ''),
                          'image_archive_sha256': profile.get('imageArchiveSHA256', '')}
                         for name, profile in profiles.items()
                         if selected == 'both' or profile['format'] == selected]}
 
+
+
+def loongarch_acceptance_matrix(selected='supported'):
+    choices = {'openeuler': 'openeuler-loong64', 'archlinux': 'archlinux-loong64',
+               'deepin': 'deepin25-loong64', 'anolis': 'anolis23-loong64'}
+    if selected != 'supported' and selected not in choices:
+        raise ValueError('Unknown acceptance target: ' + selected)
+    names = [value for key, value in choices.items() if key != 'anolis'] if selected == 'supported' else [choices[selected]]
+    return {'include': [{'target': name, 'bundle': package_profile(COMPATIBILITY_TARGETS.get(name, {}).get('base', name))['bundle']} for name in names]}
 
 
 def build_matrix():

@@ -29,6 +29,17 @@ def main():
     record={'productVersion':version,'commit':git('rev-parse','HEAD'),'architecture':arch,
             'distribution':target,'packageFormat':profile['format'],'buildOSRelease':os_release,
             'workingTreeDirty':bool(git('status','--porcelain')),'artifacts':artifacts}
+    fixture = out / 'upgrade-fixture/fixture.json'
+    if fixture.exists():
+        metadata = json.loads(fixture.read_text())
+        if metadata.get('productVersion') != version or metadata.get('commit') != record['commit']:
+            raise ValueError('Upgrade fixture differs from candidate')
+        metadata['artifacts'] = [{'path': path.name, 'sha256': hashlib.sha256(path.read_bytes()).hexdigest()}
+                                 for path in sorted(fixture.parent.iterdir()) if path.name.endswith(('.deb', '.rpm', '.pkg.tar.zst'))]
+        if len(metadata['artifacts']) != 2:
+            raise ValueError('Expected exactly two upgrade fixture packages')
+        fixture.write_text(json.dumps(metadata, indent=2)+'\n')
+        record['upgradeFixture'] = metadata
     if profile['format'] == 'rpm' and os.environ.get('RELEASE') == '1':
         record['rpmSigning'] = verify([out/a['path'] for a in artifacts])
     record['abi'] = inspect(out/'fncpn', out/'fncpn-ui')

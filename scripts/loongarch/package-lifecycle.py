@@ -56,7 +56,7 @@ def main(mode):
     evidence_file = OUT / 'package-evidence.json'
     evidence = json.loads(evidence_file.read_text()) if evidence_file.exists() else {
         'target': 'debian-forky', 'architecture': 'loong64', 'bundle': 'deb',
-        'productVersion': version, 'commit': commit, 'passed': False, 'checks': [],
+        'schemaVersion': 1, 'productVersion': version, 'commit': commit, 'validationCommit': commit, 'passed': False, 'checks': [],
         'artifacts': {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in archives},
         'upgradeFixture': 'same candidate code at a lower DEB version; not historical release compatibility'}
     try:
@@ -119,7 +119,7 @@ def main(mode):
             steps = dict(line.split('\t') for line in (OUT / 'steps.tsv').read_text().splitlines())
             if steps.get('ui') == 'passed':
                 evidence['checks'].append('ui-frontend-handshake')
-            if all(steps.get(name) == 'passed' for name in ('local-socket', 'kernel-client', 'netfilter', 'network-and-resolved')):
+            if all(steps.get(name) == 'passed' for name in ('local-socket', 'kernel-client', 'dns-bridge', 'netfilter', 'network-and-resolved')):
                 evidence['checks'] += ['kernel-network', 'real-resolved']
             run('apt-get', 'remove', '-y', 'fncpn-ui', 'fncpn-core')
             if any(Path('/usr/bin', name).exists() for name in ('fncpn', 'fncpn-ui')):
