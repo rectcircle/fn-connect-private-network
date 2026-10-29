@@ -5,6 +5,7 @@ import importlib.util
 import json
 import os
 import shlex
+import shutil
 from pathlib import Path
 import subprocess
 import sys
@@ -30,6 +31,20 @@ def run_test(binary, name, *prefix):
     if name not in run(binary, '-test.list', '^' + name + '$').splitlines():
         raise ValueError('Missing acceptance test: ' + name)
     run(*prefix, binary, '-test.v', '-test.timeout=180s', '-test.run', '^' + name + '$')
+
+
+def configure_netfilter_test(directory=Path('/validation/netfilter-bin')):
+    """Select nft only for the disposable test process, never system alternatives."""
+    if 'nf_tables' in run('iptables', '--version'):
+        return
+    nft = shutil.which('iptables-nft')
+    if nft is None:
+        raise ValueError('Network acceptance requires the iptables-nft test tool')
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory/'iptables').symlink_to(nft)
+    os.environ['PATH'] = str(directory) + os.pathsep + os.environ['PATH']
+    if 'nf_tables' not in run('iptables', '--version'):
+        raise ValueError('Network acceptance did not select the nft backend')
 
 
 def fixture_packages(out, build):
@@ -152,7 +167,8 @@ def main():
             elif profile['format'] == 'rpm':
                 run('dnf', 'install', '-y', 'xorg-x11-server-Xvfb', 'xorg-x11-xauth', 'dbus-daemon',
                     profile.get('testFontPackage', 'dejavu-fonts'), 'shadow', 'mesa-dri-drivers', 'systemd-pam',
-                    'systemd-udev', 'kmod', 'binutils', 'iproute', 'iptables', 'nftables', 'wireguard-tools', 'iputils')
+                    'systemd-udev', 'kmod', 'binutils', 'iproute', 'iptables', 'nftables', 'wireguard-tools', 'iputils',
+                    *(['iptables-nft'] if full else []))
             else:
                 run('pacman', '-S', '--noconfirm', '--needed', 'xorg-server-xvfb', 'xorg-xauth', 'dbus', 'ttf-dejavu',
                     'shadow', 'mesa', 'kmod', 'binutils', 'iproute2', 'iptables', 'nftables', 'wireguard-tools', 'iputils')
@@ -215,6 +231,8 @@ def main():
                                  ('privileged.test', 'TestKernelDNSBridgeCapability'),
                                  ('linux.test', 'TestDockerForwardingIntegration'),
                                  ('probe', 'TestWireGuardTrafficAndReconnect'), ('probe', 'TestRealResolvedDNS')]:
+                if name == 'TestDockerForwardingIntegration':
+                    configure_netfilter_test()
                 run_test('/validation/' + binary, name)
             report['checks'] += ['kernel-network', 'real-resolved']
         install(packages, reinstall=True)

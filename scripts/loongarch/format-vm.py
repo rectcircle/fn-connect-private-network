@@ -11,6 +11,10 @@ from pathlib import Path
 import shutil
 import subprocess
 import tempfile
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from linux_acceptance import validate_evidence
 
 from validate import ROOT, OUT, ENVIRONMENT, Report, download, read_guest_results, start_container
 
@@ -127,7 +131,6 @@ python3 /workspace/scripts/loongarch/runtime-format.py finish
                 if not evidence.get('passed'):
                     raise RuntimeError('Guest acceptance did not pass')
                 if os.environ.get('FULL_ACCEPTANCE') == '1' and target != 'anolis23-loong64':
-                    from linux_acceptance import validate_evidence
                     build = json.loads((output / 'build-manifest.json').read_text())
                     hashes = {a['path']: hashlib.sha256((output / a['path']).read_bytes()).hexdigest() for a in build['artifacts']}
                     validate_evidence(evidence, target, 'loong64', build['productVersion'], build['commit'], hashes)

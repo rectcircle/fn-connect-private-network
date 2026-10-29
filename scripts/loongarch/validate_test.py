@@ -4,6 +4,8 @@ import hashlib
 import importlib.util
 import json
 import io
+import os
+import subprocess
 from pathlib import Path
 import sys
 import tarfile
@@ -17,6 +19,26 @@ spec.loader.exec_module(validation)
 
 
 class EvidenceTests(unittest.TestCase):
+    def test_vm_entrypoint_imports_release_validator_in_isolated_python(self):
+        directory = Path(__file__).resolve().parent
+        code = 'import runpy,sys;sys.path.insert(0,sys.argv[1]);runpy.run_path(sys.argv[2],run_name="import_check")'
+        subprocess.run([sys.executable, '-I', '-c', code, str(directory), str(directory/'format-vm.py')], check=True)
+
+    def test_netfilter_backend_selection_is_scoped_to_test_path(self):
+        spec = importlib.util.spec_from_file_location('runtime', Path(__file__).with_name('runtime-format.py'))
+        runtime = importlib.util.module_from_spec(spec); spec.loader.exec_module(runtime)
+        with tempfile.TemporaryDirectory() as temporary, patch.dict(os.environ, {'PATH': '/usr/bin'}):
+            directory = Path(temporary)/'bin'
+            with patch.object(runtime, 'run', side_effect=['iptables (legacy)', 'iptables (nf_tables)']), patch.object(runtime.shutil, 'which', return_value='/usr/sbin/iptables-nft'):
+                runtime.configure_netfilter_test(directory)
+            self.assertEqual((directory/'iptables').readlink(), Path('/usr/sbin/iptables-nft'))
+            self.assertEqual(os.environ['PATH'], str(directory)+':/usr/bin')
+        with patch.object(runtime, 'run', return_value='iptables (legacy)'), patch.object(runtime.shutil, 'which', return_value=None):
+            with self.assertRaisesRegex(ValueError, 'iptables-nft'): runtime.configure_netfilter_test()
+        with patch.object(runtime, 'run', return_value='iptables (nf_tables)'), patch.object(runtime.shutil, 'which') as lookup:
+            runtime.configure_netfilter_test()
+            lookup.assert_not_called()
+
     def test_upgrade_fixture_is_lower_and_rejects_tamper_and_path_traversal(self):
         def load(name):
             spec = importlib.util.spec_from_file_location(name, Path(__file__).with_name(name + '.py'))
