@@ -683,7 +683,8 @@
       "osVersion": "23.5",
       "image": "fncpn-anolis23:rootfs",
       "repositoryURL": "https://mirrors.openanolis.cn/anolis/23.5/os/loongarch64/os/",
-      "repositoryKey": "https://mirrors.openanolis.cn/anolis/RPM-GPG-KEY-ANOLIS"
+      "repositoryKey": "https://mirrors.openanolis.cn/anolis/RPM-GPG-KEY-ANOLIS",
+      "testFontPackage": "dejavu-sans-fonts"
     }
   ]
 }

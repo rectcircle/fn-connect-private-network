@@ -34,6 +34,7 @@ def main():
     packages = sorted(out.glob({'rpm': '*.rpm', 'deb': '*.deb', 'archlinux': '*.pkg.tar.zst'}[profile['format']]))
     assert len(packages) == 2, 'Expected exact Core/UI candidate pair'
     report = {'passed': False, 'target': target, 'commit': build['commit'],
+              'validationCommit': os.environ.get('FNCPN_VALIDATION_COMMIT', build['commit']),
               'scope': 'clean-container installation and UI startup',
               'artifacts': {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in packages},
               'checks': [], 'notValidated': ['booted systemd services', 'kernel/network', 'RPM signature']}
@@ -83,7 +84,7 @@ def main():
             elif profile.get('packageManager') == 'apt-rpm':
                 run('apt-get', 'install', '-y', 'xorg-xvfb', 'xauth', 'dbus', 'fonts-ttf-dejavu', 'shadow-utils', 'util-linux')
             elif profile['format'] == 'rpm':
-                run('dnf', 'install', '-y', 'xorg-x11-server-Xvfb', 'xorg-x11-xauth', 'dbus-daemon', 'dejavu-fonts', 'shadow', 'mesa-dri-drivers', 'systemd-pam', 'systemd-udev', 'kmod')
+                run('dnf', 'install', '-y', 'xorg-x11-server-Xvfb', 'xorg-x11-xauth', 'dbus-daemon', profile.get('testFontPackage', 'dejavu-fonts'), 'shadow', 'mesa-dri-drivers', 'systemd-pam', 'systemd-udev', 'kmod')
             else:
                 run('pacman', '-S', '--noconfirm', '--needed', 'xorg-server-xvfb', 'xorg-xauth', 'dbus', 'ttf-dejavu', 'shadow', 'mesa', 'kmod')
         if mode == 'prepare':

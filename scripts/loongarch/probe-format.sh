@@ -53,7 +53,7 @@ PYREPO
   git config --global --add safe.directory /workspace
   if [ "$1" = bootstrap ]; then python3 scripts/linux-ci-dependencies.py "$TARGET"; fi
   cat /etc/os-release
-  if command -v rpm >/dev/null; then rpm -qa | sort > "$out/installed-packages.txt"; else pacman -Q > "$out/installed-packages.txt"; fi
+  if command -v rpm >/dev/null; then rpm -qa | sort > "$out/installed-packages.txt"; elif command -v dpkg-query >/dev/null; then dpkg-query -W > "$out/installed-packages.txt"; else pacman -Q > "$out/installed-packages.txt"; fi
   ;;
  toolchain)
   test "$(go env GOARCH)" = loong64

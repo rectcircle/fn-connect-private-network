@@ -92,7 +92,7 @@ python3 /workspace/scripts/loongarch/runtime-format.py finish
             unit = temporary / 'fncpn-format-validation.service'
             unit.write_text('[Unit]\nAfter=local-fs.target dbus.service\nWants=dbus.service\n'
                             '[Service]\nType=oneshot\nStandardOutput=journal+console\n'
-                            f'Environment=TARGET={target} DIST_DIR=/workspace/dist/linux RELEASE={os.environ.get("RELEASE", "0")} FNCPN_RELEASE_INVENTORY={os.environ.get("FNCPN_RELEASE_INVENTORY", "")}\n'
+                            f'Environment=TARGET={target} DIST_DIR=/workspace/dist/linux RELEASE={os.environ.get("RELEASE", "0")} FNCPN_RELEASE_INVENTORY={os.environ.get("FNCPN_RELEASE_INVENTORY", "")} FNCPN_VALIDATION_COMMIT={os.environ.get("FNCPN_VALIDATION_COMMIT", "")}\n'
                             'ExecStart=/bin/bash /validation/format-guest.sh\nTimeoutStartSec=900\n'
                             '[Install]\nWantedBy=multi-user.target\n')
             run('sudo', 'mkdir', '-p', str(mount / 'validation'), str(mount / 'etc/systemd/system/multi-user.target.wants'))

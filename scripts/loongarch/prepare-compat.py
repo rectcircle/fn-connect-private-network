@@ -47,7 +47,7 @@ def main():
                 subprocess.run(['docker', 'rm', '-f', container], check=False)
         run('docker', 'run', '-d', '--privileged', '--shm-size=1g', '--platform=linux/loong64',
             '--name', 'fncpn-format', '-e', 'TARGET', '-e', 'RELEASE', '-e', 'DIST_DIR',
-            '-e', 'FNCPN_RELEASE_INVENTORY', '-v', str(Path.cwd()) + ':/workspace', profile['image'], 'sleep', 'infinity')
+            '-e', 'FNCPN_RELEASE_INVENTORY', '-e', 'FNCPN_VALIDATION_COMMIT', '-v', str(Path.cwd()) + ':/workspace', profile['image'], 'sleep', 'infinity')
 
 
 if __name__ == '__main__':
