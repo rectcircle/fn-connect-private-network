@@ -20,7 +20,8 @@ Object.assign(translations, {
   "复制 Linux 安装命令": "Copy Linux install commands",
   "默认获取 GitHub latest 公开版；Linux 包从 1.1.2 起提供，未公开前 latest 可能无包。可追加 --type core 或 --version 1.1.2；草稿需要 GitHub token。": "Uses the latest public GitHub release. Linux packages start at 1.1.2; latest may have no Linux assets until publication. Add --type core or --version 1.1.2 as needed. Drafts require a GitHub token.",
   "Arch 仅 amd64；不支持 Alpine。GNOME 顶栏图标需要 AppIndicator 扩展；分域 DNS 需要 systemd-resolved stub。": "Arch supports amd64 only; Alpine is unsupported. GNOME tray icons need the AppIndicator extension. Split DNS requires the systemd-resolved stub.",
-  "完整支持矩阵与手动安装 ↗": "Support matrix and manual installation ↗",
+  "完整支持矩阵 ↗": "Support matrix ↗",
+  "手动安装 ↗": "Manual installation ↗",
   "Linux 故障排查 ↗": "Linux troubleshooting ↗",
   "Nix / NixOS 通过 Flake 源码构建，不提供独立二进制包。": "Nix / NixOS builds from Flake sources; no separate binary package is published.",
   "Nix Flake 与 NixOS 模块 ↗": "Nix Flake and NixOS module ↗"
