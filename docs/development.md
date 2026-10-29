@@ -224,6 +224,7 @@ DEB 工作流为 `Build LoongArch DEB`；RPM/Arch 工作流为 `Build LoongArch 
 完整系统中 RPM/Arch/deepin 仅借用 Debian 的内核、initramfs 和模块缓存，产品运行库、依赖、包管理器均来自目标系统；不关闭 WebKit 沙箱。
 基础构建环境、干净内核环境及 Go 编译缓存按目标、输入指纹和月份管理。缓存不含签名私钥、用户状态或验收成功的最终产品；命中缓存也须重新验收本次安装包。
 需要排查下载慢时，可手动运行 `benchmark-openeuler-mirrors.yml`：在同一 GitHub runner 检查候选源的四个 LoongArch 仓库、与官方元数据的一致性，以及同一 RPM 两次完整下载的吞吐和 SHA256；结果在任务摘要和 artifact 中，不自动修改构建源。
+openEuler 构建和验收优先使用华为云 HTTPS 镜像，中科大和官方源作为回退，保持原版本、架构和 GPG 签名策略；容器归档仍使用官方固定 SHA256。
 openEuler 验收仅缓存 DNF 仓库元数据及依赖 RPM，每次仍在干净用户空间解析依赖、校验签名并安装；不会复用已安装系统或产品包。下载使用有限传输重试和较宽松的低速阈值，保留单次及任务总超时；签名、依赖解析或事务错误不重试。
 包升级夹具使用候选代码和更低的数字包版本，只证明包维护行为，不能证明历史程序或 schema 迁移。首个 LoongArch 正式包发布后须保留原始包供后续真实历史升级验收。
 模拟器不证明物理 GPU、完整桌面/Wayland/托盘、polkit 弹窗或真实 fnOS 登录连接；最新实测与待验证项统一见 [验证记录](validation.md)。

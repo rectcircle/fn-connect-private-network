@@ -99,14 +99,7 @@ jobs:
       - name: Check candidate repository before preparing build tools
         if: matrix.repository_probe != ''
         run: |
-          echo "Checking candidate repository: $REPOSITORY_PROBE"
-          curl -4 --fail --show-error --location --connect-timeout 8 --max-time 20 --retry 2 --retry-delay 2 --retry-all-errors "$REPOSITORY_PROBE" -o "$RUNNER_TEMP/repository-metadata"
-          python3 - <<'PYXML'
-          import os, pathlib, xml.etree.ElementTree as ET
-          path = pathlib.Path(os.environ['RUNNER_TEMP']) / 'repository-metadata'
-          root = ET.parse(path).getroot()
-          assert root.tag == '{http://linux.duke.edu/metadata/repo}repomd', 'Candidate server did not return RPM repository metadata'
-          PYXML
+          bash scripts/loongarch/configure-openeuler-repos.sh --probe "$RUNNER_TEMP/repository-metadata"
       - uses: actions/setup-go@v6
         with:
           go-version: '1.27.1'

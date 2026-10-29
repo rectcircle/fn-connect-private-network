@@ -55,6 +55,12 @@ def valid_sample(path):
             and hashlib.sha256(path.read_bytes()).hexdigest() == SAMPLE_SHA256)
 
 
+def metadata_match(result, reference, repository):
+    if not result['valid'] or repository not in reference:
+        return None
+    return result['sha256'] == reference[repository]
+
+
 def benchmark():
     out = Path('dist/openeuler-mirror-benchmark')
     out.mkdir(parents=True, exist_ok=True)
@@ -77,7 +83,7 @@ def benchmark():
                 if result['valid']:
                     result['sha256'] = hashlib.sha256(path.read_bytes()).hexdigest()
                     if name == 'official': reference[repository] = result['sha256']
-                result['matchesOfficial'] = result['valid'] and result.get('sha256') == reference.get(repository)
+                result['matchesOfficial'] = metadata_match(result, reference, repository)
                 row['repositories'][repository] = result
                 print(' ', repository, result['httpCode'], 'valid:', result['valid'], flush=True)
             if all(value['valid'] for value in row['repositories'].values()):
@@ -89,23 +95,25 @@ def benchmark():
                     print(' ', 'RPM', attempt+1, 'verified:', result['verified'], 'MiB/s:', round(result['bytesPerSecond']/1024**2, 2), flush=True)
             speeds = [r['bytesPerSecond'] for r in row['downloads'] if r['verified']]
             row['medianMiBPerSecond'] = statistics.median(speeds)/1024**2 if speeds else None
-            row['comparable'] = len(speeds) == 2 and all(r['matchesOfficial'] for r in row['repositories'].values())
+            row['comparable'] = len(speeds) == 2 and all(r['matchesOfficial'] is True for r in row['repositories'].values())
             report['mirrors'].append(row)
             (out/'results.json').write_text(json.dumps(report, indent=2)+'\n')
     lines = ['# openEuler LoongArch mirror benchmark', '',
              'Same GitHub runner; two complete ~10 MiB RPM downloads per available source. No repository configuration changed.', '',
-             '| Source | Repositories | Metadata matching official | Verified RPMs | Median MiB/s |', '| --- | --- | --- | --- | --- |']
+             '| Source | Repositories | Metadata vs official (match / differ / unknown) | Verified RPMs | Median MiB/s |', '| --- | --- | --- | --- | --- |']
     for row in report['mirrors']:
         speed = '-' if row['medianMiBPerSecond'] is None else f"{row['medianMiBPerSecond']:.2f}"
-        lines.append(f"| {row['name']} | {sum(r['valid'] for r in row['repositories'].values())}/4 | {sum(r['matchesOfficial'] for r in row['repositories'].values())}/4 | {sum(r['verified'] for r in row['downloads'])}/2 | {speed} |")
-    lines += ['', 'Only complete matching-metadata results are comparable. Missing/outdated mirrors and download failures remain in results.json.',
+        comparisons = [r['matchesOfficial'] for r in row['repositories'].values()]
+        comparison = f"{comparisons.count(True)} / {comparisons.count(False)} / {comparisons.count(None)}"
+        lines.append(f"| {row['name']} | {sum(r['valid'] for r in row['repositories'].values())}/4 | {comparison} | {sum(r['verified'] for r in row['downloads'])}/2 | {speed} |")
+    lines += ['', 'Missing official metadata is unknown, not a mirror mismatch (null in results.json). Only complete matching-metadata results are comparable; differences do not establish which source is newer.',
               'No packages are installed. A faster source still needs signed-package and installation acceptance before adoption.']
     summary = '\n'.join(lines)+'\n'
     (out/'summary.md').write_text(summary)
     if os.environ.get('GITHUB_STEP_SUMMARY'):
         with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as stream: stream.write(summary)
-    if not any(row['comparable'] for row in report['mirrors']):
-        raise RuntimeError('No complete comparable source; inspect availability/download errors')
+    if not any(len(row['downloads']) == 2 and all(d['verified'] for d in row['downloads']) for row in report['mirrors']):
+        raise RuntimeError('No verified full RPM downloads; inspect errors')
 
 
 if __name__ == '__main__':

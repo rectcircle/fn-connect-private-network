@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Failure-path checks for the experiment's evidence and exit-code handling."""
 import hashlib
+import configparser
 import importlib.util
 import json
 import io
@@ -19,9 +20,33 @@ spec.loader.exec_module(validation)
 
 
 class EvidenceTests(unittest.TestCase):
+    def test_openeuler_mirror_config_preserves_paths_and_signatures_and_is_idempotent(self):
+        script = Path(__file__).with_name('configure-openeuler-repos.sh')
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary)/'openEuler.repo'
+            path.write_text('[OS]\nbaseurl=http://repo.openeuler.org/openEuler-$releasever/OS/$basearch/\nmetalink=https://old.example/\ngpgcheck=1\nrepo_gpgcheck=1\ngpgkey=http://repo.openeuler.org/key\n[EPOL]\nbaseurl=https://repo.openeuler.org/openEuler-$releasever/EPOL/main/$basearch/\ngpgcheck=1\nenabled=1\n')
+            path.chmod(0o640)
+            subprocess.run(['bash', str(script), str(path)], check=True)
+            parser = configparser.ConfigParser(interpolation=None); parser.read(path)
+            self.assertEqual(parser['OS']['baseurl'].split(), [root+'/openEuler-$releasever/OS/$basearch/' for root in ('https://mirrors.huaweicloud.com/openeuler','https://mirrors.ustc.edu.cn/openeuler','https://repo.openeuler.org')])
+            self.assertEqual(parser['OS']['gpgcheck'], '1')
+            self.assertEqual(parser['OS']['repo_gpgcheck'], '1')
+            self.assertEqual(parser['OS']['gpgkey'], 'https://repo.openeuler.org/key')
+            self.assertNotIn('metalink', parser['OS'])
+            self.assertEqual(parser['EPOL']['enabled'], '1')
+            with path.open('w') as stream: parser.write(stream)
+            subprocess.run(['bash', str(script), str(path)], check=True)
+            before = path.read_bytes()
+            subprocess.run(['bash', str(script), str(path)], check=True)
+            self.assertEqual(path.read_bytes(), before)
+            self.assertEqual(path.stat().st_mode & 0o777, 0o640)
+
     def test_mirror_benchmark_rejects_html_and_partial_or_corrupt_rpm(self):
         spec = importlib.util.spec_from_file_location('benchmark', Path(__file__).with_name('benchmark-mirrors.py'))
         benchmark = importlib.util.module_from_spec(spec); spec.loader.exec_module(benchmark)
+        self.assertIsNone(benchmark.metadata_match({'valid': True, 'sha256': 'hash'}, {}, 'OS'))
+        self.assertTrue(benchmark.metadata_match({'valid': True, 'sha256': 'hash'}, {'OS':'hash'}, 'OS'))
+        self.assertFalse(benchmark.metadata_match({'valid': True, 'sha256': 'other'}, {'OS':'hash'}, 'OS'))
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary)/'download'
             path.write_text('<html><body>mirror unavailable</body></html>')

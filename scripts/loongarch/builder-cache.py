@@ -15,7 +15,7 @@ def main():
     target = os.environ['TARGET']
     digest = hashlib.sha256(json.dumps(package_profile(target), sort_keys=True).encode())
     digest.update(datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m').encode())
-    for name in ('scripts/loongarch/probe-format.sh', 'scripts/loongarch/environment.json', 'scripts/linux-ci-dependencies.py'):
+    for name in ('scripts/loongarch/probe-format.sh', 'scripts/loongarch/environment.json', 'scripts/loongarch/configure-openeuler-repos.sh', 'scripts/linux-ci-dependencies.py'):
         digest.update((ROOT / name).read_bytes())
     key = digest.hexdigest()[:24]
     image = 'fncpn-builder-' + target + ':' + key

@@ -11,8 +11,7 @@ mkdir -p "$out"
 case "$1" in
  bootstrap|runtime-bootstrap)
   if [ "$TARGET" = openeuler-loong64 ] || [ "$TARGET" = rpm-loong64 ]; then
-   # Use the pinned release's published base URLs and retain package signatures.
-   sed -i -e '/^metalink=/d' -e 's|gpgkey=http:|gpgkey=https:|' /etc/yum.repos.d/openEuler.repo
+   bash scripts/loongarch/configure-openeuler-repos.sh
    dnf --disablerepo='*source*' --disablerepo=debuginfo --setopt=timeout=60 --setopt=minrate=100 --setopt=max_parallel_downloads=3 --setopt=keepcache=True --setopt=retries=2 install -y git ca-certificates curl python3 tar xz
   elif command -v dnf >/dev/null; then
    dnf --setopt=timeout=20 --setopt=retries=2 --setopt=ip_resolve=4 install -y --setopt=install_weak_deps=False git ca-certificates curl python3 tar xz

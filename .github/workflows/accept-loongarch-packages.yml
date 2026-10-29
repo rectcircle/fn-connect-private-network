@@ -130,9 +130,9 @@ jobs:
         id: dnf-cache
         with:
           path: ~/.cache/fncpn-loongarch-runtime/${{ matrix.target }}/dnf
-          key: loongarch-runtime-dnf-${{ matrix.target }}-${{ steps.cache-epoch.outputs.month }}-${{ hashFiles('packaging/linux/targets.json', 'scripts/loongarch/dnf_downloads.py', 'scripts/loongarch/probe-format.sh') }}-${{ github.run_id }}-${{ github.run_attempt }}
+          key: loongarch-runtime-dnf-${{ matrix.target }}-${{ steps.cache-epoch.outputs.month }}-${{ hashFiles('packaging/linux/targets.json', 'scripts/loongarch/dnf_downloads.py', 'scripts/loongarch/probe-format.sh', 'scripts/loongarch/configure-openeuler-repos.sh') }}-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
-            loongarch-runtime-dnf-${{ matrix.target }}-${{ steps.cache-epoch.outputs.month }}-${{ hashFiles('packaging/linux/targets.json', 'scripts/loongarch/dnf_downloads.py', 'scripts/loongarch/probe-format.sh') }}-
+            loongarch-runtime-dnf-${{ matrix.target }}-${{ steps.cache-epoch.outputs.month }}-${{ hashFiles('packaging/linux/targets.json', 'scripts/loongarch/dnf_downloads.py', 'scripts/loongarch/probe-format.sh', 'scripts/loongarch/configure-openeuler-repos.sh') }}-
       - name: Install exact archives in clean upstream userspace and boot acceptance VM
         run: |
           sudo apt-get update
