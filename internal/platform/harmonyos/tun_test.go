@@ -1,3 +1,5 @@
+//go:build unix || openharmony
+
 package harmonyos
 
 import (
