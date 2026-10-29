@@ -2,6 +2,7 @@ import io
 import json
 from pathlib import Path
 import tempfile
+import tarfile
 import unittest
 from unittest.mock import patch
 import qemu_toolchain as qemu
@@ -26,6 +27,26 @@ class ToolchainTests(unittest.TestCase):
                 qemu.verify_source(root)
             source.write_text('static bool gen_cz_bc(void) { CHECK_FPE; return true; }')
             qemu.verify_source(root)
+
+    def test_extraction_omits_absolute_host_links_and_rejects_escape(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            archive = root / 'source.tar'
+            with tarfile.open(archive, 'w') as output:
+                file = tarfile.TarInfo('qemu/configure')
+                file.size = 2
+                output.addfile(file, io.BytesIO(b'ok'))
+                link = tarfile.TarInfo('qemu/roms/X11IncludeHack')
+                link.type = tarfile.SYMTYPE
+                link.linkname = '/usr/include/X11'
+                output.addfile(link)
+            qemu.extract_source(archive, root / 'extracted')
+            self.assertEqual((root / 'extracted/qemu/configure').read_bytes(), b'ok')
+            self.assertFalse((root / 'extracted/qemu/roms/X11IncludeHack').is_symlink())
+            with tarfile.open(archive, 'w') as output:
+                output.addfile(tarfile.TarInfo('../escape'))
+            with self.assertRaises(tarfile.FilterError):
+                qemu.extract_source(archive, root / 'extracted')
 
     def test_untrusted_archive_never_reaches_configure(self):
         with tempfile.TemporaryDirectory() as directory, \

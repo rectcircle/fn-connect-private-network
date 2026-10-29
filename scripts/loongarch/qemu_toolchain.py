@@ -33,6 +33,17 @@ def verify_source(directory):
         raise RuntimeError('QEMU source lacks the issue 4209 floating-point context fix')
 
 
+def extract_source(archive, destination):
+    def source_filter(member, path):
+        # The official tarball includes EDK2's absolute X11 include symlink.
+        # We use separately pinned firmware, so this host-specific link is unused.
+        if member.issym() and Path(member.linkname).is_absolute():
+            return None
+        return tarfile.data_filter(member, path)
+    with tarfile.open(archive) as source:
+        source.extractall(destination, filter=source_filter)
+
+
 def install():
     if sys.platform != 'linux':
         raise RuntimeError('Build this acceptance emulator on a Linux host')
@@ -50,8 +61,7 @@ def install():
             shutil.copyfileobj(source, output)
         if hashlib.sha256(archive.read_bytes()).hexdigest() != PIN['sha256']:
             raise ValueError('QEMU source SHA256 mismatch')
-        with tarfile.open(archive) as source:
-            source.extractall(work / 'source', filter='data')
+        extract_source(archive, work / 'source')
         source = work / 'source' / ('qemu-' + PIN['version'])
         verify_source(source)
         build = work / 'build'
