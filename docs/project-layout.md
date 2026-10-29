@@ -1,19 +1,17 @@
 # 项目布局
 
-状态：已确认，鸿蒙先行实施；其他平台待逐端迁移。日期：2026-10-26。
+状态：稳定归属规则；各客户端源码已迁入目标目录，目标平台验收分别记录。更新：2026-10-29。
 
-本文定义目标目录与迁移计划，不描述当前全部代码已符合该规范。
-鸿蒙已落地 apps/harmonyos 与 internal/platform/harmonyos；其他平台逐端整理，不进行全仓一次性搬迁。
-提案实施后，将稳定规则合并到技术架构和开发文档，本文保留决策与迁移依据，
-不作为第二套构建操作手册。
+本文定义源码归属、依赖边界和迁移门槛，不表示全部平台已完成运行与发布验收。
+运行模型见[技术架构](architecture.md)，操作入口见[开发与发布](development.md)，
+功能及发布验收结论见[验证记录](validation.md)；本文不维护第二套构建操作手册。
 
 ## 1. 背景与目标
 
 共享业务在 internal/client、clienthost、server、privileged 中已有清晰职责。
-平台应用工程则按不同阶段的技术选择分散在 platform/、ui/、mobile/、ios/ 和 packaging/：
-macOS、Windows 原生 UI 在 platform/，Wails 在 ui/，移动端共享 Fyne 与 Android 工程在
-mobile/，iOS 工程及 Go 导出入口又分处 ios/ 和 mobile/ioscore。
-提案前鸿蒙仅有独立原型；当前正式工程已位于 apps/harmonyos，诊断工程配置仍生成到 .dev。
+原有 platform/、ui/、mobile/、ios/ 与客户端 packaging/ 已按归属迁入 apps/：
+各平台原生工程在 apps/<platform>，Fyne/Wails 工程在 apps/shared/<技术栈>，
+跨平台品牌资源在 assets/branding。fnOS 服务端交付工程仍在 packaging/fnos。
 
 目标是让平台应用源码、宿主、桥接、资源和工程配置有统一入口，并明确它们与共享业务、
 系统适配、自动化及交付配置的边界。新增 apps/ 表达平台应用工程；不以目录名称推断
@@ -26,7 +24,9 @@ mobile/，iOS 工程及 Go 导出入口又分处 ios/ 和 mobile/ioscore。
 | cmd/ | Go CLI、daemon 可执行入口 | 命令解析和组装，不承载 UI |
 | internal/ | 共享业务、契约、宿主、特权操作及 Go 系统适配 | 不依赖平台 UI 工程或 N-API |
 | apps/<platform>/ | 平台应用工程：UI、生命周期、桥接、组装、资源、原生工程配置 | 不复制共享认证、选路、重连状态机 |
-| apps/shared/ | 确有多个平台共用的呈现代码，如 Fyne/Wails 前端 | 不成为通用工具或业务逻辑堆放处；鸿蒙阶段不创建 |
+| apps/shared/ | 按技术栈组织的跨平台应用工程，如 fyne/、wails/ | 可含薄宿主和桥接；不复制核心业务，不设泛化 common/utils |
+| assets/branding/ | 跨平台品牌源文件的目标归属 | 平台尺寸变体与厂商必需资源可留在工程内，注明生成关系 |
+| localization/ | 跨平台消息权威来源 | 不强制合并平台独有消息；生成资源标明来源 |
 | scripts/ | 统一操作入口与分平台自动化实现 | 不隐藏正式应用源码或维护第二份 manifest |
 | docs/ | 产品、架构、协议、版本及验证契约 | 平台操作并入现有开发文档 |
 | .dev/<platform>/ | 本机配置、缓存、生成物、开发构建和诊断报告 | 忽略提交，可删除后由源码与工具链恢复 |
@@ -37,16 +37,30 @@ iPadOS 属于 ios，不单独复制工程。internal/platform/darwin 等现有 G
 
 ### platform 与 packaging 的去向
 
-顶层 platform/ 的原生客户端 UI 在对应平台迁移时移入 apps/<platform>/；
+原顶层 platform/ 的原生客户端 UI 已移入 apps/<platform>/；
 Go 系统实现继续留在 internal/platform/，两者不会合并。
 
-客户端 packaging/<platform>/ 的交付专用配置迁入 apps/<platform>/packaging/。
+客户端交付专用配置归属 apps/<platform>/packaging/。
 必须由原生工程识别的 manifest、Info.plist、entitlements、资源及构建描述文件，
 保留在原生工程要求的位置，不在 packaging/ 复制一份。
 
 packaging/fnos 保留为服务端交付工程，本提案不强行把无独立客户端 UI 的服务端归入 apps/。
-packaging/assets 等共享资源和根目录测试，在明确引用方后另行归属，不在鸿蒙阶段删除。
+共享品牌源文件及既有派生图标已迁入 assets/branding，消费脚本与生成链使用同一来源。
+厂商工程内的资源继续由各自工程维护；不保留旧路径副本。packaging/ 仍保留现有交付回归测试，
+其中版本、本地化检查跨平台运行；平台测试的包归属可单独整理，不影响源码入口。
 迁移期间允许旧目录存在，但每项源码或配置只能有一个权威来源。
+
+### 平台入口与共享工程
+
+apps/<platform> 是平台工程入口，不要求包含该平台消费的全部源码。
+Android/iOS 可共用 apps/shared/fyne，macOS/Linux 可共用 apps/shared/wails。
+共享工程允许保留框架所需的薄宿主、平台选择文件和桥接，不为“纯呈现”强行拆包；
+认证、选路、重连状态机仍归共享核心。没有实际消费者时不提前创建目录。
+
+Windows 当前归属：apps/windows 包含 CMake、原生 UI、manifest、版本资源模板与本地化；
+apps/windows/packaging 包含 MSI 语言资源。自动化仍在 scripts/ 与 scripts/windows，
+Go 系统实现仍在 internal/platform/windows。共享图标引用 assets/branding 的唯一来源。
+现有 .dev/windows-* 与 dist/windows-native 路径暂保留，后续独立调整产物布局，避免改变消费方。
 
 ## 3. 鸿蒙目标结构
 
@@ -117,12 +131,34 @@ flowchart TB
   由系统生命周期宿主持有。组件通信方式与授权边界不因目录移动而变化。
 
 鸿蒙 go/ 初期使用根 Go module，避免仅为目录组织引入新 module 或不必要依赖。
-未来迁移现有 mobile/ui 独立 module 时，先保留模块边界，再单独评估调整；
+Fyne/Wails 保留现有独立 module 边界，物理路径迁移后再单独评估模块调整；
 不将 module 重构、UI 框架替换和目录搬迁混入同一变更。
+
+### 平台适配判定与 Go module 约束
+
+| 代码性质 | 归属 |
+| --- | --- |
+| 实现核心窄接口、无需 UI 框架的 Go 网络/系统适配 | internal/platform/<platform> |
+| JNI、C ABI、N-API、UIKit/Fyne 绑定及线程派发 | 对应平台或共享应用工程 |
+| 生命周期、活动 Manager 所有权与宿主组装 | 应用宿主 |
+| 多端共用的产品业务 | 现有共享核心中的对应包 |
+
+不按“系统相关”或旧目录名称机械迁入 internal/platform。平台适配可以通过注入的接口
+使用原生能力，但不能反向依赖应用包或带入 UI 框架依赖。
+
+保留根、mobile、ui 三个现有 module path 的职责边界；当前物理位置分别为根、
+apps/shared/fyne、apps/shared/wails。目录迁移不自动要求更改 module path 或增加 module。
+实施前逐项确认 module path、包导入路径、Go internal 可见范围、replace 相对路径、
+构建 cwd、build tags 与资源嵌入路径，并覆盖独立 module 的检查入口。
+iOS 扩展 Go 入口已迁入 apps/ios/go 并由根 module 编译；Go VPN 适配在
+internal/platform/ios，App/扩展共用的日志桥协议在 apps/ios/bridge/logs。
+Android Go VPN 适配在 internal/platform/android。依赖 Fyne 的 JNI/UIKit 宿主仍在共享
+Fyne module；它们通过根 module 使用上述适配，不再依赖旧 mobile/internal VPN 包。
 
 ## 5. 自动化和工具链约定
 
-根目录提供少量固定入口：
+scripts/ 根目录提供少量固定操作入口，分平台辅助实现归 scripts/<platform>/。
+现有 Windows setup/build/check 入口保持不变；鸿蒙入口如下：
 
 | 入口 | 职责 |
 | --- | --- |
@@ -131,7 +167,7 @@ flowchart TB
 | scripts/check-harmonyos.sh | 静态检查、单元测试、包内容检查；设备检查显式选择目标 |
 | scripts/package-harmonyos.sh | 使用显式签名配置生成可交付产物和清单 |
 
-诊断构建作为明确目标或参数接入，不持续增加同义顶层入口。具体参数在实施时确定。
+诊断构建作为明确目标或参数接入，不持续增加同义顶层入口。实际参数统一见开发文档。
 尚未实现的入口在文档中标记为计划，不写成可直接执行的现有命令。
 
 工具链仅在 apps/harmonyos/toolchains.json 维护，脚本读取该清单；
@@ -140,66 +176,65 @@ flowchart TB
 证书、私钥、profile、密码及 token 放在仓库外，通过显式参数或环境注入；
 项目内只提交无敏感信息的模板。
 
-## 6. 现状到目标映射
+## 6. 当前状态与目标映射
 
-| 当前 | 目标或处理 |
-| --- | --- |
-| harmonyos/smoke/ | apps/harmonyos/diagnostics/；正式可复用桥接再提取到 entry/cpp、go |
-| .dev/harmonyos/hap-smoke 生成工程 | 诊断生成物可保留；正式工程提交到 apps/harmonyos |
-| apps/harmonyos/toolchains.json | apps/harmonyos/toolchains.json，同步全部读取方 |
-| scripts/harmonyos/*.py | 保留自动化实现，消除硬编码旧源码路径 |
-| docs/development.md 等现有主题文档 | 环境、构建、架构与验收按现有主题维护，不新增平台文档层次 |
-| platform/macos、platform/windows | 后续分别移入 apps/macos、apps/windows |
-| ios、mobile/ioscore | 后续原生工程及导出入口移入 apps/ios，保留原 module 约束 |
-| mobile/android | 后续移入 apps/android |
-| mobile 根目录共享 Fyne UI | 后续归 apps/shared 下的独立共享 UI 工程，不复制到每个平台 |
-| mobile/internal/*vpn | 后续审查平台适配边界后归 internal/platform/<平台> |
-| ui/ Wails 工程 | 后续拆清共享呈现与平台宿主，再迁入 apps/shared 及对应平台；不先机械搬迁 |
-| packaging/ 客户端配置 | 对应 apps/<平台>/packaging 或厂商工程要求的位置 |
-| packaging/fnos、nix、Casks、website | 本阶段保持原状；不属于新增鸿蒙 UI 的必要迁移 |
+| 范围 | 当前状态 | 目标或后续处理 |
+| --- | --- | --- |
+| HarmonyOS | apps/harmonyos 与 internal/platform/harmonyos 已落地 | 保持边界；产品验收按 validation.md |
+| Windows | 原生工程已迁入 apps/windows，MSI 语言资源在其 packaging/ | 本机静态验证与 Windows 原生验收分别记录 |
+| macOS | apps/macos 与 apps/macos/packaging | 原生 UI 与平台交付配置 |
+| iOS | apps/ios，internal/platform/ios | Go 扩展入口使用根 module，日志桥可由 App/扩展共用 |
+| Android | apps/android，internal/platform/android | Gradle/Java 工程与 Go VPN 适配分离 |
+| Fyne | apps/shared/fyne 独立 module | 保留 mobile module path、Fyne 呈现和所需平台桥接 |
+| Wails | apps/shared/wails 独立 module | 保留 ui module path、前端和平台宿主 |
+| Linux | apps/linux/packaging | Core/UI 交付配置；Wails 工程复用 apps/shared/wails |
+| 共享品牌资源 | assets/branding | 各端资源生成与打包共用 |
+| 服务端及分发集成 | packaging/fnos、nix、Casks、website | 保持原职责 |
 
-## 7. 演进计划与验收门槛
+## 7. 逐端迁移与验收门槛
 
-### P0：明确规范（本次）
-
-交付提案与索引，不搬迁源码、不改变构建和运行行为。
-目标目录尚未落地，不能据本文宣布其他平台已完成整理。
-
-### P1：鸿蒙目录落地
-
-1. 迁入诊断源码及工具链清单，修改脚本读取路径与资源引用。
-2. 建立纳入版本管理的正式原生工程，保留独立诊断构建目标。
-3. 将 Go 导出组装和平台适配按依赖边界分开，明确 fd、线程与宿主所有权。
-4. 更新 .gitignore、构建入口和平台 README；旧文档提供短期链接。
-
-验收：新 worktree 可按文档准备环境并构建；脚本/Go 测试和 HAP 内容检查通过；
-已有 runtime/HTTPS/WSS 模拟器验证可重复；诊断路由不进入正式目标。
-VPN 授权组件缺失导致的验证阻塞继续如实记录，不因搬迁变更为通过。
-
-### P2：鸿蒙完整功能开发
-
-在新目录完成共享 clienthost 接入、UI、授权、三种连接路径、DNS、存储、生命周期、
-管理后台及诊断。构建、签名和打包入口依职责收敛，单一来源生成产品版本。
-依用户安排，优先完成代码和可自动执行检查，再集中云真机验证。
-
-验收：形成可签名候选产物及功能/验证矩阵，每项区分代码完成、自动化通过、设备待验。
-不能用工具链探针替代产品运行结果；设备验证发现的问题继续修复。
-
-### P3：鸿蒙集中设备验证和交付
-
-使用具备 VPN 系统能力的云真机或实体设备，验证系统授权、TUN/protect、真实服务端
-连接、LOCAL/DIRECT/RELAY、DNS、切网后台、撤销、清理、签名升级与数据保留。
-记录产品版本、commit、包 hash、设备/系统信息和结果，完成必要兼容性验收后再发布。
-
-### P4：其他平台逐端迁移（后续任务）
-
-建议先整理边界清晰的 Windows 原生 UI 与 macOS 默认原生 UI，再处理 iOS/Android
-共享 Fyne 工程，最后收敛 Wails/Linux 及剩余共享交付配置。
-具体顺序以届时开发与发布安排为准，不是本次授权的搬迁范围。
+顺序建议：Windows → macOS 默认原生 UI → 移动端边界整理及 Android/iOS → Wails/Linux → 公共资源收尾。
+每次仅实施明确授权的平台，完成后留下可 review 的变更；不自动推进下一端。
 
 每个平台独立完成：引用清点 → 机械搬迁 → 更新脚本/CI/版本同步/资源路径 →
 原构建和安装升级检查 → 更新文档 → 删除失效旧入口。
-共享 UI 拆分与平台能力修改单独提交，避免将行为差异混入搬迁验证。
+共享应用拆分、module 重构、框架替换与平台能力变更单独实施，避免行为差异混入搬迁。
+
+验收要求：
+
+- 新目录是唯一权威来源；干净 checkout 无需旧目录或本地缓存残留即可构建。
+- 检查根入口、辅助脚本、CI、版本同步、资源生成、许可证与发布资产清单的路径消费。
+- 执行平台原有测试及打包检查，覆盖安装、升级、卸载与运行身份保留。
+  Windows 保留历史安装维护协议兼容验证，不能用跨平台编译代替 Windows 执行结果。
+- 明确区分源码完成、主机自动化通过、目标平台待验和发布验收通过。
+  缺少目标环境时记录未执行项，不宣称全部迁移验收完成。
+- 鸿蒙诊断目标与正式工程保持隔离；功能、设备和最终同 commit 产物门槛以验证记录为准。
+
+### Windows 本轮迁移检查（2026-10-29）
+
+已完成原生工程与 MSI 语言资源迁移、setup/build/本地化及 IPC 源码测试路径同步。
+CI 仍通过既有根脚本消费新目录，无需改写工作流；版本与共享图标引用保持有效。
+原生业务代码、manifest、MSI 语言资源内容保持一致，CMake 提示、生成头文件来源与共享图标引用已同步新路径。
+
+macOS 主机已通过根 module 的 go test/vet、Windows amd64/arm64 Go 交叉构建、
+版本及本地化同步检查。尚未执行 Windows 原生 CMake/CTest、MSI 构建与安装升级、
+历史维护协议进程测试；这些仍由现有 Windows 检查与构建入口验收，本轮不记为通过。
+
+### 其余客户端源码迁移检查（2026-10-29）
+
+已迁移 macOS、Android、iOS、Fyne、Wails/Linux 及共享品牌资源，保留原有
+mobile/ui module path。构建脚本、资源生成、CI 工作目录/缓存、Nix modRoot 与
+资源相对路径均已更新。RPM 公钥读取保留历史不可变 tag 的旧路径回退，仍强制固定哈希与签名验证。
+
+已通过统一 check-release.sh（根/Fyne 测试、race、vet、脚本与交叉构建）、
+Wails Go test/vet 及前端测试、鸿蒙脚本测试、Linux 安装与打包策略回归。
+本地已构建 macOS ARM64/x64 原生 PKG、ARM64 原生及 Wails App、Android 双架构
+Release APK（签名/ABI/JNI/16KB 对齐检查通过）、iOS ARM64 未签名 Release IPA，以及 Linux ARM64 Core DEB。
+Android 另从无生成物的源码副本完成完整构建；这些 dirty 本地验证产物不能用于公开发布。
+
+待目标环境验收：Windows 原生检查、Linux 图形/安装运行及 Nix 实际构建、各端覆盖安装
+与身份/配置保留及真实连接回归。macOS 主机的 Linux 激活测试因缺少 dbus-daemon 未能运行。
+源码与构建验证不替代这些平台运行门槛，公开前仍须干净 commit 的最终产物验收。
 
 ## 8. 兼容性、发布与回退
 
@@ -215,7 +250,8 @@ VPN 授权组件缺失导致的验证阻塞继续如实记录，不因搬迁变�
 未发布源码可通过 Git 回退目录迁移；已安装程序的降级仍按配套备份与版本契约处理。
 源码回退不等于自动回退用户数据。公开发布产物不得因目录迁移重新覆盖。
 
-## 9. 本提案的完成定义
+## 9. 完成定义
 
-鸿蒙符合上述源码归属、依赖边界、构建入口与生成物规则，并有可重复验证证据后，
-才能称鸿蒙目录规范落地。其他端整理完成前，仓库允许处于明确记录的过渡状态。
+各端符合上述源码归属、依赖边界、构建入口与生成物规则，并有可重复验证证据后，
+才能称该端迁移验收完成。源码迁入与目标平台验收分别记录；其他端整理完成前，
+仓库允许处于明确记录的过渡状态。

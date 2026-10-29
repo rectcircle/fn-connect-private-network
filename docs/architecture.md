@@ -80,7 +80,7 @@ Packet Tunnel 进程：Swift Provider → C bridge → clienthost / Service / Ma
                           packetFlow、网络设置、Keychain、wireguard-go
 ```
 
-`mobile/ioscore` 编为单份 C archive；连接、配置和凭据由扩展单写，App 不持有第二个
+`apps/ios/go` 编为单份 C archive；连接、配置和凭据由扩展单写，App 不持有第二个
 活动 Manager。Swift 负责系统生命周期和系统回调，共享核心负责业务。DNS netstack
 将匹配后缀的 UDP/TCP 请求转交共享 loopback DNS，平台不重新实现 DNS 业务。
 App 与扩展均不依赖 App Groups；配置在扩展沙盒，日志通过受限 Provider 消息同步为 App 快照。
@@ -142,6 +142,9 @@ PC/2in1 管理后台用内部 singleton `AdminAbility` 独立主窗口，加载�
 | `internal/platform/darwin` | utun、路由和系统事件适配 | 网络计划 ↔ macOS |
 | `internal/platform/windows` | Wintun、IP Helper、路由和网络事件适配 | 网络计划 ↔ Windows |
 | `internal/platform/linux` | netlink、内核 WireGuard；服务端另负责转发和 nftables | 客户端/服务端期望状态 ↔ Linux |
+| `internal/platform/android` | Go VPN/TUN、DNS 与系统回调适配，无 Fyne/JNI 依赖 | 网络计划 ↔ Android 宿主能力 |
+| `internal/platform/ios` | Go WireGuard、packetFlow 与系统网络设置适配 | 网络计划 ↔ iOS 系统回调 |
+| `internal/platform/harmonyos` | Go VPN/TUN、网络与系统能力适配 | 网络计划 ↔ HarmonyOS 宿主能力 |
 | `internal/command` | 子命令解析、进程组装和生命周期入口 | 命令行 → 对应进程职责 |
 
 ### Go 实现约束

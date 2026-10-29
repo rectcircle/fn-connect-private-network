@@ -39,7 +39,7 @@ jobs:
           go-version: '1.27.1'
           cache-dependency-path: |
             go.sum
-            mobile/go.sum
+            apps/shared/fyne/go.sum
       - name: Verify candidate
         if: ${{ inputs.version != '' }}
         env:
@@ -51,7 +51,7 @@ jobs:
           python3 -m unittest discover -s scripts/ios -p '*_test.py'
           python3 scripts/ios_release_test.py
       - name: Mobile regression checks
-        working-directory: mobile
+        working-directory: apps/shared/fyne
         run: |
           go test -tags ci ./...
           go test -race -tags ci ./...

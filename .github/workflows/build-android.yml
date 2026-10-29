@@ -61,11 +61,11 @@ jobs:
           go-version: '1.27.1'
           cache-dependency-path: |
             go.sum
-            mobile/go.sum
+            apps/shared/fyne/go.sum
       - name: Shared client lifecycle tests
         run: go test -race ./internal/client ./internal/clienthost
       - name: Mobile tests and static checks
-        working-directory: mobile
+        working-directory: apps/shared/fyne
         run: |
           go test -race -tags ci,no_emoji,migrated_fynedo ./...
           go vet -tags ci,no_emoji,migrated_fynedo ./...
@@ -94,7 +94,7 @@ jobs:
           go-version: '1.27.1'
           cache-dependency-path: |
             go.sum
-            mobile/go.sum
+            apps/shared/fyne/go.sum
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -114,7 +114,7 @@ jobs:
           test -f "$ANDROID_HOME/ndk/$ANDROID_NDK_VERSION/source.properties"
           echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/$ANDROID_NDK_VERSION" >> "$GITHUB_ENV"
       - name: Download pinned Go module dependencies
-        working-directory: mobile
+        working-directory: apps/shared/fyne
         run: go mod download
       - name: Verify release source and select build number
         env:
@@ -140,7 +140,7 @@ jobs:
           FNCPN_STORE_PASSWORD: ${{ secrets.FNCPN_STORE_PASSWORD }}
           FNCPN_KEY_ALIAS: ${{ secrets.FNCPN_KEY_ALIAS }}
           FNCPN_KEY_PASSWORD: ${{ secrets.FNCPN_KEY_PASSWORD }}
-        working-directory: mobile/android
+        working-directory: apps/android
         run: |
           gradle --no-daemon --console=plain --stacktrace clean :app:assembleRelease \
             "-PfncpnBuild=$FNCPN_BUILD" 2>&1 | tee "$RUNNER_TEMP/android-build.log"
@@ -148,7 +148,7 @@ jobs:
         run: |
           for abi in arm64-v8a x86_64; do
             python3 scripts/android/verify_apk.py \
-              "mobile/android/app/build/outputs/apk/release/app-$abi-release.apk" \
+              "apps/android/app/build/outputs/apk/release/app-$abi-release.apk" \
               --abi "$abi" --build-number "$FNCPN_BUILD" --release \
               --output "$RUNNER_TEMP/android-artifacts"
           done 2>&1 | tee "$RUNNER_TEMP/android-verification.log"
@@ -170,8 +170,8 @@ jobs:
           path: |
             ${{ runner.temp }}/android-build.log
             ${{ runner.temp }}/android-verification.log
-            mobile/android/app/build/reports/
-            mobile/android/app/build/outputs/logs/
-            mobile/android/app/build/generated/fyne/assets/build.json
+            apps/android/app/build/reports/
+            apps/android/app/build/outputs/logs/
+            apps/android/app/build/generated/fyne/assets/build.json
           if-no-files-found: warn
           retention-days: 14

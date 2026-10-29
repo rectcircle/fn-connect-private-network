@@ -21,7 +21,7 @@ func TestMacOSAuthorizationLayout(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	source, err := os.ReadFile(filepath.Join("..", "platform", "macos", "FnCPNApp.swift"))
+	source, err := os.ReadFile(filepath.Join("..", "apps", "macos", "FnCPNApp.swift"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -42,7 +42,7 @@ func TestMacOSAuthorizationLayout(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		if err := os.CopyFS(filepath.Join(resources, language+".lproj"), os.DirFS(filepath.Join("macos", language+".lproj"))); err != nil {
+		if err := os.CopyFS(filepath.Join(resources, language+".lproj"), os.DirFS(filepath.Join("..", "apps", "macos", "packaging", language+".lproj"))); err != nil {
 			t.Fatal(err)
 		}
 	}

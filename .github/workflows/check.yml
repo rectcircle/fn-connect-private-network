@@ -54,9 +54,9 @@ jobs:
           python3 scripts/linux_acceptance_test.py
           python3 scripts/linux_compatibility_test.py
           python3 scripts/install_linux_test.py
-          npm --prefix ui/frontend ci
-          npm --prefix ui/frontend test
-          for script in packaging/linux/scripts/*; do sh -n "$script"; done
+          npm --prefix apps/shared/wails/frontend ci
+          npm --prefix apps/shared/wails/frontend test
+          for script in apps/linux/packaging/scripts/*; do sh -n "$script"; done
   fnos:
     needs: changes
     if: needs.changes.outputs.run == 'true'

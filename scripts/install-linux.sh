@@ -236,7 +236,10 @@ verify_packages() {
 verify_rpm_signatures() {
     [ "$FORMAT" = rpm ] || return 0
     local key="$WORK_DIR/RPM-GPG-KEY-fncpn" package output
-    api_get "contents/packaging/linux/keys/RPM-GPG-KEY-fncpn?ref=v$VERSION" "$key" application/vnd.github.raw+json || fail '无法下载 RPM 公钥'
+    # Older immutable tags contain the same pinned key under the former source path.
+    if ! api_get "contents/apps/linux/packaging/keys/RPM-GPG-KEY-fncpn?ref=v$VERSION" "$key" application/vnd.github.raw+json; then
+        api_get "contents/packaging/linux/keys/RPM-GPG-KEY-fncpn?ref=v$VERSION" "$key" application/vnd.github.raw+json || fail '无法下载 RPM 公钥'
+    fi
     printf '%s  %s\n' "$RPM_KEY_SHA256" "$key" | sha256sum --check --strict - || fail 'RPM 公钥与安装脚本固定的公钥不一致'
     mkdir -m 700 "$WORK_DIR/rpm-keyring"
     rpmkeys --dbpath "$WORK_DIR/rpm-keyring" --import "$key" || fail '无法读取 RPM 公钥'

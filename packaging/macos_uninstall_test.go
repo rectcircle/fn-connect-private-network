@@ -62,7 +62,7 @@ func TestMacOSUninstallPreservesOtherUserCredentials(t *testing.T) {
 
 func runMacOSUninstallFixture(t *testing.T, directory string, purge bool) ([]byte, error) {
 	t.Helper()
-	script, err := os.ReadFile(filepath.Join("macos", "uninstall.sh"))
+	script, err := os.ReadFile(filepath.Join("..", "apps", "macos", "packaging", "uninstall.sh"))
 	if err != nil {
 		t.Fatal(err)
 	}

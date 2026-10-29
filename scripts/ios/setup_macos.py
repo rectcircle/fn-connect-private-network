@@ -68,7 +68,7 @@ def main():
         run(go, "install", f"fyne.io/tools/cmd/fyne@{FYNE_VERSION}", env=tool_env, cwd=ROOT)
     run(str(fyne), "version", env=env)
     stage("下载已有 mobile module 依赖（保留代理与校验配置）")
-    run(go, "mod", "download", cwd=ROOT / "mobile", env=env)
+    run(go, "mod", "download", cwd=ROOT / "apps/shared/fyne", env=env)
     # No shell startup changes needed: print the exact path and use it explicitly.
     stage(f"Fyne 工具：{fyne}；无需修改 shell 配置")
 

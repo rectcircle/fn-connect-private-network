@@ -7,14 +7,14 @@
 /tmp/
 /.trae/documents/
 /fncpn
-/mobile/android/.gradle/
-/mobile/android/**/build/
-/mobile/android/local.properties
-/mobile/mobile
+/apps/android/.gradle/
+/apps/android/**/build/
+/apps/android/local.properties
+/apps/shared/fyne/mobile
 
 __pycache__/
 
-/ios/**/xcuserdata/
+/apps/ios/**/xcuserdata/
 
 /apps/harmonyos/.hvigor/
 /apps/harmonyos/oh_modules/

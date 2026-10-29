@@ -139,7 +139,7 @@ def main():
     version = (ROOT / "internal/version/VERSION").read_text().strip()
     commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
     signing = subprocess.check_output([str(tools / "apksigner"), "verify", "--verbose", "--print-certs", str(args.apk)], text=True)
-    fingerprint = check_signer(signing, (ROOT / "mobile/android/signing-certificate.sha256").read_text())
+    fingerprint = check_signer(signing, (ROOT / "apps/android/signing-certificate.sha256").read_text())
     print(signing, flush=True)
     subprocess.run([str(tools / "zipalign"), "-c", "-P", "16", "4", str(args.apk)], check=True)
     badging = subprocess.check_output([str(tools / "aapt2"), "dump", "badging", str(args.apk)], text=True)

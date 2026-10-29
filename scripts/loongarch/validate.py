@@ -145,7 +145,7 @@ def system_vm(container, temporary):
     """Boot the provisioned userland under its own kernel, without SSH or NAT."""
     firmware = temporary / 'firmware.fd'
     download(ENVIRONMENT['firmwareURL'], firmware, ENVIRONMENT['firmwareSHA256'])
-    subprocess.run(['docker', 'exec', container, 'mkdir', '-p', '/validation/out', '/validation/scripts', '/validation/packaging/linux'], check=True)
+    subprocess.run(['docker', 'exec', container, 'mkdir', '-p', '/validation/out', '/validation/scripts', '/validation/apps/linux/packaging'], check=True)
     files = {'fncpn': OUT / 'fncpn', 'probe': OUT / 'probe', 'guest.sh': ROOT / 'scripts/loongarch/guest.sh',
              'version': ROOT / 'internal/version/VERSION', 'commit': OUT / 'commit',
              'guest_commands.py': ROOT / 'scripts/loongarch/guest_commands.py'}
@@ -160,7 +160,7 @@ def system_vm(container, temporary):
         subprocess.run(['docker', 'cp', str(source), f'{container}:/validation/{target}'], check=True)
     for name in ('linux-ui-smoke.py', 'linux-compatibility.py', 'linux_support.py', 'linux_abi.py', 'rpm_signing.py', 'check-linux-packages.py'):
         subprocess.run(['docker', 'cp', str(ROOT / 'scripts' / name), f'{container}:/validation/scripts/{name}'], check=True)
-    subprocess.run(['docker', 'cp', str(ROOT / 'packaging/linux/targets.json'), f'{container}:/validation/packaging/linux/targets.json'], check=True)
+    subprocess.run(['docker', 'cp', str(ROOT / 'apps/linux/packaging/targets.json'), f'{container}:/validation/apps/linux/packaging/targets.json'], check=True)
     subprocess.run(['docker', 'cp', str(ROOT / 'scripts/loongarch/package-lifecycle.py'), f'{container}:/validation/package-lifecycle.py'], check=True)
     unit = temporary / 'fncpn-validation.service'
     unit.write_text('[Unit]\nAfter=local-fs.target dbus.service\nWants=dbus.service\n'
@@ -272,8 +272,8 @@ def start_container(report, name, runtime=False):
 def root_regression_paths(paths):
     # Separate Go modules cannot affect root-package tests. Keep root Go files
     # even inside a normally documentation/platform-only directory.
-    excluded = ('ios/', 'docs/', 'website/', 'platform/macos/')
-    return sorted(path for path in paths if not path.startswith(('mobile/', 'ui/'))
+    excluded = ('apps/ios/', 'docs/', 'website/', 'apps/macos/')
+    return sorted(path for path in paths if not path.startswith(('apps/shared/fyne/', 'apps/shared/wails/'))
                   and (path.endswith('.go') or (not path.startswith(excluded)
                   and path not in ('README.md', 'CHANGELOG.md', 'TODO.txt'))))
 
@@ -366,7 +366,7 @@ def phase(stage):
                     '-o', str(OUT / 'fncpn'), './cmd/fncpn'], env=environment)
                 report.check('test-build', [sys.executable, __file__, 'compile-tests'], timeout=1200,
                              env=dict(os.environ, FNCPN_ROOT_REGRESSION='0' if reuse else '1'))
-            report.check('frontend', ['bash', '-ec', 'npm --prefix ui/frontend ci && npm --prefix ui/frontend run build'], timeout=600)
+            report.check('frontend', ['bash', '-ec', 'npm --prefix apps/shared/wails/frontend ci && npm --prefix apps/shared/wails/frontend run build'], timeout=600)
             for directory in ('go-build', 'go-mod', 'toolchain/bin/linux_loong64'):
                 (cache / directory).mkdir(parents=True, exist_ok=True)
             report.check('packaging-tool', ['go', 'install', 'github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.40.0'],

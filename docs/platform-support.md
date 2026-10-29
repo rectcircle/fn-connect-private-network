@@ -14,7 +14,7 @@
 | HarmonyOS | API20+，ARM64；手机/折叠屏/平板/PC/2in1 | 未签名 HAP，需自行签名；云真机功能测试通过，智慧屏不支持；发布门槛见验证记录 |
 | Android | 当前配置 Android 8.0 / API 26 起，arm64-v8a、x86_64 | 提供正式签名 APK；移动端开发自测完成，最终草稿仍需同 commit 核验 |
 
-Linux 目标以 [targets.json](../packaging/linux/targets.json) 为唯一机器可读清单，以下保留 2026-10-29 核对结果，不自动承诺未来版本：
+Linux 目标以 [targets.json](../apps/linux/packaging/targets.json) 为唯一机器可读清单，以下保留 2026-10-29 核对结果，不自动承诺未来版本：
 
 | 系列 | 列入目标的版本 | 架构 | 格式 |
 | --- | --- | --- | --- |

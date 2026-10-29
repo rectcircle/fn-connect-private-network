@@ -23,7 +23,7 @@ func TestMacOSLocalizationRuntime(t *testing.T) {
 	if runtime.GOOS != "darwin" {
 		t.Skip("requires Foundation on macOS")
 	}
-	source, err := os.ReadFile("../platform/macos/FnCPNApp.swift")
+	source, err := os.ReadFile("../apps/macos/FnCPNApp.swift")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -40,11 +40,11 @@ func TestMacOSLocalizationRuntime(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, language := range []string{"en", "zh-Hans"} {
-		if err := os.CopyFS(filepath.Join(resources, language+".lproj"), os.DirFS(filepath.Join("macos", language+".lproj"))); err != nil {
+		if err := os.CopyFS(filepath.Join(resources, language+".lproj"), os.DirFS(filepath.Join("..", "apps", "macos", "packaging", language+".lproj"))); err != nil {
 			t.Fatal(err)
 		}
 	}
-	plist, err := os.ReadFile("macos/Info.plist")
+	plist, err := os.ReadFile("../apps/macos/packaging/Info.plist")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -17,7 +17,7 @@ class SceneTests(unittest.TestCase):
             original+='void showKeyboard(int keyboardType) {\n        // refresh settings if keyboard is already open\n}\n'
             source.write_text(original)
             (module/'internal/driver/mobile/canvas.go').write_text('package mobile\n')
-            mobile=root/'mobile';mobile.mkdir();(mobile/'go.mod').write_text('module example\n');(mobile/'go.sum').write_text('')
+            mobile=root/'apps/shared/fyne';mobile.mkdir(parents=True);(mobile/'go.mod').write_text('module example\n');(mobile/'go.sum').write_text('')
             output=root/'output';output.mkdir()
             with patch('fyne_scene.subprocess.check_output',return_value=json.dumps({'Dir':str(module),'Version':'v2.8.2'})),patch('fyne_scene.subprocess.run') as run,patch('fyne_scene.native_text.prepare'),patch('fyne_scene.fyne_mobile_render.prepare'):
                 result=fyne_scene.prepare('go',mobile,output,{})

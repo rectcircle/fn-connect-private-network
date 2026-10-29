@@ -374,7 +374,7 @@ try {
     }
 
     Invoke-Stage 'WebView2 原生 SDK 还原' {
-        $nativeSource = Join-Path $ProjectRoot 'platform/windows'
+        $nativeSource = Join-Path $ProjectRoot 'apps/windows'
         $nativePackages = Join-Path $ProjectRoot '.dev/native-ui-nuget'
         $nativeSdkRoot = Join-Path $nativePackages 'microsoft.web.webview2/1.0.4258.31'
         Invoke-Tool $script:dotnet @('restore', (Join-Path $nativeSource 'WebView2SDK.csproj'), "-p:RestorePackagesPath=$nativePackages")
@@ -386,7 +386,7 @@ try {
             $smoke = Join-Path $devRoot 'smoke'
             $output = Join-Path $ProjectRoot 'dist\smoke'
             $null = New-Item -ItemType Directory -Force -Path $smoke, $output
-            $nativeSource = Join-Path $ProjectRoot 'platform/windows'
+            $nativeSource = Join-Path $ProjectRoot 'apps/windows'
             $nativePackages = Join-Path $ProjectRoot '.dev/native-ui-nuget'
             $nativeSdkRoot = Join-Path $nativePackages 'microsoft.web.webview2/1.0.4258.31'
             $goSource = Join-Path $smoke 'main.go'
@@ -400,7 +400,7 @@ try {
                 foreach ($target in @('arm64', 'x64')) {
                     $cmakeArch = if ($target -eq 'arm64') { 'ARM64' } else { 'x64' }
                     $nativeBuild = Join-Path $output "windows-ui-$target"
-                    Invoke-Tool $script:cmake @('-S', $nativeSource, '-B', $nativeBuild, '-G', 'Visual Studio 17 2022', '-A', $cmakeArch, "-DWEBVIEW2_SDK_ROOT=$nativeSdkRoot")
+                    Invoke-Tool $script:cmake @('--fresh', '-S', $nativeSource, '-B', $nativeBuild, '-G', 'Visual Studio 17 2022', '-A', $cmakeArch, "-DWEBVIEW2_SDK_ROOT=$nativeSdkRoot")
                     Invoke-Tool $script:cmake @('--build', $nativeBuild, '--config', 'Release')
                     if ($target -eq $hostArch -or $hostArch -eq 'arm64') {
                         Invoke-Tool (Join-Path (Split-Path -Parent $script:cmake) 'ctest.exe') @('--test-dir', $nativeBuild, '-C', 'Release', '--output-on-failure')

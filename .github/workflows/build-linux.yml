@@ -79,9 +79,9 @@ jobs:
           python3 scripts/release_manifest_test.py
           python3 scripts/publish_release_test.py
           bash -n scripts/install-linux.sh scripts/build-linux-core.sh scripts/build-linux-ui.sh scripts/test-debian13.sh
-          for script in packaging/linux/scripts/*; do sh -n "$script"; done
-          npm --prefix ui/frontend ci
-          npm --prefix ui/frontend test
+          for script in apps/linux/packaging/scripts/*; do sh -n "$script"; done
+          npm --prefix apps/shared/wails/frontend ci
+          npm --prefix apps/shared/wails/frontend test
   loongarch:
     uses: ./.github/workflows/build-loongarch-deb.yml
     with:
@@ -229,7 +229,7 @@ jobs:
           go-version: '1.27.1'
           cache-dependency-path: |
             go.sum
-            ui/go.sum
+            apps/shared/wails/go.sum
       - name: Install pinned official Node binary
         run: scripts/install-linux-node.sh
       - name: Install pinned build tools
@@ -244,10 +244,10 @@ jobs:
           sh scripts/test-linux-activation.sh
           go test ./...
           go vet ./...
-          npm --prefix ui/frontend ci
-          npm --prefix ui/frontend run build
-          (cd ui && go test -tags webkit2_41 ./... && go vet -tags webkit2_41 ./...)
-          desktop-file-validate packaging/linux/desktop/fncpn.desktop
+          npm --prefix apps/shared/wails/frontend ci
+          npm --prefix apps/shared/wails/frontend run build
+          (cd apps/shared/wails && go test -tags webkit2_41 ./... && go vet -tags webkit2_41 ./...)
+          desktop-file-validate apps/linux/packaging/desktop/fncpn.desktop
       - name: Build matching Core and UI packages on the target distribution
         run: |
           scripts/build-linux-core.sh

@@ -23,7 +23,7 @@ func TestMacOSAppEntryPointInstallsDelegate(t *testing.T) {
 	command := exec.Command(swift,
 		"-emit-silgen", "-parse-as-library", "-module-name", "FnCPNApp",
 		"-framework", "AppKit",
-		filepath.Join("..", "platform", "macos", "FnCPNApp.swift"),
+		filepath.Join("..", "apps", "macos", "FnCPNApp.swift"),
 	)
 	output, err := command.CombinedOutput()
 	if err != nil {

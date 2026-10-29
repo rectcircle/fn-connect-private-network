@@ -8,7 +8,7 @@ CHECKS = {'pinned-signing-certificate', 'package-version', 'expected-abis', 'jni
 
 
 def certificate_fingerprint():
-    return (Path(__file__).resolve().parents[1] / 'mobile/android/signing-certificate.sha256').read_text().strip()
+    return (Path(__file__).resolve().parents[1] / 'apps/android/signing-certificate.sha256').read_text().strip()
 
 
 def packages(version):

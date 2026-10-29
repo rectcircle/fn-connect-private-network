@@ -54,26 +54,26 @@ macos_app_finish() {
       -ldflags "-s -w -X github.com/rectcircle/fn-connect-private-network/internal/version.Revision=$REVISION" \
       -o "$resources/fncpn" ./cmd/fncpn)
   fi
-  cp -R "$ROOT_DIR/packaging/assets" "$APP_WORK/assets"
+  cp -R "$ROOT_DIR/assets/branding" "$APP_WORK/assets"
   swift "$ROOT_DIR/scripts/generate-icons.swift" "$APP_WORK/assets"
   iconutil -c icns "$APP_WORK/assets/AppIcon.iconset"
   cp -X "$APP_WORK/assets/"Status-*.png "$resources/"
   cp -X "$APP_WORK/assets/AppIcon.icns" "$resources/"
-  cp -R "$ROOT_DIR/packaging/macos/en.lproj" "$ROOT_DIR/packaging/macos/zh-Hans.lproj" "$resources/"
+  cp -R "$ROOT_DIR/apps/macos/packaging/en.lproj" "$ROOT_DIR/apps/macos/packaging/zh-Hans.lproj" "$resources/"
   cp -X "$ROOT_DIR/LICENSE" "$ROOT_DIR/THIRD_PARTY_NOTICES.md" "$resources/"
-  cp -X "$ROOT_DIR/packaging/macos/install-prompt.applescript" "$ROOT_DIR/packaging/macos/install-prompt.plist" "$resources/"
+  cp -X "$ROOT_DIR/apps/macos/packaging/install-prompt.applescript" "$ROOT_DIR/apps/macos/packaging/install-prompt.plist" "$resources/"
   python3 - "$ROOT_DIR" "$APP" "$APP_OUTPUT" "$VERSION" "$BUILD_NUMBER" "$MACOSX_DEPLOYMENT_TARGET" <<'PY'
 import pathlib, plistlib, sys
 root, app, final_app = map(pathlib.Path, sys.argv[1:4])
 path = app/'Contents/Info.plist'
 info = plistlib.loads(path.read_bytes(), fmt=plistlib.FMT_XML) if path.exists() else {}
 # Preserve runtime-specific bundle keys, but share product identity and metadata.
-info.update(plistlib.loads((root/'packaging/macos/Info.plist').read_bytes()))
+info.update(plistlib.loads((root/'apps/macos/packaging/Info.plist').read_bytes()))
 info['FnCPNProductVersion'] = info['CFBundleShortVersionString'] = sys.argv[4]
 info['CFBundleVersion'] = sys.argv[5]
 info['LSMinimumSystemVersion'] = sys.argv[6]
 path.write_bytes(plistlib.dumps(info))
-agent = plistlib.loads((root/'packaging/macos/cn.rectcircle.fncpn.client.plist').read_bytes())
+agent = plistlib.loads((root/'apps/macos/packaging/cn.rectcircle.fncpn.client.plist').read_bytes())
 agent['ProgramArguments'][0] = str(final_app/'Contents/Resources/fncpn')
 (app/'Contents/Resources/client-agent.plist').write_bytes(plistlib.dumps(agent))
 PY

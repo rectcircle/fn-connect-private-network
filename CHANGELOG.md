@@ -4,6 +4,12 @@
 格式遵循 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)，版本规则见
 [版本与兼容性](docs/versioning-and-compatibility.md)。
 
+## [1.1.9] - 2026-10-29
+
+### Changed
+
+- 客户端源码与交付配置统一按平台组织，共享 Fyne/Wails 工程独立归属；同步构建、CI 与资源引用，保留现有安装身份和运行时数据路径。
+
 ## [1.1.8] - 2026-10-28
 
 ### Added

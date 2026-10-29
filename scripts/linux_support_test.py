@@ -44,7 +44,7 @@ class LinuxSupportTest(unittest.TestCase):
             release = directory / 'os-release'
             loader = directory / 'loader'
             loader.touch()
-            guard = (ROOT / 'packaging/linux/scripts/check-loongarch').read_text().replace(
+            guard = (ROOT / 'apps/linux/packaging/scripts/check-loongarch').read_text().replace(
                 '/etc/os-release', str(release)).replace('/lib64/ld-linux-loongarch-lp64d.so.1', str(loader))
             for arch, kernel, codename, success in [('loong64','6.12.0','forky',True),
                     ('loongarch64','6.12.0','forky',False), ('loong64','5.10.0','forky',False),

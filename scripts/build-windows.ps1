@@ -46,7 +46,7 @@ $wixUiExtension = Join-Path $projectRoot '.dev/tools/wix/.wix/extensions/WixTool
 $wintunRoot = Join-Path $projectRoot '.dev/dependencies/wintun/0.14.1'
 $wintunLicense = Join-Path $wintunRoot 'LICENSE.txt'
 $webView2Bootstrapper = Join-Path $projectRoot '.dev/dependencies/webview2/MicrosoftEdgeWebView2Setup.exe'
-$nativeUiSource = Join-Path $projectRoot 'platform/windows'
+$nativeUiSource = Join-Path $projectRoot 'apps/windows'
 $nativeUiSdkProject = Join-Path $nativeUiSource 'WebView2SDK.csproj'
 $nativeUiNuget = Join-Path $projectRoot '.dev/native-ui-nuget'
 $nativeUiSdkRoot = Join-Path $nativeUiNuget 'microsoft.web.webview2/1.0.4258.31'
@@ -556,7 +556,7 @@ if (-not (Test-Path -LiteralPath $wix -PathType Leaf)) { throw "WiX 7 缺失：$
 if (-not (Test-Path -LiteralPath $wixUiExtension -PathType Leaf)) { throw "WiX UI Extension 缺失：$wixUiExtension。先运行 scripts/setup-windows.ps1。" }
 if (-not (Test-Path -LiteralPath $wixUtilExtension -PathType Leaf)) { throw "WiX Util Extension 缺失：$wixUtilExtension。先运行 scripts/setup-windows.ps1。" }
 if (-not (Test-Path -LiteralPath $wintunLicense -PathType Leaf)) { throw "Wintun 0.14.1 缺失：$wintunRoot。先运行 scripts/setup-windows.ps1。" }
-if (-not (Test-Path -LiteralPath (Join-Path $projectRoot 'packaging/assets/AppIcon.ico') -PathType Leaf)) { throw 'Windows application icon is missing: packaging/assets/AppIcon.ico' }
+if (-not (Test-Path -LiteralPath (Join-Path $projectRoot 'assets/branding/AppIcon.ico') -PathType Leaf)) { throw 'Windows application icon is missing: assets/branding/AppIcon.ico' }
 if (-not (Test-Path -LiteralPath $webView2Bootstrapper -PathType Leaf)) { throw "WebView2 官方 Evergreen Bootstrapper 缺失：$webView2Bootstrapper。先运行 scripts/setup-windows.ps1。" }
 $appManifest = Join-Path $nativeUiSource 'app.manifest'
 Assert-WindowsDpiAwarenessManifest $appManifest
@@ -594,7 +594,7 @@ foreach ($architecture in $architectures) {
     $null = New-Item -ItemType Directory -Force -Path $uiOutput
     $nativeBuild = Join-Path $projectRoot ".dev/windows-ui-$architecture"
     $cmakeArch = if ($architecture -eq 'arm64') { 'ARM64' } else { 'x64' }
-    Invoke-Checked 'cmake' @('-S', $nativeUiSource, '-B', $nativeBuild, '-G', 'Visual Studio 17 2022', '-A', $cmakeArch, "-DWEBVIEW2_SDK_ROOT=$nativeUiSdkRoot")
+    Invoke-Checked 'cmake' @('--fresh', '-S', $nativeUiSource, '-B', $nativeBuild, '-G', 'Visual Studio 17 2022', '-A', $cmakeArch, "-DWEBVIEW2_SDK_ROOT=$nativeUiSdkRoot")
     Invoke-Checked 'cmake' @('--build', $nativeBuild, '--config', 'Release')
     $hostArch = [Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString().ToLowerInvariant()
     if ($architecture -eq $hostArch -or ($hostArch -eq 'arm64' -and $architecture -eq 'x64')) {
@@ -608,7 +608,7 @@ foreach ($architecture in $architectures) {
     $embeddedManifest = Join-Path $stage "FnCPN-$architecture.manifest.xml"
     Invoke-Checked $manifestTool @("-inputresource:$publishedExecutable;#1", "-out:$embeddedManifest")
     Assert-WindowsDpiAwarenessManifest $embeddedManifest
-    $sourceIcon = Join-Path $projectRoot 'packaging/assets/AppIcon.ico'
+    $sourceIcon = Join-Path $projectRoot 'assets/branding/AppIcon.ico'
     Copy-Item -LiteralPath $sourceIcon -Destination (Join-Path $uiOutput 'FnCPN.ico')
     $publishedIcon = Join-Path $uiOutput 'FnCPN.ico'
     if (-not (Test-Path -LiteralPath $publishedIcon -PathType Leaf) -or (Get-FileHash -LiteralPath $publishedIcon -Algorithm SHA256).Hash -ne (Get-FileHash -LiteralPath $sourceIcon -Algorithm SHA256).Hash) {
@@ -699,7 +699,7 @@ foreach ($architecture in $architectures) {
     [void]$wxs.AppendLine('<Feature Id="Main" Title="FnCPN" Level="1"><ComponentRef Id="ClientService"/><ComponentRef Id="ProtocolRegistration"/><ComponentRef Id="CliPath"/><ComponentRef Id="StartMenu"/>')
     foreach ($reference in $references) { [void]$wxs.AppendLine("<ComponentRef Id=`"$reference`" />") }
     [void]$wxs.AppendLine('</Feature>')
-    $brandIcon = [Drawing.Image]::FromFile((Join-Path $projectRoot 'packaging/assets/AppIcon.iconset/icon_512x512@2x.png'))
+    $brandIcon = [Drawing.Image]::FromFile((Join-Path $projectRoot 'assets/branding/AppIcon.iconset/icon_512x512@2x.png'))
     foreach ($asset in @(@('Dialog',493,312),@('Banner',493,58))) {
         # MSI bitmap controls scale to their authored bounds. Supply 3x artwork
         # rather than enlarging the default 32px frame selected from the ICO.
@@ -728,9 +728,9 @@ foreach ($architecture in $architectures) {
     $licenseText = (Get-Content (Join-Path $projectRoot 'LICENSE') -Raw).Replace('\', '\\').Replace('{', '\{').Replace('}', '\}').Replace("`r", '').Replace("`n", '\par ' )
     [IO.File]::WriteAllText($licenseRtf, ('{\rtf1\ansi ' + $licenseText + '}'), [Text.Encoding]::ASCII)
     $msi = Join-Path $stage "fncpn-$version-windows-$architecture-unsigned.msi"
-    Invoke-Checked $wix @('-acceptEula', 'wix7', 'build', $source, '-culture', 'en-US', '-loc', (Join-Path $projectRoot 'packaging/windows/installer.en-US.wxl'), '-arch', $architecture, '-ext', $wixUtilExtension, '-ext', $wixUiExtension, '-d', "LicenseRtf=$licenseRtf", '-d', "PayloadDir=$payload", '-d', "InstallerHelper=$installerHelper", '-o', $msi, '-intermediatefolder', (Join-Path $stage 'wix-obj'))
+    Invoke-Checked $wix @('-acceptEula', 'wix7', 'build', $source, '-culture', 'en-US', '-loc', (Join-Path $projectRoot 'apps/windows/packaging/installer.en-US.wxl'), '-arch', $architecture, '-ext', $wixUtilExtension, '-ext', $wixUiExtension, '-d', "LicenseRtf=$licenseRtf", '-d', "PayloadDir=$payload", '-d', "InstallerHelper=$installerHelper", '-o', $msi, '-intermediatefolder', (Join-Path $stage 'wix-obj'))
     $chineseMsi = Join-Path $stage 'FnCPN.zh-CN.msi'
-    Invoke-Checked $wix @('-acceptEula', 'wix7', 'build', $source, '-culture', 'zh-CN', '-loc', (Join-Path $projectRoot 'packaging/windows/installer.zh-CN.wxl'), '-arch', $architecture, '-ext', $wixUtilExtension, '-ext', $wixUiExtension, '-d', "LicenseRtf=$licenseRtf", '-d', "PayloadDir=$payload", '-d', "InstallerHelper=$installerHelper", '-o', $chineseMsi, '-intermediatefolder', (Join-Path $stage 'wix-obj-zh'))
+    Invoke-Checked $wix @('-acceptEula', 'wix7', 'build', $source, '-culture', 'zh-CN', '-loc', (Join-Path $projectRoot 'apps/windows/packaging/installer.zh-CN.wxl'), '-arch', $architecture, '-ext', $wixUtilExtension, '-ext', $wixUiExtension, '-d', "LicenseRtf=$licenseRtf", '-d', "PayloadDir=$payload", '-d', "InstallerHelper=$installerHelper", '-o', $chineseMsi, '-intermediatefolder', (Join-Path $stage 'wix-obj-zh'))
     $chineseTransform = Join-Path $stage '2052.mst'
     Hide-CompletionNavigation $msi
     Hide-CompletionNavigation $chineseMsi 'zh-CN'

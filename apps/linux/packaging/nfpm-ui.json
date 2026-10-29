@@ -1,0 +1,33 @@
+{
+  "name": "fncpn-ui",
+  "platform": "linux",
+  "maintainer": "rectcircle <rectcircle96@gmail.com>",
+  "description": "FnCPN Wails v2 GTK3 desktop client",
+  "homepage": "https://fncpn.rectcircle.cn",
+  "license": "MIT",
+  "contents": [
+    {
+      "src": "${FNCPN_UI_BINARY}",
+      "dst": "/usr/bin/fncpn-ui",
+      "file_info": {
+        "mode": 493
+      }
+    },
+    {
+      "src": "apps/linux/packaging/desktop/fncpn.desktop",
+      "dst": "/usr/share/applications/fncpn.desktop"
+    },
+    {
+      "src": "assets/branding/AppIcon.png",
+      "dst": "/usr/share/icons/hicolor/256x256/apps/fncpn.png"
+    },
+    {
+      "src": "apps/linux/packaging/icons/*-symbolic.svg",
+      "dst": "/usr/share/fncpn/icons/"
+    },
+    {
+      "src": "LICENSE",
+      "dst": "/usr/share/doc/fncpn-ui/copyright"
+    }
+  ]
+}

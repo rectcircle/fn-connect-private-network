@@ -17,7 +17,7 @@ class HarmonyVersionSyncTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             for name in ['scripts/sync-version.py', 'internal/version/VERSION',
-                         'packaging/fnos/manifest', 'packaging/macos/Info.plist',
+                         'packaging/fnos/manifest', 'apps/macos/packaging/Info.plist',
                          'apps/harmonyos/AppScope/app.json5', 'apps/harmonyos/BUILD_NUMBER',
                          'apps/harmonyos/entry/src/main/resources/base/element/string.json',
                          'apps/harmonyos/entry/src/main/resources/en_US/element/string.json']:

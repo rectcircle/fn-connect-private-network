@@ -13,11 +13,11 @@ macos_app_init "$@"
 WAILS="${WAILS:-$(go env GOPATH)/bin/wails}"
 [ -x "$WAILS" ] || { echo 'Install the pinned CLI: go install github.com/wailsapp/wails/v2/cmd/wails@v2.17.0' >&2; exit 1; }
 (
-  cd "$ROOT_DIR/ui"
+  cd "$ROOT_DIR/apps/shared/wails"
   "$WAILS" build -clean -platform "darwin/$GO_ARCH" \
     -ldflags "-X github.com/rectcircle/fn-connect-private-network/internal/version.Revision=$REVISION"
 )
 # Copy the complete bundle, including any Wails runtime resources.
-cp -R "$ROOT_DIR/ui/build/bin/FnCPN Wails.app/." "$APP/"
+cp -R "$ROOT_DIR/apps/shared/wails/build/bin/FnCPN Wails.app/." "$APP/"
 mv "$APP/Contents/MacOS/FnCPN Wails" "$APP/Contents/MacOS/FnCPN"
 macos_app_finish

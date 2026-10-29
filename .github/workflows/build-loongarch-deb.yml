@@ -77,9 +77,9 @@ jobs:
       - uses: actions/cache@v4
         with:
           path: ~/.cache/fncpn-loongarch
-          key: loongarch-${{ steps.cache-epoch.outputs.month }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/loongarch/environment.json', 'scripts/loongarch/provision.sh', 'go.sum', 'ui/go.sum') }}-${{ github.sha }}
+          key: loongarch-${{ steps.cache-epoch.outputs.month }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/loongarch/environment.json', 'scripts/loongarch/provision.sh', 'go.sum', 'apps/shared/wails/go.sum') }}-${{ github.sha }}
           restore-keys: |
-            loongarch-${{ steps.cache-epoch.outputs.month }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/loongarch/environment.json', 'scripts/loongarch/provision.sh', 'go.sum', 'ui/go.sum') }}-
+            loongarch-${{ steps.cache-epoch.outputs.month }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/loongarch/environment.json', 'scripts/loongarch/provision.sh', 'go.sum', 'apps/shared/wails/go.sum') }}-
       - name: Install full-system emulator and filesystem tools
         if: inputs.full_validation && !inputs.defer_system_validation
         run: |

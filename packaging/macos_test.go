@@ -108,7 +108,7 @@ func TestMacOSPreinstallRejectsSymlinkParent(t *testing.T) {
 
 func runMacOSPreinstall(t *testing.T, directory, fail string) ([]byte, []string, error) {
 	t.Helper()
-	script, err := os.ReadFile(filepath.Join("macos", "scripts", "preinstall"))
+	script, err := os.ReadFile(filepath.Join("..", "apps", "macos", "packaging", "scripts", "preinstall"))
 	if err != nil {
 		t.Fatal(err)
 	}

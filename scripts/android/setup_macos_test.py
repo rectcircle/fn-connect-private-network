@@ -14,7 +14,8 @@ class MacSetupTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="fncpn setup ") as directory:
             root = Path(directory)
             (root / "scripts").mkdir()
-            (root / "mobile/android").mkdir(parents=True)
+            (root / "apps/android").mkdir(parents=True)
+            (root / "apps/shared/fyne").mkdir(parents=True)
             script = root / "scripts/setup-android-macos.sh"
             shutil.copy2(SOURCE, script)
             tools = root / "tools"

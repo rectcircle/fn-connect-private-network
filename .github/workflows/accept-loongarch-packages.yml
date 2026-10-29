@@ -122,17 +122,17 @@ jobs:
       - uses: actions/cache/restore@v4
         with:
           path: ~/.cache/fncpn-loongarch
-          key: loongarch-${{ steps.cache-epoch.outputs.month }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/loongarch/environment.json', 'scripts/loongarch/provision.sh', 'go.sum', 'ui/go.sum') }}-${{ github.sha }}
+          key: loongarch-${{ steps.cache-epoch.outputs.month }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/loongarch/environment.json', 'scripts/loongarch/provision.sh', 'go.sum', 'apps/shared/wails/go.sum') }}-${{ github.sha }}
           restore-keys: |
-            loongarch-${{ steps.cache-epoch.outputs.month }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/loongarch/environment.json', 'scripts/loongarch/provision.sh', 'go.sum', 'ui/go.sum') }}-
+            loongarch-${{ steps.cache-epoch.outputs.month }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/loongarch/environment.json', 'scripts/loongarch/provision.sh', 'go.sum', 'apps/shared/wails/go.sum') }}-
       - uses: actions/cache/restore@v4
         if: matrix.target == 'openeuler-loong64'
         id: dnf-cache
         with:
           path: ~/.cache/fncpn-loongarch-runtime/${{ matrix.target }}/dnf
-          key: loongarch-runtime-dnf-${{ matrix.target }}-${{ steps.cache-epoch.outputs.month }}-${{ hashFiles('packaging/linux/targets.json', 'scripts/loongarch/dnf_downloads.py', 'scripts/loongarch/probe-format.sh', 'scripts/loongarch/configure-openeuler-repos.sh') }}-${{ github.run_id }}-${{ github.run_attempt }}
+          key: loongarch-runtime-dnf-${{ matrix.target }}-${{ steps.cache-epoch.outputs.month }}-${{ hashFiles('apps/linux/packaging/targets.json', 'scripts/loongarch/dnf_downloads.py', 'scripts/loongarch/probe-format.sh', 'scripts/loongarch/configure-openeuler-repos.sh') }}-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
-            loongarch-runtime-dnf-${{ matrix.target }}-${{ steps.cache-epoch.outputs.month }}-${{ hashFiles('packaging/linux/targets.json', 'scripts/loongarch/dnf_downloads.py', 'scripts/loongarch/probe-format.sh', 'scripts/loongarch/configure-openeuler-repos.sh') }}-
+            loongarch-runtime-dnf-${{ matrix.target }}-${{ steps.cache-epoch.outputs.month }}-${{ hashFiles('apps/linux/packaging/targets.json', 'scripts/loongarch/dnf_downloads.py', 'scripts/loongarch/probe-format.sh', 'scripts/loongarch/configure-openeuler-repos.sh') }}-
       - uses: actions/cache/restore@v4
         if: matrix.image_archive_sha256 != ''
         id: image-cache

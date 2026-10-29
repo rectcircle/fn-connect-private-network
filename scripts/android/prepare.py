@@ -15,8 +15,8 @@ import subprocess
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0,str(ROOT / "scripts"))
 import fyne_mobile_render
-MOBILE = ROOT / "mobile"
-OUT = MOBILE / "android/app/build/generated"
+MOBILE = ROOT / "apps/shared/fyne"
+OUT = ROOT / "apps/android/app/build/generated"
 
 
 def fail(message):

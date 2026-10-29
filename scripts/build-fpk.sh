@@ -68,7 +68,7 @@ build_target() {
 FNPACK_BIN="$(resolve_fnpack)"
 mkdir -p "$BUILD_DIR" "$DIST_DIR"
 ASSET_DIR="${BUILD_DIR}/assets"
-cp -R "${ROOT_DIR}/packaging/assets" "$ASSET_DIR"
+cp -R "${ROOT_DIR}/assets/branding" "$ASSET_DIR"
 if [ "$(uname -s)" = "Darwin" ]; then
     swift "${ROOT_DIR}/scripts/generate-icons.swift" "$ASSET_DIR"
 fi

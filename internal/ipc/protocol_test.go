@@ -26,12 +26,12 @@ func TestNativeClientIPCVersionsMatchGoProtocol(t *testing.T) {
 	}{
 		{
 			name:  "Windows native UI",
-			path:  filepath.Join(root, "platform", "windows", "main.cpp"),
+			path:  filepath.Join(root, "apps", "windows", "main.cpp"),
 			regex: regexp.MustCompile(`constexpr int kIpcVersion = ([0-9]+);`),
 		},
 		{
 			name:  "macOS app",
-			path:  filepath.Join(root, "platform", "macos", "FnCPNApp.swift"),
+			path:  filepath.Join(root, "apps", "macos", "FnCPNApp.swift"),
 			regex: regexp.MustCompile(`private let ipcProtocolVersion = ([0-9]+)`),
 		},
 	}
@@ -62,7 +62,7 @@ func TestWindowsNativeUIErrorCodesMatchGoModel(t *testing.T) {
 		t.Fatal("locate IPC test source")
 	}
 	root := filepath.Clean(filepath.Join(filepath.Dir(sourceFile), "..", ".."))
-	path := filepath.Join(root, "platform", "windows", "main.cpp")
+	path := filepath.Join(root, "apps", "windows", "main.cpp")
 	contents, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read Windows IPC implementation: %v", err)

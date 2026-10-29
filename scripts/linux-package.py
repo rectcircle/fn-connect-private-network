@@ -12,7 +12,7 @@ from linux_support import ROOT, package_name, package_profile
 
 
 def script_body(name, argument=None):
-    text = (ROOT/'packaging/linux/scripts'/name).read_text()
+    text = (ROOT/'apps/linux/packaging/scripts'/name).read_text()
     # Each package manager supplies different arguments. Translate explicitly,
     # rather than passing RPM counts or pacman version strings to dpkg hooks.
     return ('set -- '+argument+'\n' if argument else '') + text.removeprefix('#!/bin/sh\n')
@@ -102,7 +102,7 @@ def elf_dependencies(binary, profile):
 
 def configuration(component, target, arch, version, binary, directory, runtime_dependencies=()):
     profile = package_profile(target,arch)
-    config = json.loads((ROOT/f'packaging/linux/nfpm-{component}.json').read_text())
+    config = json.loads((ROOT/f'apps/linux/packaging/nfpm-{component}.json').read_text())
     config.update(arch=arch,version=version)
     dependencies = list(profile['coreDependencies' if component=='core' else 'uiDependencies'])
     if component == 'ui':

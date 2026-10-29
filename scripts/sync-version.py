@@ -11,10 +11,10 @@ if not re.fullmatch(r'(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)', versio
 core_version = version
 updates = {
     root / 'packaging/fnos/manifest': (r'(?m)^version=.*$', f'version={version}'),
-    root / 'packaging/macos/Info.plist': (r'(<key>CFBundleShortVersionString</key>\s*<string>)[^<]+(</string>)', rf'\g<1>{core_version}\g<2>'),
+    root / 'apps/macos/packaging/Info.plist': (r'(<key>CFBundleShortVersionString</key>\s*<string>)[^<]+(</string>)', rf'\g<1>{core_version}\g<2>'),
 }
 # Wails UI is a local component of the same product, not a separately versioned app.
-wails_config = root / 'ui/wails.json'
+wails_config = root / 'apps/shared/wails/wails.json'
 if wails_config.exists():
     updates[wails_config] = (r'("productVersion"\s*:\s*")[^"]+(")', rf'\g<1>{version}\g<2>')
 harmony_app = root / 'apps/harmonyos/AppScope/app.json5'
@@ -29,7 +29,7 @@ if harmony_app.exists():
         resource = root / f'apps/harmonyos/entry/src/main/resources/{qualifier}/element/string.json'
         updates[resource] = (r'("name"\s*:\s*"product_version",\s*"value"\s*:\s*")[^"]+("\s*)', rf'\g<1>{version}\g<2>')
 # All package metadata uses the same numeric product version.
-plist_path = root / 'packaging/macos/Info.plist'
+plist_path = root / 'apps/macos/packaging/Info.plist'
 
 failed = False
 for path, (pattern, replacement) in updates.items():
@@ -57,9 +57,9 @@ for path, (pattern, replacement) in updates.items():
             path.write_text(after, encoding='utf-8')
 # The generated iOS project is committed for direct Xcode use. Keep both
 # project configurations synchronized even when no Xcode build has run yet.
-ios_project = root / 'ios/FnCPN.xcodeproj/project.pbxproj'
+ios_project = root / 'apps/ios/FnCPN.xcodeproj/project.pbxproj'
 if ios_project.exists():
-    number = (root / 'ios/BUILD_NUMBER').read_text().strip()
+    number = (root / 'apps/ios/BUILD_NUMBER').read_text().strip()
     if not re.fullmatch(r'[1-9][0-9]{0,3}', number):
         raise SystemExit('iOS BUILD_NUMBER must be a positive integer of at most four digits')
     before = ios_project.read_text()

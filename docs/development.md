@@ -75,7 +75,7 @@ CI 检查不替代 fnOS x86/ARM 的真实 FPK 安装、升级、直连和中继�
 
 ### 图标生成
 
-macOS 打包自动生成图标；需要手动更新时运行 `swift scripts/generate-icons.swift packaging/assets`，生成资源随源码提交。其他平台使用已提交的生成资源，构建时不依赖 Swift。
+macOS 打包自动生成图标；需要手动更新时运行 `swift scripts/generate-icons.swift assets/branding`，生成资源随源码提交。其他平台使用已提交的生成资源，构建时不依赖 Swift。
 
 ### macOS Wails UI
 
@@ -96,7 +96,7 @@ ARCH=x64 scripts/build-wails-macos.sh --pkg
 App：`dist/macos-ui/wails/<架构>/FnCPN.app`。
 原生 App 可通过 `scripts/build-native-macos.sh` 构建，输出到
 `dist/macos-ui/native/<架构>/FnCPN.app`。两个构建器均支持 `--output /绝对路径/FnCPN.app`，
-输出必须不存在；默认开发输出允许重复构建。`ui/build/bin/` 是 Wails CLI 中间产物。
+输出必须不存在；默认开发输出允许重复构建。`apps/shared/wails/build/bin/` 是 Wails CLI 中间产物。
 安装包：`dist/wails-v2/fncpn-<产品版本>-macos-<架构>-unsigned.pkg`。
 产物使用本地 ad-hoc 签名，尚未公证。
 两种 UI 共用应用标识 `cn.rectcircle.fncpn`、URL scheme 和产品版本；PKG 都安装至
@@ -111,7 +111,7 @@ Wails 默认 PKG 目录为 `dist/wails-v2/`；显式设置 `DIST_DIR` 可覆盖�
 开发 App 发现已有 daemon 时只复用它，退出不终止别的 UI 启动的服务；若版本不匹配，
 现有 IPC client 会明确拒绝通信，不放宽产品版本或 IPC 校验。
 
-只开发前端或调试绑定时可在 `ui/` 运行 `wails dev`，先通过完整 App/安装器准备 daemon。
+只开发前端或调试绑定时可在 `apps/shared/wails/` 运行 `wails dev`，先通过完整 App/安装器准备 daemon。
 
 ## Windows 开发与构建
 
@@ -159,15 +159,18 @@ build 默认按 ARM64、x64 构建，可指定 `-Architecture arm64` 或 `x64`�
 
 check 验证版本/本地化生成资源、setup 回归、Go test/vet、安装维护协议历史/未来版本互通、原生 UI 与 MSI。它使用已有候选，不自动重建或安装；只检查源码用 `-SkipPackage`，单架构用 `-Architecture`，自定义产物目录用 `-PackageRoot`。
 
-原生 UI 源码位于 `platform/windows/`，独立编译示例：
+原生 UI 源码位于 `apps/windows/`，独立编译示例：
 
 ```powershell
-cmake -S platform/windows -B .dev/windows-ui-arm64 -G "Visual Studio 17 2022" -A ARM64 -DWEBVIEW2_SDK_ROOT="$PWD/.dev/native-ui-nuget/microsoft.web.webview2/1.0.4258.31"
+cmake --fresh -S apps/windows -B .dev/windows-ui-arm64 -G "Visual Studio 17 2022" -A ARM64 -DWEBVIEW2_SDK_ROOT="$PWD/.dev/native-ui-nuget/microsoft.web.webview2/1.0.4258.31"
 cmake --build .dev/windows-ui-arm64 --config Release
 ctest --test-dir .dev/windows-ui-arm64 -C Release --output-on-failure
 ```
 
-首次执行先运行 setup。构建 x64 时替换构建目录并使用 `-A x64`。UI 的中英文资源位于 `platform/windows/messages.json`，执行 `python scripts/sync-native-localizations.py` 更新 `Localization.h`。
+源码与 MSI 语言资源统一位于 `apps/windows/`，交付配置位于其 `packaging/`；共享图标仍引用 `assets/branding/`。
+构建入口保持不变，CMake 配置使用 `--fresh` 重建缓存，支持复用迁移前的构建目录。
+
+首次执行先运行 setup。构建 x64 时替换构建目录并使用 `-A x64`。UI 的中英文资源位于 `apps/windows/messages.json`，执行 `python scripts/sync-native-localizations.py` 更新 `Localization.h`。
 维护协议测试需要完整 Git 历史（含 v1.0.7–v1.0.10 tag），
 在 `.dev/maintenance-compatibility/` 构建隔离进程并保存 commit/哈希清单；不会安装软件或操作用户 daemon。
 测试还把业务 IPC 改为 99、产品版本改为 9.0.0，验证新旧维护客户端双向退出和拒绝行为。
@@ -192,7 +195,7 @@ Windows CI 使用 `windows-2022` 与 `Visual Studio 17 2022`，调整工具链�
 
 ## Linux 构建与部署
 
-平台范围与选择依据见 [平台支持](platform-support.md#linux)，安装脚本命令见 [README](../README.md#linux自动安装)。Core 可交叉构建；UI 必须在 [targets.json](../packaging/linux/targets.json) 指定的对应架构基线环境构建。
+平台范围与选择依据见 [平台支持](platform-support.md#linux)，安装脚本命令见 [README](../README.md#linux自动安装)。Core 可交叉构建；UI 必须在 [targets.json](../apps/linux/packaging/targets.json) 指定的对应架构基线环境构建。
 
 ### LoongArch 新世界构建与验收
 
@@ -204,7 +207,7 @@ Windows CI 使用 `windows-2022` 与 `Visual Studio 17 2022`，调整工具链�
 | `rpm-loong64` | 官方固定 SHA256 容器的 openEuler 24.03 LTS SP4 | 同版本 openEuler |
 | `archlinux-loong64` | 固定 digest 的 Loong Arch Linux 社区镜像，完整滚动更新 | 对应 Loong Arch Linux |
 
-镜像、架构、包依赖以 [targets.json](../packaging/linux/targets.json) 为准；Go、固件等固定输入见
+镜像、架构、包依赖以 [targets.json](../apps/linux/packaging/targets.json) 为准；Go、固件等固定输入见
 [environment.json](../scripts/loongarch/environment.json)。基础镜像固定不代表整个软件仓库已快照锁定，实际依赖版本随构建记录。
 RPM 使用项目正式密钥签名，托盘使用 openEuler 提供的原版 AppIndicator；其他基线使用 Ayatana。
 DEB 的 t64/非 t64 包名别名保留从 ELF 推导的最低版本约束。
@@ -546,7 +549,7 @@ runtime 探针测试异步 N-API、外部线程、goroutine/定时器/GC 与 HTT
 
 ## iOS 开发环境准备
 
-需要 macOS、Xcode 27.1、Go 1.27.1；iPhone/iPad 共用 `ios/FnCPN.xcodeproj`。
+需要 macOS、Xcode 27.1、Go 1.27.1；iPhone/iPad 共用 `apps/ios/FnCPN.xcodeproj`。
 初始化脚本检查工具链并准备匹配的模拟器 Runtime，支持重跑；日志保存在 `.dev/logs/`。
 
 ```sh
@@ -589,7 +592,7 @@ bash scripts/package-ios.sh --allow-dirty --out .dev/ios/review-package
 输出 `dist/ios/fncpn-<version>-ios-arm64-unsigned.ipa` 及 `build-manifest.json`。
 使用 Xcode 27.1、Release/device ARM64，检查 App/扩展版本、无签名/描述文件、设备 Mach-O、
 Packet Tunnel 声明和许可证。Go 链接器生成的临时 ad-hoc 签名也会移除。
-`ios/BUILD_NUMBER` 是独立、递增的 iOS 构建编号；发布新候选前按需递增，两 target 必须相同。
+`apps/ios/BUILD_NUMBER` 是独立、递增的 iOS 构建编号；发布新候选前按需递增，两 target 必须相同。
 
 `build-ios.yml` 使用 Xcode 27 runner，与桌面 Xcode 16.4 job 隔离；无须 Apple 证书 Secret。
 Release workflow 下载同一 commit 的 iOS 资产，再纳入统一 manifest、SHA256 和草稿核验。
@@ -602,7 +605,7 @@ UIScene、键盘、Core Text 及渲染匹配点。iOS 普通文字使用 Core Te
 Fyne 符号字体，不内嵌完整 CJK 字库。Android 共用有界解析字体缓存及登录按钮触摸策略。
 
 ```sh
-(cd mobile && go test -tags ci ./... && go test -race -tags ci ./... && go vet -tags ci ./...)
+(cd apps/shared/fyne && go test -tags ci ./... && go test -race -tags ci ./... && go vet -tags ci ./...)
 python3 scripts/test_fyne_font_cache.py
 python3 scripts/test_fyne_keyboard_tap.py
 python3 scripts/ios_release_test.py
@@ -625,7 +628,7 @@ Android 源码位于独立 `mobile` module；纯 Go 开发不需要 Android 工�
 不会由本界面自动安装或启动服务。未设置时明确提示不可用，不显示模拟连接。
 
 ```sh
-cd mobile
+cd apps/shared/fyne
 go run .
 go test -tags ci,no_emoji ./...
 go test -race -tags ci,no_emoji ./...
@@ -633,7 +636,7 @@ go vet -tags ci,no_emoji ./...
 GOOS=android GOARCH=arm64 CGO_ENABLED=0 go build ./internal/androidvpn
 ```
 
-以上命令在 `mobile/` 执行；`ci` 使用无显示驱动。测试覆盖真实授权注册表的 OTP 续接、宿主生命周期、两份 netstack 之间
+以上命令在 `apps/shared/fyne/` 执行；`ci` 使用无显示驱动。测试覆盖真实授权注册表的 OTP 续接、宿主生命周期、两份 netstack 之间
 的 DNS UDP/TCP 收发、后缀隔离、DNS 计划回滚、fd 替换和 socket 保护失败清理。
 纯 Go 交叉编译不能验证 Java、JNI/C、Android 链接和系统行为。
 
@@ -672,16 +675,16 @@ Java、Go、Gradle、Android 的环境变量和各自 PATH 条目直接写入 `~
 - 未添加 Gradle wrapper，使用已有 Gradle，离线模式缺少插件缓存时直接失败。
 
 ```sh
-cd mobile/android
+cd apps/android
 gradle --offline :app:assembleRelease -PfncpnBuild=递增整数
 ```
 
-以上 Gradle 命令从仓库根目录进入 `mobile/android/`；后续 Gradle 和许可更新命令也在该目录执行。
+以上 Gradle 命令从仓库根目录进入 `apps/android/`；后续 Gradle 和许可更新命令也在该目录执行。
 
 Gradle 从固定 Fyne module 复制原始 Java driver 到构建目录，不维护 Fyne 分叉或修改已打包 APK。
 构建分别输出 `app-arm64-v8a-release.apk`、`app-x86_64-release.apk`，每个 APK 仅含对应架构的单库，
 不生成同时携带两套库的通用 APK。启用 16 KB 页对齐，记录产品版本、commit、工具链和 ABI。
-依赖许可见 `mobile/THIRD_PARTY_NOTICES.md`，随 APK 打包。
+依赖许可见 `apps/shared/fyne/THIRD_PARTY_NOTICES.md`，随 APK 打包。
 可运行 `python3 ../../scripts/android/notices.py` 按 Android 包图更新许可，不需要 SDK/NDK。
 
 Android versionName 读取根 `internal/version/VERSION`，versionCode 通过 `-PfncpnBuild=递增整数` 指定。
@@ -710,7 +713,7 @@ gradle --offline :app:bundleRelease -PfncpnBuild=递增整数
 
 完整构建与实机专项按 [验证记录](validation.md) 记录；通过构建不等于所有后台、切网和兼容性验收完成。
 方案结论与待验收范围见 [Android 支持](platform-support.md#android)。
-`mobile/FyneApp.toml` 的生成版本 0.0.0 仅为开发占位，不作为正式发布版本，发布时统一注入产品版本。
+`apps/shared/fyne/FyneApp.toml` 的生成版本 0.0.0 仅为开发占位，不作为正式发布版本，发布时统一注入产品版本。
 
 ### Android 界面与包体积
 
@@ -817,8 +820,8 @@ go test -race ./internal/client ./internal/ipc ./internal/platform/darwin
 ### Wails UI 检查
 
 ```sh
-(cd ui && MACOSX_DEPLOYMENT_TARGET=13.0 go test -race ./...)
-(cd ui/frontend && npm ci && npm test && npm run build)
+(cd apps/shared/wails && MACOSX_DEPLOYMENT_TARGET=13.0 go test -race ./...)
+(cd apps/shared/wails/frontend && npm ci && npm test && npm run build)
 bash -n scripts/build-native-macos.sh scripts/build-wails-macos.sh scripts/build-macos-pkg.sh scripts/macos-app-common.sh
 ```
 
@@ -903,7 +906,7 @@ FnCPN 的 Core/UI RPM 使用项目专用 OpenPGP v4 RSA-4096 密钥和 SHA256 �
 
 ### 公钥与首次安装
 
-公钥：[RPM-GPG-KEY-fncpn](../packaging/linux/keys/RPM-GPG-KEY-fncpn)。完整指纹：
+公钥：[RPM-GPG-KEY-fncpn](../apps/linux/packaging/keys/RPM-GPG-KEY-fncpn)。完整指纹：
 
 ```text
 B2AA E111 998B BE82 DECC 9F10 45BB E575 8B86 1A6A

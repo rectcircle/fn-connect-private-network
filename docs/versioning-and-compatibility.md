@@ -24,7 +24,7 @@
 
 Android、iOS/iPadOS、HarmonyOS 客户端同样使用统一产品编号、同发布同 commit 和本文唯一远程准入规则；
 不设移动端例外或独立 server 协议版本。Android versionName 对齐产品版本，versionCode
-独立单调递增；HarmonyOS versionCode 从 `apps/harmonyos/BUILD_NUMBER` 读取并独立单调递增；iOS 的 CFBundleVersion 从 `ios/BUILD_NUMBER` 读取并独立单调递增。新增平台仅复用现有能力、不改变协议且不增加 server 要求时允许升 PATCH；
+独立单调递增；HarmonyOS versionCode 从 `apps/harmonyos/BUILD_NUMBER` 读取并独立单调递增；iOS 的 CFBundleVersion 从 `apps/ios/BUILD_NUMBER` 读取并独立单调递增。新增平台仅复用现有能力、不改变协议且不增加 server 要求时允许升 PATCH；
 新增 server 要求仍必须升 MINOR。各端发布同编号，编码阶段不等于发布验收通过。
 
 每次正式发布应提供对应版本的 client 与 server 产物；用户可以分别安装、升级两端。

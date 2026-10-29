@@ -16,7 +16,7 @@ class SetupTests(unittest.TestCase):
             target = root / "scripts/ios"
             target.mkdir(parents=True)
             shutil.copy2(SOURCE / "setup_macos.py", target)
-            (root / "mobile").mkdir()
+            (root / "apps/shared/fyne").mkdir(parents=True)
             tools = root / "tools"
             tools.mkdir()
             home = root / "home"

@@ -12,9 +12,9 @@ let
   frontend = pkgs.buildNpmPackage {
     pname = "fncpn-frontend";
     inherit version;
-    src = source + "/ui/frontend";
+    src = source + "/apps/shared/wails/frontend";
     nodejs = pkgs.nodejs_22;
-    npmDeps = pkgs.importNpmLock { npmRoot = source + "/ui/frontend"; };
+    npmDeps = pkgs.importNpmLock { npmRoot = source + "/apps/shared/wails/frontend"; };
     npmConfigHook = pkgs.importNpmLock.npmConfigHook;
     installPhase = ''
       runHook preInstall
@@ -34,9 +34,9 @@ let
     nativeBuildInputs = [ pkgs.makeWrapper ];
     postInstall = ''
       mkdir -p "$out/libexec/fncpn" "$out/share/polkit-1/actions" "$out/lib/udev/rules.d"
-      cp packaging/linux/udev/85-fncpn.rules "$out/lib/udev/rules.d/"
-      install -m755 packaging/linux/scripts/enable-client packaging/linux/scripts/wait-ready "$out/libexec/fncpn/"
-      install -m755 packaging/linux/scripts/fncpn-linux-setup "$out/bin/"
+      cp apps/linux/packaging/udev/85-fncpn.rules "$out/lib/udev/rules.d/"
+      install -m755 apps/linux/packaging/scripts/enable-client apps/linux/packaging/scripts/wait-ready "$out/libexec/fncpn/"
+      install -m755 apps/linux/packaging/scripts/fncpn-linux-setup "$out/bin/"
       # NixOS modules enable units declaratively. The helper only starts an
       # already configured instance and never edits /etc/systemd/system.
       substituteInPlace "$out/libexec/fncpn/enable-client" \
@@ -46,7 +46,7 @@ let
       substituteInPlace "$out/bin/fncpn-linux-setup" \
         --replace-fail /usr/libexec/fncpn/enable-client "$out/libexec/fncpn/enable-client" \
         --replace-fail 'enable --now fncpn-client.service' 'start fncpn-client.service'
-      cp packaging/linux/polkit/cn.rectcircle.fncpn.enable-client.policy "$out/share/polkit-1/actions/"
+      cp apps/linux/packaging/polkit/cn.rectcircle.fncpn.enable-client.policy "$out/share/polkit-1/actions/"
       substituteInPlace "$out/share/polkit-1/actions/cn.rectcircle.fncpn.enable-client.policy" \
         --replace-fail /usr/libexec/fncpn/enable-client "$out/libexec/fncpn/enable-client"
       patchShebangs "$out/bin" "$out/libexec"
@@ -66,8 +66,8 @@ let
     pname = "fncpn-ui";
     inherit version;
     src = source;
-    modRoot = "ui";
-    # Cache external module downloads, not a vendor tree containing replace => ..
+    modRoot = "apps/shared/wails";
+    # Cache external module downloads, not a vendor tree containing replace => ../../..
     # project sources. The local module is compiled from the candidate checkout.
     proxyVendor = true;
     vendorHash = hashes.ui;
@@ -93,11 +93,11 @@ let
       # The Go module's basename is ui; expose the stable product command.
       mv "$out/bin/ui" "$out/bin/fncpn-ui"
       mkdir -p "$out/share/applications" "$out/share/icons/hicolor/256x256/apps" "$out/share/fncpn/icons"
-      cp ../packaging/linux/desktop/fncpn.desktop "$out/share/applications/"
+      cp ../../../apps/linux/packaging/desktop/fncpn.desktop "$out/share/applications/"
       substituteInPlace "$out/share/applications/fncpn.desktop" \
         --replace-fail /usr/bin/fncpn-ui "$out/bin/fncpn-ui"
-      cp ../packaging/assets/AppIcon.png "$out/share/icons/hicolor/256x256/apps/fncpn.png"
-      cp ../packaging/linux/icons/*-symbolic.svg "$out/share/fncpn/icons/"
+      cp ../../../assets/branding/AppIcon.png "$out/share/icons/hicolor/256x256/apps/fncpn.png"
+      cp ../../../apps/linux/packaging/icons/*-symbolic.svg "$out/share/fncpn/icons/"
       # pkexec must come from the host's privileged wrapper, not a non-setuid
       # polkit executable in the Nix store.
       gappsWrapperArgs+=( --suffix PATH : ${lib.escapeShellArg (lib.makeBinPath [ pkgs.systemd pkgs.xdg-utils pkgs.libnotify ])} )

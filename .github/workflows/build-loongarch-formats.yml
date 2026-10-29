@@ -111,8 +111,8 @@ jobs:
           platforms: loong64
       - name: Prepare frontend, official Go and packaging tool
         run: |
-          npm --prefix ui/frontend ci
-          npm --prefix ui/frontend run build
+          npm --prefix apps/shared/wails/frontend ci
+          npm --prefix apps/shared/wails/frontend run build
           for attempt in 1 2 3; do
             GOOS=linux GOARCH=loong64 CGO_ENABLED=0 GOBIN='' go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.40.0 && break
             test "$attempt" != 3 || exit 1
@@ -134,9 +134,9 @@ jobs:
         id: compiler-cache
         with:
           path: ~/.cache/fncpn-loongarch-formats/${{ matrix.target }}
-          key: loongarch-compiler-${{ matrix.target }}-${{ steps.compiler-epoch.outputs.month }}-${{ hashFiles('go.sum', 'ui/go.sum') }}-${{ github.sha }}
+          key: loongarch-compiler-${{ matrix.target }}-${{ steps.compiler-epoch.outputs.month }}-${{ hashFiles('go.sum', 'apps/shared/wails/go.sum') }}-${{ github.sha }}
           restore-keys: |
-            loongarch-compiler-${{ matrix.target }}-${{ steps.compiler-epoch.outputs.month }}-${{ hashFiles('go.sum', 'ui/go.sum') }}-
+            loongarch-compiler-${{ matrix.target }}-${{ steps.compiler-epoch.outputs.month }}-${{ hashFiles('go.sum', 'apps/shared/wails/go.sum') }}-
       - name: Restore clean builder environment
         run: python3 scripts/loongarch/builder-cache.py restore
       - uses: actions/cache/restore@v4

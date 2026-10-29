@@ -38,7 +38,7 @@ class InstallerTest(unittest.TestCase):
             self.shell('parse_args '+args, False)
 
     def test_catalog_and_unsupported_distributions(self):
-        catalog = json.loads((ROOT/'packaging/linux/targets.json').read_text())
+        catalog = json.loads((ROOT/'apps/linux/packaging/targets.json').read_text())
         with tempfile.TemporaryDirectory() as temporary:
             path = pathlib.Path(temporary)/'os-release'
             for profile in catalog['targets']:
@@ -126,10 +126,20 @@ class InstallerTest(unittest.TestCase):
 
     def test_rpm_key_pin_and_signatures_before_system_import(self):
         with tempfile.TemporaryDirectory() as directory:
-            public=ROOT/'packaging/linux/keys/RPM-GPG-KEY-fncpn'
+            public=ROOT/'apps/linux/packaging/keys/RPM-GPG-KEY-fncpn'
             common=f'WORK_DIR={shlex.quote(directory)}; FORMAT=rpm; VERSION=1.1.2; PACKAGE_NAMES=(core.rpm ui.rpm); api_get() {{ cp {shlex.quote(str(public))} "$2"; }}; as_root() {{ echo SYSTEM_IMPORT; }}; '
             good='rpmkeys() { case "$*" in *--checksig*) echo "Header V4 RSA/SHA256 Signature: OK";; esac; }; '
             result=self.shell(common+good+'verify_rpm_signatures')
+            self.assertIn('SYSTEM_IMPORT',result.stdout)
+            shutil.rmtree(pathlib.Path(directory)/'rpm-keyring')
+            # Immutable old tags still expose the same pinned key at the former path.
+            legacy = ('api_get() { echo "$1"; case "$1" in '
+                      'contents/apps/*) return 22 ;; '
+                      'contents/packaging/linux/keys/*) cp '+shlex.quote(str(public))+' "$2" ;; '
+                      '*) return 1 ;; esac; }; ')
+            result=self.shell(common+legacy+good+'verify_rpm_signatures')
+            self.assertIn('contents/apps/linux/packaging/keys/',result.stdout)
+            self.assertIn('contents/packaging/linux/keys/',result.stdout)
             self.assertIn('SYSTEM_IMPORT',result.stdout)
             for output in ['Header SHA256 digest: OK','RSA Signature: NOKEY','RSA Signature: NOT OK']:
                 # Each shell gets a fresh isolated RPM database directory.

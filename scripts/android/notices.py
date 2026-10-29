@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parents[2]
 def main():
     env = dict(os.environ, GOOS="android", GOARCH="arm64", CGO_ENABLED="1", GOTOOLCHAIN="local")
     raw = subprocess.check_output(["go", "list", "-deps", "-e", "-json", "."],
-                                  cwd=ROOT / "mobile", env=env, text=True)
+                                  cwd=ROOT / "apps/shared/fyne", env=env, text=True)
     decoder = json.JSONDecoder()
     modules = {}
     while raw.strip():
@@ -32,7 +32,7 @@ def main():
         sections.append(f"\n## {name} {module.get('Version', '')}\n")
         for source in licenses:
             sections.append(f"\n### {source.name}\n\n```text\n{source.read_text().rstrip()}\n```\n")
-    (ROOT / "mobile/THIRD_PARTY_NOTICES.md").write_text("".join(sections))
+    (ROOT / "apps/shared/fyne/THIRD_PARTY_NOTICES.md").write_text("".join(sections))
     print(f"Recorded licenses for {len(modules)} Android dependency modules")
 
 

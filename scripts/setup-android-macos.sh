@@ -264,8 +264,8 @@ for target, (old, updated) in changes.items():
 PYPROFILES
 }
 
-download_modules() { (cd "$ROOT/mobile" && "$GO" mod download); }
-smoke() { (cd "$ROOT/mobile/android" && "$GRADLE" --no-daemon --console=plain :app:assembleRelease "-PfncpnBuild=${FNCPN_BUILD_NUMBER:-$(git -C "$ROOT" rev-list --count HEAD)}" -PfncpnLocalValidation=true); }
+download_modules() { (cd "$ROOT/apps/shared/fyne" && "$GO" mod download); }
+smoke() { (cd "$ROOT/apps/android" && "$GRADLE" --no-daemon --console=plain :app:assembleRelease "-PfncpnBuild=${FNCPN_BUILD_NUMBER:-$(git -C "$ROOT" rev-list --count HEAD)}" -PfncpnLocalValidation=true); }
 
 log "开始：项目=${ROOT}；日志=$LOG"
 # These cross-compilation variables must not leak into dependency/bootstrap commands.

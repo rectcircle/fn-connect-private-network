@@ -77,19 +77,19 @@ ARCH="$ARCH" "$ROOT_DIR/scripts/build-${UI}-macos.sh" \
 # Installed Apps use the fixed helper path. Standalone Apps bundle their daemon.
 rm "${APP_DIR}/Contents/Resources/fncpn"
 
-cp -X "${ROOT_DIR}/packaging/macos/cn.rectcircle.fncpn.privileged.plist" \
+cp -X "${ROOT_DIR}/apps/macos/packaging/cn.rectcircle.fncpn.privileged.plist" \
   "${PAYLOAD}/Library/LaunchDaemons/"
 # The client LaunchAgent is user-managed: ship its template inside the app bundle
 # and let the app install it into ~/Library/LaunchAgents on first launch.
 mkdir -p "${APP_DIR}/Contents/Resources"
-cp -X "${ROOT_DIR}/packaging/macos/cn.rectcircle.fncpn.client.plist" \
+cp -X "${ROOT_DIR}/apps/macos/packaging/cn.rectcircle.fncpn.client.plist" \
   "${APP_DIR}/Contents/Resources/client-agent.plist"
-cp -X "${ROOT_DIR}/packaging/macos/install-prompt.applescript" \
-  "${ROOT_DIR}/packaging/macos/install-prompt.plist" \
+cp -X "${ROOT_DIR}/apps/macos/packaging/install-prompt.applescript" \
+  "${ROOT_DIR}/apps/macos/packaging/install-prompt.plist" \
   "${APP_DIR}/Contents/Resources/"
-cp -X "${ROOT_DIR}/packaging/macos/scripts/preinstall" "$SCRIPTS/"
-cp -X "${ROOT_DIR}/packaging/macos/scripts/postinstall" "$SCRIPTS/"
-cp -X "${ROOT_DIR}/packaging/macos/uninstall.sh" "${TOOL_DIR}/"
+cp -X "${ROOT_DIR}/apps/macos/packaging/scripts/preinstall" "$SCRIPTS/"
+cp -X "${ROOT_DIR}/apps/macos/packaging/scripts/postinstall" "$SCRIPTS/"
+cp -X "${ROOT_DIR}/apps/macos/packaging/uninstall.sh" "${TOOL_DIR}/"
 
 chmod 0755 \
   "${TOOL_DIR}/fncpn" \

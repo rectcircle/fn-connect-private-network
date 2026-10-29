@@ -27,7 +27,7 @@ def main():
     if dirty and not args.allow_dirty:
         parser.error('Release IPA requires a clean checkout; use --allow-dirty only for local review')
     version = (ROOT / 'internal/version/VERSION').read_text().strip()
-    number = int((ROOT / 'ios/BUILD_NUMBER').read_text())
+    number = int((ROOT / 'apps/ios/BUILD_NUMBER').read_text())
     commit = run('git', 'rev-parse', 'HEAD')
     out = args.out.resolve(); out.mkdir(parents=True, exist_ok=True)
     name = packages(version)[0]
@@ -39,7 +39,7 @@ def main():
     subprocess.run([sys.executable, 'scripts/ios/project.py'], cwd=ROOT, check=True)
     with tempfile.TemporaryDirectory(prefix='fncpn-ipa-') as temporary:
         work = Path(temporary)
-        subprocess.run(['xcodebuild', '-project', 'ios/FnCPN.xcodeproj', '-scheme', 'FnCPN',
+        subprocess.run(['xcodebuild', '-project', 'apps/ios/FnCPN.xcodeproj', '-scheme', 'FnCPN',
                         '-configuration', 'Release', '-sdk', 'iphoneos', '-derivedDataPath', str(work / 'DerivedData'),
                         'CODE_SIGNING_ALLOWED=NO', 'build'], cwd=ROOT, check=True)
         source = work / 'DerivedData/Build/Products/Release-iphoneos/FnCPN.app'

@@ -10,7 +10,7 @@ class NavigationTest(unittest.TestCase):
     def test_local_origin_and_external_links(self):
         with tempfile.TemporaryDirectory() as directory:
             out=Path(directory)
-            source=ROOT/'mobile/android/app/src/main/java/cn/rectcircle/fncpn/AdminNavigation.java'
+            source=ROOT/'apps/android/app/src/main/java/cn/rectcircle/fncpn/AdminNavigation.java'
             test=out/'NavigationCheck.java'
             test.write_text('''package cn.rectcircle.fncpn;
 public class NavigationCheck {

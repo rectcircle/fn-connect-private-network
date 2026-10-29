@@ -18,7 +18,7 @@ mkdir -p .dev/logs
 LOG="$ROOT/.dev/logs/build-ios-$(date +%Y%m%d-%H%M%S)-$$.log"
 exec > >(tee -a "$LOG") 2>&1
 python3 scripts/ios/project.py
-xcodebuild -project ios/FnCPN.xcodeproj -scheme FnCPN -configuration Debug \
+xcodebuild -project apps/ios/FnCPN.xcodeproj -scheme FnCPN -configuration Debug \
     -sdk "$SDK" -derivedDataPath "$ROOT/.dev/ios/DerivedData" CODE_SIGNING_ALLOWED=NO build
 APP="$ROOT/.dev/ios/DerivedData/Build/Products/Debug-$SDK/FnCPN.app"
 if [[ $SDK == iphonesimulator ]]; then

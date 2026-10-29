@@ -16,7 +16,7 @@ func TestVersionTemplatesAreCurrent(t *testing.T) {
 	if output, err := exec.Command("python3", "../scripts/sync-version.py", "--check").CombinedOutput(); err != nil {
 		t.Fatalf("version templates: %v\n%s", err, output)
 	}
-	data, err := os.ReadFile("../platform/macos/FnCPNApp.swift")
+	data, err := os.ReadFile("../apps/macos/FnCPNApp.swift")
 	if err != nil {
 		t.Fatal(err)
 	}

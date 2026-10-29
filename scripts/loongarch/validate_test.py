@@ -190,7 +190,7 @@ class EvidenceTests(unittest.TestCase):
             self.assertFalse(validation.root_regression_plan(cache, 'fingerprint', force=True)['reused'])
 
     def test_root_scope_keeps_embedded_and_unknown_inputs(self):
-        paths = ['mobile/view.go', 'ui/main.go', 'docs/development.md', 'README.md',
+        paths = ['apps/shared/fyne/view.go', 'apps/shared/wails/main.go', 'docs/development.md', 'README.md',
                  'internal/server/web/index.html', 'internal/client/client.go', 'go.sum',
                  'scripts/loongarch/validate.py', 'new-build-input', 'docs/fixture.go']
         self.assertEqual(validation.root_regression_paths(paths), sorted(paths[4:]))

@@ -151,5 +151,5 @@ void fncpn_set_keyboard_action(int action) {
     shutil.copy2(mobile/'go.sum',output/'ios.sum')
     subprocess.run([go,'mod','edit','-modfile',str(modfile),
                     '-replace=fyne.io/fyne/v2='+str(local),
-                    '-replace=github.com/rectcircle/fn-connect-private-network='+str(mobile.parent)],cwd=mobile,env=env,check=True)
+                    '-replace=github.com/rectcircle/fn-connect-private-network='+str(mobile.parents[2])],cwd=mobile,env=env,check=True)
     return modfile

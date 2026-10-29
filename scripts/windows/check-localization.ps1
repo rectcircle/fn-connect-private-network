@@ -5,11 +5,11 @@ param()
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $projectRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
-$catalog = Join-Path $projectRoot 'platform/windows/Localization.h'
-$source = Join-Path $projectRoot 'platform/windows/main.cpp'
+$catalog = Join-Path $projectRoot 'apps/windows/Localization.h'
+$source = Join-Path $projectRoot 'apps/windows/main.cpp'
 $catalogText = Get-Content -LiteralPath $catalog -Raw
 $sourceText = Get-Content -LiteralPath $source -Raw
-$catalogKeys = (Get-Content -LiteralPath (Join-Path $projectRoot 'platform/windows/messages.json') -Raw | ConvertFrom-Json -AsHashtable).Keys
+$catalogKeys = (Get-Content -LiteralPath (Join-Path $projectRoot 'apps/windows/messages.json') -Raw | ConvertFrom-Json -AsHashtable).Keys
 $duplicates = $catalogKeys | Group-Object | Where-Object Count -gt 1
 if ($duplicates) { throw "Duplicate native UI localization keys: $($duplicates.Name -join ', ')" }
 $missing = [Collections.Generic.List[string]]::new()

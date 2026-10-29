@@ -3,7 +3,7 @@ import json
 import pathlib
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-CATALOG = json.loads((ROOT / 'packaging/linux/targets.json').read_text())
+CATALOG = json.loads((ROOT / 'apps/linux/packaging/targets.json').read_text())
 TARGETS = {target['id']: target for target in CATALOG['targets']}
 BUNDLES = CATALOG['bundles']
 COMPATIBILITY_TARGETS = {p['id']: dict(TARGETS[p['base']], **p, compatibilityCandidate=True)

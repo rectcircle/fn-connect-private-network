@@ -79,7 +79,7 @@ HarmonyOS 已接入发布资产汇总、公开与夸克镜像校验；构建工�
 ### 草稿验收门槛
 
 1. 确认 `internal/version/VERSION`、平台模板及 Changelog 均为 1.1.7；iOS build number
-   来自 `ios/BUILD_NUMBER`，App 与扩展相同；记录干净候选的完整 commit。
+   来自 `apps/ios/BUILD_NUMBER`，App 与扩展相同；记录干净候选的完整 commit。
 2. Windows、Linux、Nix、Android、iOS、fnOS 及统一发布 job 全部成功。
    iOS 使用 Xcode 27.1；不将桌面 Xcode 16.4 构建当作移动端证据。
 3. 核对 `release-1.1.7.json`、SHA256SUMS 与下载的每份资产，包含两架构 APK 和

@@ -5,5 +5,5 @@ export GOTOOLCHAIN=local
 test "$(go env GOARCH)" = loong64
 cd /workspace
 sh scripts/test-linux-activation.sh
-cd ui
+cd apps/shared/wails
 go test -tags webkit2_41 -timeout 10m ./...

@@ -10,8 +10,8 @@ import subprocess
 import tempfile
 
 ROOT = Path(__file__).resolve().parent.parent
-KEY = ROOT / 'packaging/linux/keys/RPM-GPG-KEY-fncpn'
-FINGERPRINT = ROOT / 'packaging/linux/keys/fingerprint'
+KEY = ROOT / 'apps/linux/packaging/keys/RPM-GPG-KEY-fncpn'
+FINGERPRINT = ROOT / 'apps/linux/packaging/keys/fingerprint'
 
 
 def signing_identity():

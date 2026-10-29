@@ -9,6 +9,6 @@ swiftc \
   -target "${MACH_ARCH}-apple-macos${MACOSX_DEPLOYMENT_TARGET}" \
   -O -parse-as-library \
   -framework AppKit -framework ServiceManagement -framework UserNotifications -framework WebKit \
-  "$ROOT_DIR/platform/macos/FnCPNApp.swift" \
+  "$ROOT_DIR/apps/macos/FnCPNApp.swift" \
   -o "$APP/Contents/MacOS/FnCPN"
 macos_app_finish
