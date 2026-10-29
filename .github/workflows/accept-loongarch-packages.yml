@@ -133,6 +133,20 @@ jobs:
           key: loongarch-runtime-dnf-${{ matrix.target }}-${{ steps.cache-epoch.outputs.month }}-${{ hashFiles('packaging/linux/targets.json', 'scripts/loongarch/dnf_downloads.py', 'scripts/loongarch/probe-format.sh', 'scripts/loongarch/configure-openeuler-repos.sh') }}-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
             loongarch-runtime-dnf-${{ matrix.target }}-${{ steps.cache-epoch.outputs.month }}-${{ hashFiles('packaging/linux/targets.json', 'scripts/loongarch/dnf_downloads.py', 'scripts/loongarch/probe-format.sh', 'scripts/loongarch/configure-openeuler-repos.sh') }}-
+      - uses: actions/cache/restore@v4
+        if: matrix.image_archive_sha256 != ''
+        id: image-cache
+        with:
+          path: ~/.cache/fncpn-loongarch-images
+          key: loongarch-image-${{ matrix.image_archive_sha256 }}
+      - name: Prepare verified upstream image archive
+        if: matrix.image_archive_sha256 != ''
+        run: python3 scripts/loongarch/image_archives.py "$TARGET"
+      - uses: actions/cache/save@v4
+        if: matrix.image_archive_sha256 != '' && steps.image-cache.outputs.cache-hit != 'true'
+        with:
+          path: ~/.cache/fncpn-loongarch-images
+          key: ${{ steps.image-cache.outputs.cache-primary-key }}
       - name: Install exact archives in clean upstream userspace and boot acceptance VM
         run: |
           sudo apt-get update

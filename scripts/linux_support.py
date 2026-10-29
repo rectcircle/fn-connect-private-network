@@ -92,7 +92,7 @@ def loongarch_acceptance_matrix(selected='supported'):
     if selected != 'supported' and selected not in choices:
         raise ValueError('Unknown acceptance target: ' + selected)
     names = [value for key, value in choices.items() if key != 'anolis'] if selected == 'supported' else [choices[selected]]
-    return {'include': [{'target': name, 'bundle': package_profile(COMPATIBILITY_TARGETS.get(name, {}).get('base', name))['bundle']} for name in names]}
+    return {'include': [{'target': name, 'bundle': package_profile(COMPATIBILITY_TARGETS.get(name, {}).get('base', name))['bundle'], 'image_archive_sha256': runtime_profile(name).get('imageArchiveSHA256', '')} for name in names]}
 
 
 def build_matrix():

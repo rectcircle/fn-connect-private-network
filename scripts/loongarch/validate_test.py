@@ -20,6 +20,30 @@ spec.loader.exec_module(validation)
 
 
 class EvidenceTests(unittest.TestCase):
+    def test_image_archive_fallback_checks_bytes_and_revalidates_cached_content(self):
+        spec = importlib.util.spec_from_file_location('images', Path(__file__).with_name('image_archives.py'))
+        images = importlib.util.module_from_spec(spec); spec.loader.exec_module(images)
+        data = b'official immutable archive'; digest = hashlib.sha256(data).hexdigest()
+        profile = {'imageArchive': 'https://repo.openeuler.org/release/image.tar.xz', 'imageArchiveSHA256': digest}
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            def transfer(args, **kwargs):
+                path = Path(args[args.index('--output')+1])
+                path.write_bytes(b'wrong' if args[-1].startswith(images.ROOTS[0]) else data)
+            with patch.object(images.subprocess, 'run', side_effect=transfer) as command:
+                path = images.image_archive(profile, directory)
+                self.assertEqual(command.call_count, 2)
+                self.assertEqual(path.read_bytes(), data)
+            with patch.object(images.subprocess, 'run') as command:
+                self.assertEqual(images.image_archive(profile, directory), path)
+                command.assert_not_called()
+            path.write_bytes(b'corrupt cache')
+            with patch.object(images.subprocess, 'run', side_effect=subprocess.CalledProcessError(28, ['curl'])) as command:
+                with self.assertRaises(RuntimeError): images.image_archive(profile, directory)
+                self.assertEqual(command.call_count, 3)
+                self.assertFalse(path.exists())
+                self.assertFalse(list(directory.glob('*.partial')))
+
     def test_openeuler_mirror_config_preserves_paths_and_signatures_and_is_idempotent(self):
         script = Path(__file__).with_name('configure-openeuler-repos.sh')
         with tempfile.TemporaryDirectory() as temporary:
@@ -74,7 +98,7 @@ class EvidenceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             cache = Path(temporary)/'.cache/fncpn-loongarch-runtime/openeuler-loong64/dnf'
             cache.mkdir(parents=True); (cache/'dependency.rpm').write_bytes(b'cached')
-            with patch.object(prepare.Path, 'home', return_value=Path(temporary)), patch.dict(os.environ, {'TARGET': 'openeuler-loong64'}), patch.object(prepare, 'download'), patch.object(prepare, 'run') as command:
+            with patch.object(prepare.Path, 'home', return_value=Path(temporary)), patch.dict(os.environ, {'TARGET': 'openeuler-loong64'}), patch.object(prepare, 'download'), patch.object(prepare, 'image_archive', return_value=Path(temporary)/'verified.tar.xz'), patch.object(prepare, 'run') as command:
                 prepare.main()
             calls = [call.args for call in command.call_args_list]
             create = next(i for i, args in enumerate(calls) if args[:3] == ('docker', 'run', '-d'))

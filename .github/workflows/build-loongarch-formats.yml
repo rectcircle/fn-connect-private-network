@@ -139,12 +139,20 @@ jobs:
             loongarch-compiler-${{ matrix.target }}-${{ steps.compiler-epoch.outputs.month }}-${{ hashFiles('go.sum', 'ui/go.sum') }}-
       - name: Restore clean builder environment
         run: python3 scripts/loongarch/builder-cache.py restore
-      - name: Load checksum-pinned official image archive
+      - uses: actions/cache/restore@v4
+        id: image-cache
         if: matrix.image_archive != '' && env.BUILDER_CACHE_HIT != '1'
-        run: |
-          curl --fail --location --retry 2 --connect-timeout 15 --max-time 180 "$IMAGE_ARCHIVE" -o "$RUNNER_TEMP/candidate.tar.xz"
-          echo "$IMAGE_ARCHIVE_SHA256  $RUNNER_TEMP/candidate.tar.xz" | sha256sum -c -
-          docker load -i "$RUNNER_TEMP/candidate.tar.xz"
+        with:
+          path: ~/.cache/fncpn-loongarch-images
+          key: loongarch-image-${{ matrix.image_archive_sha256 }}
+      - name: Load pinned image archive using mirrors and verified content cache
+        if: matrix.image_archive != '' && env.BUILDER_CACHE_HIT != '1'
+        run: python3 scripts/loongarch/image_archives.py "$TARGET" --load
+      - uses: actions/cache/save@v4
+        if: matrix.image_archive != '' && env.BUILDER_CACHE_HIT != '1' && steps.image-cache.outputs.cache-hit != 'true'
+        with:
+          path: ~/.cache/fncpn-loongarch-images
+          key: ${{ steps.image-cache.outputs.cache-primary-key }}
       - name: Start pinned candidate image
         run: |
           mkdir -p "$HOME/.cache/fncpn-loongarch-formats/$TARGET/go-build" "$HOME/.cache/fncpn-loongarch-formats/$TARGET/go-mod"

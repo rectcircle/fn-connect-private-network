@@ -8,6 +8,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from linux_support import package_profile, runtime_profile
 from validate import download
+from image_archives import image_archive
 
 
 def run(*args):
@@ -23,14 +24,12 @@ def main():
             run('docker', 'import', '--platform=linux/loong64', str(archive), profile['image'])
         elif profile['osID'] != 'anolis':
             if profile.get('imageArchive'):
-                download(profile['imageArchive'], archive, profile['imageArchiveSHA256'])
-                run('docker', 'load', '-i', str(archive))
+                run('docker', 'load', '-i', str(image_archive(profile)))
             else:
                 run('docker', 'pull', '--platform=linux/loong64', profile['image'])
         else:
             baseline = package_profile('rpm-loong64')
-            download(baseline['imageArchive'], archive, baseline['imageArchiveSHA256'])
-            run('docker', 'load', '-i', str(archive))
+            run('docker', 'load', '-i', str(image_archive(baseline)))
             container = 'fncpn-anolis-seed'
             root = Path.cwd() / 'dist/anolis-root'
             root.mkdir(parents=True, exist_ok=True)
