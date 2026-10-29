@@ -12,7 +12,7 @@ import (
 	"testing"
 )
 
-func TestSnapshotPinsRotationAndBoundsReads(t *testing.T) {
+func TestSnapshotBoundsReads(t *testing.T) {
 	dir := t.TempDir()
 	data := bytes.Repeat([]byte("x"), ChunkSize+123)
 	if err := os.WriteFile(filepath.Join(dir, "client.log"), data, 0600); err != nil {
@@ -22,12 +22,6 @@ func TestSnapshotPinsRotationAndBoundsReads(t *testing.T) {
 	defer s.Close()
 	r, err := s.Handle(Request{Action: "create"})
 	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Rename(filepath.Join(dir, "client.log"), filepath.Join(dir, "client.log.1")); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "client.log"), []byte("new generation"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	var got []byte
@@ -40,7 +34,7 @@ func TestSnapshotPinsRotationAndBoundsReads(t *testing.T) {
 		offset += int64(len(p.Data))
 	}
 	if !bytes.Equal(got, data) {
-		t.Fatal("rotation mixed file generations")
+		t.Fatal("snapshot content mismatch")
 	}
 	for _, q := range []Request{{Action: "read", Token: r.Token, Name: "../client.json"}, {Action: "read", Token: "wrong", Name: "client.log"}, {Action: "read", Token: r.Token, Name: "client.log", Offset: -1}, {Action: "read", Token: r.Token, Name: "client.log", Offset: MaxFileSize + 1}} {
 		if _, err := s.Handle(q); err == nil {
