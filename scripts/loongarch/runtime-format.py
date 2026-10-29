@@ -37,7 +37,7 @@ def main():
               'validationCommit': os.environ.get('FNCPN_VALIDATION_COMMIT', build['commit']),
               'scope': 'clean-container installation and UI startup',
               'artifacts': {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in packages},
-              'checks': [], 'notValidated': ['booted systemd services', 'kernel/network', 'RPM signature']}
+              'checks': [], 'notValidated': ['booted systemd services', 'kernel/network'] + (['RPM signature'] if profile['format'] == 'rpm' and os.environ.get('RELEASE') != '1' else [])}
     assert report['artifacts'] == {a['path']: a['sha256'] for a in build['artifacts']}, 'Candidate hashes differ from build manifest'
     if mode == 'finish':
         report = json.loads((out / 'runtime-validation.json').read_text())
@@ -88,6 +88,13 @@ def main():
             else:
                 run('pacman', '-S', '--noconfirm', '--needed', 'xorg-server-xvfb', 'xorg-xauth', 'dbus', 'ttf-dejavu', 'shadow', 'mesa', 'kmod')
         if mode == 'prepare':
+            if profile['osID'] == 'anolis':
+                # Anaconda normally enables the selected D-Bus provider. Our
+                # signed-RPM installroot starts with all services preset off.
+                # Establish that OS boot baseline without replacing any unit.
+                run('systemctl', 'enable', 'dbus-broker.service')
+                if Path('/usr/lib/systemd/user/dbus-broker.service').exists():
+                    run('systemctl', '--global', 'enable', 'dbus-broker.service')
             return
         spec = importlib.util.spec_from_file_location('compatibility', '/workspace/scripts/linux-compatibility.py')
         compatibility = importlib.util.module_from_spec(spec)
