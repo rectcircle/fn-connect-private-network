@@ -1,0 +1,23 @@
+name: Benchmark openEuler LoongArch mirrors
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: benchmark-openeuler-mirrors
+  cancel-in-progress: true
+jobs:
+  benchmark:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v5
+      - name: Compare repository completeness and real RPM throughput on the same runner
+        run: python3 scripts/loongarch/benchmark-mirrors.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: openeuler-mirror-benchmark
+          path: dist/openeuler-mirror-benchmark/
+          if-no-files-found: warn
+          overwrite: true

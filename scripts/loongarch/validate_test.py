@@ -19,6 +19,21 @@ spec.loader.exec_module(validation)
 
 
 class EvidenceTests(unittest.TestCase):
+    def test_mirror_benchmark_rejects_html_and_partial_or_corrupt_rpm(self):
+        spec = importlib.util.spec_from_file_location('benchmark', Path(__file__).with_name('benchmark-mirrors.py'))
+        benchmark = importlib.util.module_from_spec(spec); spec.loader.exec_module(benchmark)
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary)/'download'
+            path.write_text('<html><body>mirror unavailable</body></html>')
+            self.assertFalse(benchmark.valid_metadata(path))
+            path.write_text('<repomd xmlns="http://linux.duke.edu/metadata/repo"><data type="primary"/></repomd>')
+            self.assertTrue(benchmark.valid_metadata(path))
+            data = b'verified RPM sample'
+            with patch.object(benchmark, 'SAMPLE_SIZE', len(data)), patch.object(benchmark, 'SAMPLE_SHA256', hashlib.sha256(data).hexdigest()):
+                path.write_bytes(data); self.assertTrue(benchmark.valid_sample(path))
+                path.write_bytes(data[:-1]); self.assertFalse(benchmark.valid_sample(path))
+                path.write_bytes(b'x'*len(data)); self.assertFalse(benchmark.valid_sample(path))
+
     def test_deferred_system_acceptance_keeps_source_checks_and_cannot_claim_full_vm(self):
         level, original = validation.validation_plan(True)
         self.assertEqual(level, 'full')
