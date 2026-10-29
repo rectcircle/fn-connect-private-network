@@ -313,6 +313,15 @@ def load_report():
     return report
 
 
+def validation_plan(full, defer_system=False):
+    required = ['host-tools', 'frontend', 'container', 'provision', 'packaging-tool', 'package-build']
+    if full:
+        required += ['core-build', 'test-build', 'core-runtime', 'unit-tests', 'ui-tests']
+        if not defer_system:
+            required += ['runtime-provision', 'offline-dependencies', 'full-system']
+    return ('source-and-build' if full and defer_system else 'full' if full else 'build'), required
+
+
 def phase(stage):
     container, runtime = 'fncpn-loongarch-validation', 'fncpn-loongarch-runtime'
     work = ROOT / 'dist/loongarch-work'
@@ -326,15 +335,14 @@ def phase(stage):
         work.mkdir(parents=True)
         commit = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip()
         full = os.environ.get('FULL_VALIDATION') == '1'
-        required = ['host-tools', 'frontend', 'container', 'provision', 'packaging-tool', 'package-build']
-        if full:
-            required += ['core-build', 'test-build', 'core-runtime', 'unit-tests', 'ui-tests',
-                         'runtime-provision', 'offline-dependencies', 'full-system']
-        report = Report(OUT, required=required, validationLevel='full' if full else 'build',
+        level, required = validation_plan(full, os.environ.get('DEFER_SYSTEM_VALIDATION') == '1')
+        report = Report(OUT, required=required, validationLevel=level,
             commit=commit, environment=ENVIRONMENT, deferredToFullSystem=[DEFERRED_TEST],
             notValidated=['physical hardware and GPU', 'real fnOS login/OTP and end-to-end session recovery',
                           'historical release compatibility (upgrade fixture uses candidate code)',
                           'Wayland, interactive tray and polkit flows', 'old-world ABI'])
+        if level == 'source-and-build':
+            report.data['notValidated'].append('package/system acceptance is deferred to separate same-package jobs')
         if not full:
             report.data['notValidated'].append('build-only: package lifecycle, UI startup and kernel/DNS acceptance were not run')
         (OUT / 'commit').write_text(commit + '\n')
@@ -342,11 +350,12 @@ def phase(stage):
     else:
         report = load_report()
         commit = report.data['commit']
-    full = report.data['validationLevel'] == 'full'
+    full = report.data['validationLevel'] in ('full', 'source-and-build')
+    system_validation = report.data['validationLevel'] == 'full'
     started = time.monotonic()
     try:
         if stage == 'prepare':
-            report.check('host-tools', ['bash', '-ec', 'go version; node --version; docker version' + ('; qemu-system-loongarch64 --version' if full else '')])
+            report.check('host-tools', ['bash', '-ec', 'go version; node --version; docker version' + ('; qemu-system-loongarch64 --version' if system_validation else '')])
             if full:
                 fingerprint = root_regression_fingerprint()
                 scope = root_regression_plan(cache, fingerprint, os.environ.get('FORCE_ROOT_REGRESSION') == '1')

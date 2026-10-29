@@ -216,8 +216,8 @@ DEB 工作流为 `Build LoongArch DEB`；RPM/Arch 工作流为 `Build LoongArch 
 **公开前**必须对最终候选运行 Release 的 `loongarch_full_validation=true`：
 
 1. 构建最终三种 Core/UI 包，以及仅供 CI 使用的较低包版本升级夹具；RPM 夹具同样签名。
-2. Debian 工作流执行根模块回归（匹配源码指纹的通过记录可复用）、UI 测试和最终 DEB 的完整系统验收。
-3. RPM、Arch 构建各自完成后即可启动对应验收，无需等待 DEB 完整系统验收；deepin 随 DEB 工作流完成后启动。VM 专用 Go 测试程序交叉编译一次并按 commit/SHA256 共享。`Accept LoongArch packages in clean systems` 只下载目标格式的原始包，在 openEuler、Loong Arch Linux 和 deepin 25 的干净用户空间安装，再启动一次性 QEMU 完整系统。验收不重新编译产品。
+2. Debian 构建工作流执行根模块回归（匹配源码指纹的通过记录可复用）、UI 测试并上传最终 DEB。发布调用将系统验收后移，源码/构建报告明确标记 `source-and-build`，不作为完整系统验收证据。
+3. RPM、Arch 构建各自完成后即可启动对应验收，无需等待 DEB 完整系统验收；Debian 与 deepin 在 DEB 构建完成后并行验收，无需互相等待。VM 专用 Go 测试程序交叉编译一次并按 commit/SHA256 共享。`Accept LoongArch packages in clean systems` 只下载目标格式的原始包，在 Debian forky、openEuler、Loong Arch Linux 和 deepin 25 的干净用户空间安装，再启动一次性 QEMU 完整系统。验收不重新编译产品。
 4. 每个正式目标检查独立安装 Core 不引入 GUI 库、依赖解析与 ELF ABI、普通用户 WebKit 前端握手、真实 systemd 服务、升级保留身份/配置、重装、真实内核网络与 resolved、卸载保留用户数据。RPM 额外验证项目签名。
 5. `linux-compat-<发行版>-loong64` 报告必须与候选的版本、产品/验证源码 commit、包 SHA256 完全一致。汇总清单嵌入四个正式目标的完整证据；公开入口重新校验各项证据，单独写入 `level=full` 无法通过。
 
@@ -228,7 +228,7 @@ openEuler 验收仅缓存 DNF 仓库元数据及依赖 RPM，每次仍在干净�
 模拟器不证明物理 GPU、完整桌面/Wayland/托盘、polkit 弹窗或真实 fnOS 登录连接；最新实测与待验证项统一见 [验证记录](validation.md)。
 
 需要只重试运行验收时，可手动运行 `accept-loongarch-packages.yml`：指定产物对应的 `ref`、构建运行号 `artifact_run_id`，
-选择 `target=supported/openeuler/archlinux/deepin`。完整模式要求原运行已生成升级夹具；普通模式仅做安装启动检查，不产生可公开的完整验收证据。
+选择 `target=supported/debian/openeuler/archlinux/deepin`。完整模式要求原运行已生成升级夹具；普通模式仅做安装启动检查，不产生可公开的完整验收证据。
 `anolis` 是显式候选选项，失败不影响正式支持清单，也不能生成正式发布证据。旧世界、麒麟/UOS/Loongnix、ALT、Fedora Remix 和 openSUSE LoongArch 不属于当前已验收目标。
 
 在匹配基线手工构建：

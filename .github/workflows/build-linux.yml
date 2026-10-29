@@ -88,6 +88,7 @@ jobs:
       ref: ${{ inputs.ref || github.sha }}
       version: ${{ inputs.version || '' }}
       release: ${{ inputs.release == true }}
+      defer_system_validation: true
       full_validation: ${{ inputs.loongarch_full_validation == true }}
   loongarch-rpm:
     uses: ./.github/workflows/build-loongarch-formats.yml
@@ -147,6 +148,16 @@ jobs:
       ref: ${{ inputs.ref || github.sha }}
       version: ${{ inputs.version || '' }}
       target: archlinux
+      tests_artifact: loongarch-acceptance-tests
+      full_validation: true
+  loongarch-acceptance-debian:
+    needs: [loongarch, loongarch-tests]
+    if: inputs.loongarch_full_validation
+    uses: ./.github/workflows/accept-loongarch-packages.yml
+    with:
+      ref: ${{ inputs.ref || github.sha }}
+      version: ${{ inputs.version || '' }}
+      target: debian
       tests_artifact: loongarch-acceptance-tests
       full_validation: true
   loongarch-acceptance-deepin:

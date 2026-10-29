@@ -19,6 +19,15 @@ spec.loader.exec_module(validation)
 
 
 class EvidenceTests(unittest.TestCase):
+    def test_deferred_system_acceptance_keeps_source_checks_and_cannot_claim_full_vm(self):
+        level, original = validation.validation_plan(True)
+        self.assertEqual(level, 'full')
+        level, deferred = validation.validation_plan(True, True)
+        self.assertEqual(level, 'source-and-build')
+        self.assertEqual(set(original) - set(deferred), {'runtime-provision', 'offline-dependencies', 'full-system'})
+        self.assertTrue({'core-build', 'test-build', 'core-runtime', 'unit-tests', 'ui-tests', 'package-build'}.issubset(deferred))
+        self.assertEqual(validation.validation_plan(False), validation.validation_plan(False, True))
+
     def test_dnf_cache_is_copied_into_a_fresh_runtime_not_an_installed_rootfs(self):
         spec = importlib.util.spec_from_file_location('prepare', Path(__file__).with_name('prepare-compat.py'))
         prepare = importlib.util.module_from_spec(spec); spec.loader.exec_module(prepare)

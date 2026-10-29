@@ -40,7 +40,7 @@ on:
         default: false
       target:
         type: choice
-        options: [supported, openeuler, archlinux, deepin, anolis]
+        options: [supported, debian, openeuler, archlinux, deepin, anolis]
         default: supported
 permissions:
   contents: read

@@ -157,6 +157,8 @@ def main():
             report['checks'] += ['core-only-install', 'core-version']
             install(packages)
             report['checks'].append('dependency-resolution')
+            for path in packages:
+                inspector.inspect(path, installed_root=Path('/'))
             linked = run('ldd', '-r', '/usr/bin/fncpn-ui')
             (out / 'runtime-ldd.txt').write_text(linked)
             if 'not found' in linked or 'undefined symbol:' in linked:

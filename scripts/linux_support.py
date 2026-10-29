@@ -87,7 +87,7 @@ def loongarch_build_matrix(selected='both'):
 
 
 def loongarch_acceptance_matrix(selected='supported'):
-    choices = {'openeuler': 'openeuler-loong64', 'archlinux': 'archlinux-loong64',
+    choices = {'debian': 'debian-forky', 'openeuler': 'openeuler-loong64', 'archlinux': 'archlinux-loong64',
                'deepin': 'deepin25-loong64', 'anolis': 'anolis23-loong64'}
     if selected != 'supported' and selected not in choices:
         raise ValueError('Unknown acceptance target: ' + selected)

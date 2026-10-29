@@ -78,9 +78,9 @@ class LinuxSupportTest(unittest.TestCase):
         with self.assertRaises(ValueError): loongarch_build_matrix('unsupported')
 
     def test_acceptance_matrix_selects_only_requested_real_jobs(self):
-        self.assertEqual(len(loongarch_acceptance_matrix()['include']), 3)
+        self.assertEqual(len(loongarch_acceptance_matrix()['include']), 4)
         self.assertNotIn('anolis23-loong64', [r['target'] for r in loongarch_acceptance_matrix()['include']])
-        for selection, expected in [('deepin', 'deepin25-loong64'), ('anolis', 'anolis23-loong64')]:
+        for selection, expected in [('debian', 'debian-forky'), ('deepin', 'deepin25-loong64'), ('anolis', 'anolis23-loong64')]:
             self.assertEqual([r['target'] for r in loongarch_acceptance_matrix(selection)['include']], [expected])
         with self.assertRaises(ValueError): loongarch_acceptance_matrix('both')
 
@@ -252,7 +252,14 @@ class LinuxSupportTest(unittest.TestCase):
                         file=directory/'config.json';file.write_text(json.dumps(config))
                         output=directory/package_name(component,'1.1.2',target,arch)
                         subprocess.run([nfpm,'package','-f',str(file),'-p',target_profile(target)['format'],'-t',str(output)],cwd=ROOT,check=True,capture_output=True)
-                        fields=inspector.inspect(output)
+                        installed=directory/'installed'/'usr/bin'
+                        installed.mkdir(parents=True, exist_ok=True)
+                        installed_binary=installed/('fncpn' if component=='core' else 'fncpn-ui')
+                        installed_binary.write_bytes(binary.read_bytes())
+                        fields=inspector.inspect(output, installed_root=directory/'installed')
+                        installed_binary.write_bytes(b'wrong installed binary')
+                        with self.assertRaisesRegex(ValueError, 'Installed binary differs'):
+                            inspector.inspect(output, installed_root=directory/'installed')
                         self.assertEqual(fields['Package'],'fncpn-'+component)
                         self.assertEqual(fields['Version'],'1.1.2')
                         self.assertEqual(fields['Architecture'],arch)
