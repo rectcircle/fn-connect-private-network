@@ -7,15 +7,29 @@
 
 - [Arch 新世界格式验证](https://github.com/rectcircle/fn-connect-private-network/actions/runs/40731600172/job/122969194281)已通过：
   commit `e4c924f`，固定镜像中 C lp64d、官方 Go、GTK/WebKit/AppIndicator、Core/UI 编译、包头与动态链接检查均成功。
-  仅为实验候选，尚未验证安装、UI 启动或服务生命周期，也未加入正式发布清单。
+  该次仅覆盖编译，后续安装启动验收见下方记录。
   [ALT Sisyphus RPM 构建验证](https://github.com/rectcircle/fn-connect-private-network/actions/runs/40745432371)
   已通过，commit `f381cd5`；C/Go/UI 构建、包头和动态链接检查成功，尚不代表安装和启动通过。
-  RPM、Arch 新增干净容器安装及 UI 握手验证，结果待运行；真实 systemd 生命周期尚未覆盖。
+  ALT 仅保留历史构建记录，当前 RPM 构建基线为 openEuler。
 - [Loong Arch Linux 安装启动验收](https://github.com/rectcircle/fn-connect-private-network/actions/runs/40758620682/job/123064229333)
   已通过，commit `fa1d53d`：干净镜像 Core 独立安装、UI 依赖解析与动态链接，完整 VM 内普通用户 WebKit 握手、
   systemd 用户与特权服务及健康检查、同版本重装、卸载均成功。
   VM 用户空间来自 Arch，内核/initramfs/模块复用 Debian 缓存；不代表物理硬件、历史升级或完整网络回归通过。
-  同次运行的 RPM 任务在镜像引用处失败，不能将整个运行标记成功。
+
+- [openEuler RPM 完整 VM 验收](https://github.com/rectcircle/fn-connect-private-network/actions/runs/40759688694)
+  已通过，产物 commit `8486eb3`：项目正式签名、Core 独立安装、依赖与 ABI、普通用户 UI 前端握手、
+  systemd 服务及健康检查、重装、卸载成功；不包含完整网络回归和历史升级。
+- [deepin 25 兼容验收](https://github.com/rectcircle/fn-connect-private-network/actions/runs/40806923380/job/123227982370)
+  已通过：直接安装真实草稿 commit `8589b32` 的 DEB，验证脚本 commit `6270f93`，包哈希与草稿发布清单一致。
+  覆盖 Core 独立安装、依赖与动态链接、完整 VM 内 UI 握手、真实服务、重装和卸载。
+  用户空间来自官方固定 SHA256 的 rootfs，内核复用 Debian；完整 DDE/磐石安装事务及物理设备未验收。
+  上游说明 DEB 仍经 apt/dpkg 安装，无需关闭只读保护，见 [deepin 磐石 Q&A](https://www.deepin.org/zh/qa-deepin-25-qa-2/)。
+- [Anolis 23.5 兼容检查](https://github.com/rectcircle/fn-connect-private-network/actions/runs/40808530635/job/123233118625)
+  未通过，不列入支持范围：同一草稿 RPM 的正式签名、Core/UI 安装和动态链接通过，但最新完整 VM 中
+  UI 在 JavaScriptCore 初始化时 SIGABRT，服务与后续生命周期未完成；不能将前一次局部 UI 成功当作稳定兼容。
+- [三种 LoongArch 格式真实草稿](https://github.com/rectcircle/fn-connect-private-network/actions/runs/40762080643)
+  已成功上传并回读验证，commit `8589b32`；26 个产品包与两份发布清单/校验和，共 28 个资产。
+  草稿仍未公开，LoongArch 发布证据级别为 `build`；最终同包完整发布验收仍由公开发布门槛强制检查。
 
 - openSUSE LoongArch 兼容性尚未验证：2026-10-29 查询
   [官方 OBS 项目元数据](https://api.opensuse.org/public/source/devel:LoongArch:Factory/_meta)，
@@ -25,7 +39,7 @@
   这表明该开发项目目前没有公开发布的安装仓库，不能作为可复现的运行验收基线；
   不据此断言 ALT 二进制不能运行，也不宣称不存在其他社区镜像。
   要验证 openSUSE，仍需可核实的 LoongArch 新世界 rootfs/镜像及配套完整仓库，
-  然后对同一 ALT 产物进行依赖解析、ABI 和启动检查。
+  然后对同一 openEuler 产物进行依赖解析、ABI 和启动检查。
 
 
 - [第一步 GitHub 验证](https://github.com/rectcircle/fn-connect-private-network/actions/runs/40668515602)

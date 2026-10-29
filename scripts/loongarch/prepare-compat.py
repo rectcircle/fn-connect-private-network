@@ -6,7 +6,7 @@ import subprocess
 import tempfile
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from linux_support import package_profile
+from linux_support import package_profile, runtime_profile
 from validate import download
 
 
@@ -15,7 +15,7 @@ def run(*args):
 
 
 def main():
-    profile = package_profile(os.environ['TARGET'], 'loong64')
+    profile = runtime_profile(os.environ['TARGET'], 'loong64')
     with tempfile.TemporaryDirectory(prefix='fncpn-compat-rootfs-') as temporary:
         archive = Path(temporary) / 'rootfs.tar.gz'
         if profile.get('rootfsURL'):

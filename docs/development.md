@@ -292,11 +292,14 @@ Arch 使用固定 digest 的 pkgforge Loong Arch Linux 镜像和完整滚动更�
 `runtime-validation.json` 记录精确包哈希及源码 commit；失败保留 UI/动态链接日志。
 VM 仅复用 Debian 内核/initramfs/模块缓存，运行库与包管理器仍来自目标发行版，不禁用 WebKit 沙箱。它不重复执行整套网络回归，也不冒充历史版本升级验证。
 快速草稿不能直接公开，发布脚本继续要求同 commit、同包哈希的完整 LoongArch 验收证据。
-Deepin、Anolis 仅作为兼容性调查目标，未通过之前不进入支持声明或安装器。
+deepin 25 已通过官方 rootfs 安装启动检查，复用 Debian DEB 并加入安装器；Anolis 23.5 的最新 UI 启动失败，仍为候选，不进入支持声明或安装器。
 `Validate LoongArch derivative compatibility` 下载现有同 commit 草稿中的精确 DEB/RPM，按发布清单复核哈希后安装启动；不重新编译。
 Deepin 25 使用上游发布、固定 SHA256 的 rootfs；Anolis 23.5 使用官方签名 RPM 仓库创建干净 installroot。
-候选放在 `compatibilityCandidates`，与发布目标清单分开，失败不写成已支持。
+尚未通过的候选放在 `compatibilityCandidates`，与发布目标清单分开，失败不写成已支持；报告分别记录产物 commit 与验证脚本 commit。
 DEB 的 t64/非 t64 别名均保留从实际 ELF 符号推导的最低版本约束。
+显式草稿安装须提供有读取权限的 `GH_TOKEN` 并指定 `--version 1.1.8`；安装器通过 release ID 查找未打 tag 的草稿，`latest` 不会选择草稿。
+GitHub 对修改 workflow 的候选 commit 有额外权限限制：使用内置 token 构建草稿时，保持候选为 main HEAD，避免构建期间继续改动 workflow 导致更新草稿 HTTP 403。
+参见 [GitHub 权限说明](https://github.blog/changelog/2023-11-02-github-actions-enforcing-workflow-scope-when-creating-a-release/)。
 
 ### 正式 Linux 安装包
 

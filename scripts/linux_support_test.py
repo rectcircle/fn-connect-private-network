@@ -12,7 +12,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from linux_support import ROOT, TARGETS, BUNDLES, EXPERIMENTAL_TARGETS, experimental_matrix, build_matrix, ci_matrix, package_name, package_profile, release_packages, target_profile, validate_loongarch_publication
+from linux_support import ROOT, TARGETS, BUNDLES, EXPERIMENTAL_TARGETS, experimental_matrix, build_matrix, ci_matrix, package_name, package_profile, runtime_profile, release_packages, target_profile, validate_loongarch_publication
 
 
 def module(name):
@@ -103,6 +103,16 @@ class LinuxSupportTest(unittest.TestCase):
                     self.assertEqual(config[profile['format']]['arch'], expected)
                     self.assertIn('new-world lp64d', pathlib.Path(config['scripts']['preinstall']).read_text())
         self.assertEqual(len(release_packages('1.1.8')), 16)
+
+    def test_derivative_runtime_profiles_keep_their_own_identity(self):
+        for target, identity, bundle in [('deepin25-loong64','deepin','deb-loong64')]:
+            self.assertEqual(runtime_profile(target, 'loong64')['osID'], identity)
+            self.assertEqual(package_profile(target, 'loong64')['bundle'], bundle)
+            self.assertNotEqual(runtime_profile(target)['osID'], package_profile(target)['osID'])
+            self.assertFalse(any(row['target'] == target for row in ci_matrix('native')['include']))
+
+        self.assertNotIn('anolis23-loong64', TARGETS)
+        self.assertEqual(runtime_profile('anolis23-loong64')['osID'], 'anolis')
 
     def test_build_only_loongarch_draft_cannot_be_published(self):
         files = {name: 'hash-' + name for _, arch, _, name in release_packages('1.1.8') if arch == 'loong64'}

@@ -8,11 +8,12 @@
 
 ### Added
 
-- 新增 LoongArch64 新世界 Core/UI 安装包：Debian forky DEB、openEuler 24.03 LTS SP4 RPM、Loong Arch Linux 包，并接入安装识别及草稿发布流程；各目标验收范围见验证记录。
+- 新增 LoongArch64 新世界 Core/UI 安装包：Debian forky / deepin 25 DEB、openEuler 24.03 LTS SP4 RPM、Loong Arch Linux 包，并接入安装识别及草稿发布流程；各目标验收范围见验证记录。
 - HarmonyOS 登录页增加默认未勾选的隐私政策同意框，应用内离线展示与官网一致的中英双语政策，登录提交前检查同意状态。
 
 ### Fixed
 
+- Linux 安装器可按显式版本和授权读取未打 tag 的草稿，`latest` 仍仅选择公开正式版。
 - HarmonyOS 退出时安全清理窗口监听器，避免系统窗口先销毁导致 JsCrash，并继续释放应用内隧道资源。
 - HarmonyOS 应用图标采用 1024×1024 前景与满幅背景分层资源，由系统生成圆角与遮罩。
 

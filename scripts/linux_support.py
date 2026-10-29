@@ -33,6 +33,12 @@ def package_profile(name, architecture=None):
     return dict(TARGETS[definition['baseline']], **{key:value for key,value in definition.items() if key != 'baseline'}, bundle=bundle, baseline=definition['baseline'])
 
 
+def runtime_profile(name, architecture=None):
+    # Distribution acceptance must inspect the requested userspace rather than
+    # the shared package's compilation baseline.
+    return package_profile(name, architecture) if name in BUNDLES else target_profile(name, architecture)
+
+
 def package_name(component, version, target, architecture):
     profile = package_profile(target, architecture)
     return f'fncpn-{component}-{version}-linux-{architecture}.{EXTENSIONS[profile["format"]]}'

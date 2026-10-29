@@ -7,12 +7,13 @@ import hashlib
 import importlib.util
 import json
 import os
+import shlex
 from pathlib import Path
 import subprocess
 import sys
 
 sys.path.insert(0, '/workspace/scripts')
-from linux_support import package_profile
+from linux_support import runtime_profile
 
 
 def run(*args):
@@ -22,7 +23,7 @@ def run(*args):
 def main():
     mode = sys.argv[1] if len(sys.argv) > 1 else 'all'
     target = os.environ['TARGET']
-    profile = package_profile(target, 'loong64')
+    profile = runtime_profile(target, 'loong64')
     out = Path(os.environ.get('DIST_DIR', '/workspace/dist/loongarch-formats')) / target / 'loong64'
     if os.environ.get('FNCPN_RELEASE_INVENTORY'):
         inventory = json.loads(Path(os.environ['FNCPN_RELEASE_INVENTORY']).read_text())
@@ -52,7 +53,12 @@ def main():
             run('pacman', '-U', '--noconfirm', *map(str, items))
     try:
         if mode != 'finish':
-            run(sys.executable, '/workspace/scripts/linux-build-environment.py', target, 'loong64')
+            fields = {line.split('=',1)[0]: shlex.split(line.split('=',1)[1])[0]
+                      for line in Path('/etc/os-release').read_text().splitlines()
+                      if '=' in line and shlex.split(line.split('=',1)[1])}
+            assert fields.get('ID') == profile['osID'], 'Runtime distribution differs'
+            assert not profile['osVersion'] or fields.get('VERSION_ID') == profile['osVersion'], 'Runtime version differs'
+            assert not profile.get('osCodename') or fields.get('VERSION_CODENAME') == profile['osCodename'], 'Runtime codename differs'
             if profile['format'] == 'rpm' and os.environ.get('RELEASE') == '1':
                 from rpm_signing import KEY, verify
                 report['rpmSigning'] = verify(packages)

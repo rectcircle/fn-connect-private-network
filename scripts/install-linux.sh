@@ -52,6 +52,7 @@ detect_distribution() {
         debian:*)
             [ "$VERSION_CODENAME" = forky ] || fail '此 Debian 版本未列入支持范围'
             FORMAT=deb; MANAGER=apt-get; EXTENSION=deb; LOONGARCH_DISTRO=1 ;;
+        deepin:25) FORMAT=deb; MANAGER=apt-get; EXTENSION=deb; LOONGARCH_DISTRO=2 ;;
         fedora:43|fedora:44) FORMAT=rpm; MANAGER=dnf; EXTENSION=rpm ;;
         opensuse-leap:16.0|opensuse-tumbleweed:*) FORMAT=rpm; MANAGER=zypper; EXTENSION=rpm ;;
         openEuler:24.03)
@@ -71,9 +72,9 @@ detect_architecture() {
         loongarch64) ARCH=loong64 ;;
         *) fail "不支持此架构：$(uname -m)" ;;
     esac
-    [ "$FORMAT:$ARCH" != archlinux:arm64 ] || fail '仅支持官方 Arch Linux x86_64，不支持 Arch Linux ARM'
+    [ "$FORMAT:$ARCH" != archlinux:arm64 ] || fail 'Arch 包支持 x86_64 和新世界 LoongArch64，不支持 Arch Linux ARM'
     if [ "$ARCH" = loong64 ]; then
-        [ "${LOONGARCH_DISTRO:-0}" != 0 ] || [ "$FORMAT" = archlinux ] || fail 'LoongArch 支持 Debian forky、openEuler 24.03 SP4 和 Loong Arch Linux 新世界系统'
+        [ "${LOONGARCH_DISTRO:-0}" != 0 ] || [ "$FORMAT" = archlinux ] || fail 'LoongArch 支持 Debian forky、deepin 25、openEuler 24.03 SP4 和 Loong Arch Linux 新世界系统'
         { [ "$FORMAT" != deb ] || [ "$(dpkg --print-architecture)" = loong64 ]; } && loongarch_loader_available || fail '不支持 LoongArch 旧世界 ABI'
         local kernel major minor
         kernel=$(uname -r); major=${kernel%%.*}; minor=${kernel#*.}; minor=${minor%%.*}
@@ -157,7 +158,22 @@ api_get() {
 resolve_release() {
     local endpoint=releases/latest
     [ "$REQUESTED_VERSION" = latest ] || endpoint="releases/tags/v$REQUESTED_VERSION"
-    api_get "$endpoint" "$WORK_DIR/release.json" application/vnd.github+json || fail '无法读取 GitHub Release；请检查网络、版本是否公开，或设置有读取权限的 GH_TOKEN'
+    if ! api_get "$endpoint" "$WORK_DIR/release.json" application/vnd.github+json; then
+        # Tagless drafts are deliberately absent from /releases/tags/:tag.
+        # Only an explicitly requested version plus credentials may use them;
+        # latest must continue to mean the public stable release.
+        [ "$REQUESTED_VERSION" != latest ] && [ -n "${GH_TOKEN:-${GITHUB_TOKEN:-}}" ] || fail '无法读取 GitHub Release；请检查网络、版本是否公开，或设置有读取权限的 GH_TOKEN'
+        local page=1 found=0
+        while [ "$page" -le 10 ]; do
+            api_get "releases?per_page=100&page=$page" "$WORK_DIR/releases-page.json" application/vnd.github+json || fail '无法读取 GitHub Release 草稿列表'
+            if jq -e --arg tag "v$REQUESTED_VERSION" '[.[] | select(.tag_name == $tag)] | select(length == 1) | .[0]' "$WORK_DIR/releases-page.json" > "$WORK_DIR/release.json"; then
+                found=1; break
+            fi
+            [ "$(jq 'length' "$WORK_DIR/releases-page.json")" -eq 100 ] || break
+            page=$((page + 1))
+        done
+        [ "$found" = 1 ] || fail '找不到指定版本的 GitHub Release 草稿'
+    fi
     local tag
     tag=$(jq -er '.tag_name | select(type == "string")' "$WORK_DIR/release.json") || fail 'Release 缺少 tag_name'
     [[ "$tag" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || fail "不是正式产品版本：$tag"

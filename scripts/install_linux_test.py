@@ -67,6 +67,14 @@ class InstallerTest(unittest.TestCase):
             self.shell(setup + refusal + 'detect_architecture', False)
         self.shell('FORMAT=deb; LOONGARCH_DISTRO=1; uname() { echo x86_64; }; detect_architecture', False)
 
+    def test_new_world_rpm_arch_and_deepin_architecture_guards(self):
+        common = 'uname() { case "$1" in -m) echo loongarch64 ;; -r) echo 6.12.0 ;; esac; }; loongarch_loader_available() { return 0; }; '
+        for kind, marker in [('rpm', 2), ('archlinux', 0), ('deb', 2)]:
+            prefix = f'FORMAT={kind}; LOONGARCH_DISTRO={marker}; dpkg() {{ echo loong64; }}; '
+            self.assertEqual(self.shell(prefix + common + 'detect_architecture; echo "$ARCH"').stdout.strip(), 'loong64')
+            self.shell(prefix + common + 'loongarch_loader_available() { return 1; }; detect_architecture', False)
+        self.shell('FORMAT=rpm; LOONGARCH_DISTRO=2; uname() { echo x86_64; }; detect_architecture', False)
+
     def test_automatic_component_selection_preserves_existing_ui(self):
         for desktop, installed, expected in [(True, False, 'all'), (False, False, 'core'), (False, True, 'all')]:
             code = f'has_desktop() {{ return {0 if desktop else 1}; }}; installed_version() {{ {"echo 1.1.1" if installed else ":"}; }}; select_type; echo "$INSTALL_TYPE"'
@@ -156,6 +164,19 @@ class InstallerTest(unittest.TestCase):
         self.assertIn('无法读取 GitHub Release', result.stderr)
         result = self.shell('asset_id() { echo 123; }; api_get() { return 22; }; WORK_DIR=/tmp; VERSION=1.1.2; download_asset package', False)
         self.assertIn('下载失败', result.stderr)
+
+    def test_explicit_authenticated_tagless_draft_lookup(self):
+        with tempfile.TemporaryDirectory() as directory:
+            listing = pathlib.Path(directory) / 'fixture.json'
+            listing.write_text(json.dumps([{'tag_name':'v1.1.8','draft':True,'assets':[{'name':'candidate','id':42}]}]))
+            setup = f'WORK_DIR={shlex.quote(directory)}; REQUESTED_VERSION=1.1.8; GH_TOKEN=test-placeholder; '
+            api = rf'api_get() {{ case "$1" in releases/tags/*) return 22 ;; releases\?*) cp {shlex.quote(str(listing))} "$2" ;; *) return 22 ;; esac; }}; '
+            result = self.shell(setup + api + 'resolve_release; asset_id candidate')
+            self.assertIn('42', result.stdout)
+            self.shell(setup + api + 'REQUESTED_VERSION=latest; resolve_release', False)
+            self.shell(setup + api + 'unset GH_TOKEN; resolve_release', False)
+            listing.write_text('[]')
+            self.shell(setup + api + 'resolve_release', False)
 
     def test_authentication_is_not_put_in_curl_arguments(self):
         result = self.shell('GH_TOKEN=test-secret; curl() { cat >/dev/null; printf "%s\\n" "$@"; }; api_get releases/latest /tmp/out application/json')

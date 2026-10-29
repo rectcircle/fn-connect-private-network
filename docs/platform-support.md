@@ -14,12 +14,13 @@
 | HarmonyOS | API20+，ARM64；手机/折叠屏/平板/PC/2in1 | 未签名 HAP，需自行签名；云真机功能测试通过，智慧屏不支持；发布门槛见验证记录 |
 | Android | 当前配置 Android 8.0 / API 26 起，arm64-v8a、x86_64 | 提供正式签名 APK；移动端开发自测完成，最终草稿仍需同 commit 核验 |
 
-Linux 目标以 [targets.json](../packaging/linux/targets.json) 为唯一机器可读清单，以下保留 2026-10-21 核对结果，不自动承诺未来版本：
+Linux 目标以 [targets.json](../packaging/linux/targets.json) 为唯一机器可读清单，以下保留 2026-10-29 核对结果，不自动承诺未来版本：
 
 | 系列 | 列入目标的版本 | 架构 | 格式 |
 | --- | --- | --- | --- |
 | Debian | 12、13 | amd64、arm64 | deb |
 | Debian forky 新世界 | 固定基础镜像，配套当前 forky 仓库 | loong64 | deb |
+| deepin 新世界 | 25，官方 rootfs 与配套 crimson 仓库验收 | loong64 | 复用 DEB |
 | Ubuntu | 22.04、24.04、26.04 LTS；26.10 | amd64、arm64 | deb |
 | Fedora | 43、44 | amd64、arm64 | RPM |
 | Arch Linux | 完整更新的 rolling 系统 | amd64 | pkg.tar.zst |
@@ -28,7 +29,7 @@ Linux 目标以 [targets.json](../packaging/linux/targets.json) 为唯一机器�
 | openSUSE Leap | 16.0 | amd64、arm64 | RPM |
 | openSUSE Tumbleweed | 完整更新的 rolling 系统 | amd64、arm64 | RPM |
 
-这些构建目标共 24 个发行版/架构组合，生成 16 个 Core/UI 安装包（含 LoongArch），不为每个发行版另编译一份。Alpine/apk、Arch Linux ARM 以及 Fedora Atomic、openSUSE Aeon/Kalpa/MicroOS 等不可变系统不在普通包支持范围内。发行版发布、EOL 或滚动 ABI 变化时须重新核对清单、依赖和 CI。
+这些构建目标共 25 个发行版/架构组合，生成 16 个 Core/UI 安装包（含 LoongArch），不为每个发行版另编译一份。Alpine/apk、Arch Linux ARM 以及 Fedora Atomic、openSUSE Aeon/Kalpa/MicroOS 等不可变系统不在普通包支持范围内。发行版发布、EOL 或滚动 ABI 变化时须重新核对清单、依赖和 CI。
 
 ## 共用原则
 
@@ -148,4 +149,5 @@ PC quickBarManager 与鸿蒙智联设备入口不能替代手机连接开关，�
 的完整链路尚未验证，不承诺普通设备直接点击 HAP 即可安装。具体步骤见根 README。
 
 LoongArch RPM 使用 openEuler 构建；系统托盘使用该系统提供的原版 AppIndicator，其他基线继续使用 Ayatana。
-Deepin 25、Anolis 23 暂为兼容性调查目标，不列入安装器支持范围；ALT、Fedora Remix、openSUSE LoongArch 不作为当前发布基线。
+deepin 25 复用 Debian DEB，已通过官方 rootfs 的完整 VM 安装、UI、服务、重装和卸载检查；完整 DDE 会话、磐石安装事务和物理设备尚未验收。
+Anolis 23.5 已通过签名、安装和动态链接检查，但最新完整 VM 中 JavaScriptCore 初始化 SIGABRT，未通过兼容验收，不列入支持清单和安装器。ALT、Fedora Remix、openSUSE LoongArch 不作为当前发布基线。

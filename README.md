@@ -34,7 +34,7 @@ FnCPN 在自身的 fnOS HTTPS/WSS 连接中使用系统信任及内置、指纹�
 | Android x86_64 | `fncpn-<version>-android-x86_64.apk` |
 | Windows x64 | `fncpn-<version>-windows-x64-unsigned.msi` |
 | Debian / Ubuntu | `fncpn-{core,ui}-<version>-linux-{amd64,arm64}.deb` |
-| Debian forky 新世界 LoongArch64 | `fncpn-{core,ui}-<version>-linux-loong64.deb` |
+| Debian forky / deepin 25 新世界 LoongArch64 | `fncpn-{core,ui}-<version>-linux-loong64.deb` |
 | openEuler 24.03 LTS SP4 新世界 LoongArch64 | `fncpn-{core,ui}-<version>-linux-loong64.rpm` |
 | Loong Arch Linux 新世界 LoongArch64 | `fncpn-{core,ui}-<version>-linux-loong64.pkg.tar.zst` |
 | Fedora / openSUSE | `fncpn-{core,ui}-<version>-linux-{amd64,arm64}.rpm` |
