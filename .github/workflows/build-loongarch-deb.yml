@@ -80,13 +80,8 @@ jobs:
           key: loongarch-${{ steps.cache-epoch.outputs.month }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/loongarch/environment.json', 'scripts/loongarch/provision.sh', 'go.sum', 'apps/shared/wails/go.sum') }}-${{ github.sha }}
           restore-keys: |
             loongarch-${{ steps.cache-epoch.outputs.month }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/loongarch/environment.json', 'scripts/loongarch/provision.sh', 'go.sum', 'apps/shared/wails/go.sum') }}-
-      - name: Install full-system emulator and filesystem tools
+      - uses: ./.github/actions/setup-loongarch-qemu
         if: inputs.full_validation && !inputs.defer_system_validation
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends qemu-system-misc e2fsprogs
-          qemu-system-loongarch64 --version
-          python3 -c 'import re, subprocess; version = subprocess.check_output(["qemu-system-loongarch64", "--version"], text=True); assert int(re.search(r"version (\d+)", version)[1]) >= 10, "LoongArch firmware requires QEMU >= 10"'
       - name: Register LoongArch user-mode emulator
         uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
         with:

@@ -14,6 +14,8 @@ import tempfile
 import time
 import urllib.request
 
+from qemu_toolchain import require_emulator
+
 ROOT = Path(__file__).resolve().parents[2]
 OUT = ROOT / 'dist/loongarch-validation'
 ENVIRONMENT = json.loads(Path(__file__).with_name('environment.json').read_text())
@@ -201,7 +203,7 @@ def system_vm(container, temporary):
         subprocess.run(['docker', 'rm', '-f', container], check=True)
         # TCG only: no nested virtualization, firmware variables, or host net changes.
         results = OUT / 'guest-results.tar.gz'
-        command = ['qemu-system-loongarch64', '-machine', 'virt', '-accel', 'tcg',
+        command = [require_emulator(), '-machine', 'virt', '-accel', 'tcg',
                    '-m', '4096', '-smp', '2', '-bios', str(firmware),
                    '-kernel', str(kernel), '-initrd', str(initrd),
                    '-append', 'root=/dev/vda rw rootwait console=ttyS0 systemd.unit=multi-user.target',

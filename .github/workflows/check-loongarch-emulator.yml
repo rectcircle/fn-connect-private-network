@@ -1,0 +1,28 @@
+name: Check pinned LoongArch emulator
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  emulator:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+      - uses: ./.github/actions/setup-loongarch-qemu
+      - name: Check toolchain guards and executable
+        run: |
+          python3 scripts/loongarch/qemu_toolchain_test.py
+          python3 - <<'PY'
+          import subprocess, sys
+          sys.path.insert(0, 'scripts/loongarch')
+          from qemu_toolchain import require_emulator
+          executable = require_emulator()
+          result = subprocess.run([executable, '-machine', 'none', '-accel', 'tcg',
+              '-display', 'none', '-nodefaults', '-S', '-qmp', 'stdio'],
+              input='{"execute":"qmp_capabilities"}\n{"execute":"quit"}\n',
+              text=True, capture_output=True, timeout=30, check=True)
+          print(result.stdout)
+          if '"return"' not in result.stdout:
+              raise SystemExit('QMP startup check did not complete')
+          PY

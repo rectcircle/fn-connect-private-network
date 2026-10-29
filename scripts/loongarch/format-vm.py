@@ -18,6 +18,8 @@ from linux_acceptance import validate_evidence
 
 from validate import ROOT, OUT, ENVIRONMENT, Report, download, read_guest_results, start_container
 
+from qemu_toolchain import require_emulator
+
 
 def run(*args, **kwargs):
     return subprocess.run(args, check=True, **kwargs)
@@ -116,7 +118,7 @@ python3 /workspace/scripts/loongarch/runtime-format.py finish
             run('sudo', 'umount', str(mount))
             mounted = False
             results = temporary / 'guest-results.tar.gz'
-            command = ['qemu-system-loongarch64', '-machine', 'virt', '-accel', 'tcg', '-m', '4096', '-smp', '2',
+            command = [require_emulator(), '-machine', 'virt', '-accel', 'tcg', '-m', '4096', '-smp', '2',
                        '-bios', str(firmware), '-kernel', str(kernel), '-initrd', str(initrd),
                        '-append', 'root=/dev/vda rw rootwait console=ttyS0 init=/usr/lib/systemd/systemd systemd.unit=multi-user.target',
                        '-drive', f'file={disk},format=raw,if=none,id=root', '-device', 'virtio-blk-pci,drive=root',

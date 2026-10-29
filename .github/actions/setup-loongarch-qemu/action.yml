@@ -1,0 +1,19 @@
+name: Pinned LoongArch system emulator
+description: Build/cache QEMU with the upstream FCC/FPE context fix for issue 4209
+runs:
+  using: composite
+  steps:
+    - uses: actions/cache@v4
+      with:
+        path: ~/.cache/fncpn-qemu
+        key: loongarch-qemu-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/loongarch/environment.json', 'scripts/loongarch/qemu_toolchain.py') }}
+    - name: Install build and VM filesystem dependencies
+      shell: bash
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y --no-install-recommends build-essential pkg-config ninja-build meson python3-venv libglib2.0-dev libpixman-1-dev libfdt-dev zlib1g-dev e2fsprogs
+    - name: Build and verify the pinned emulator
+      shell: bash
+      run: |
+        python3 scripts/loongarch/qemu_toolchain.py install
+        python3 scripts/loongarch/qemu_toolchain.py bin >> "$GITHUB_PATH"

@@ -221,6 +221,12 @@ DEB 工作流为 `Build LoongArch DEB`；RPM/Arch 工作流为 `Build LoongArch 
 1. 构建最终三种 Core/UI 包，以及仅供 CI 使用的较低包版本升级夹具；RPM 夹具同样签名。
 2. Debian 构建工作流执行根模块回归（匹配源码指纹的通过记录可复用）、UI 测试并上传最终 DEB。发布调用将系统验收后移，源码/构建报告明确标记 `source-and-build`，不作为完整系统验收证据。
 3. RPM、Arch 构建各自完成后即可启动对应验收，无需等待 DEB 完整系统验收；Debian 与 deepin 在 DEB 构建完成后并行验收，无需互相等待。VM 专用 Go 测试程序交叉编译一次并按 commit/SHA256 共享。`Accept LoongArch packages in clean systems` 只下载目标格式的原始包，在 Debian forky、openEuler、Loong Arch Linux 和 deepin 25 的干净用户空间安装，再启动一次性 QEMU 完整系统。验收不重新编译产品。
+
+完整系统验收固定使用 `scripts/loongarch/environment.json` 中的 QEMU 11.1.2 官方源码与 SHA256，
+包含上游 LoongArch FCC/FPE 上下文修复（QEMU issue 4209）。CI 的共享 setup action 构建并缓存模拟器；
+两个 VM 入口都检查实际版本，拒绝回退到宿主旧版。Linux 本地在安装 action 所列编译依赖后执行
+`python3 scripts/loongarch/qemu_toolchain.py install`，并将 `python3 scripts/loongarch/qemu_toolchain.py bin`
+输出加入当前 shell 的 PATH。仅更新验收工具，不改变产品包或降低验收要求。
 4. 每个正式目标检查独立安装 Core 不引入 GUI 库、依赖解析与 ELF ABI、普通用户 WebKit 前端握手、真实 systemd 服务、升级保留身份/配置、重装、真实内核网络与 resolved、卸载保留用户数据。RPM 额外验证项目签名。
 5. `linux-compat-<发行版>-loong64` 报告必须与候选的版本、产品/验证源码 commit、包 SHA256 完全一致。汇总清单嵌入四个正式目标的完整证据；公开入口重新校验各项证据，单独写入 `level=full` 无法通过。
 
