@@ -54,6 +54,14 @@ def main():
         run('docker', 'run', '-d', '--shm-size=1g', '--platform=linux/loong64',
             '--name', 'fncpn-format', '-e', 'TARGET', '-e', 'RELEASE', '-e', 'DIST_DIR',
             '-e', 'FULL_ACCEPTANCE', '-e', 'FNCPN_VALIDATION_COMMIT', '-v', str(Path.cwd()) + ':/workspace', profile['image'], 'sleep', 'infinity')
+        if profile['osID'] == 'openEuler':
+            cache = Path.home()/'.cache/fncpn-loongarch-runtime'/os.environ['TARGET']/'dnf'
+            if cache.is_dir() and any(cache.iterdir()):
+                # Copy cache into a fresh userspace; never restore an installed
+                # rootfs. Docker export then also includes metadata for offline VM checks.
+                run('docker', 'exec', 'fncpn-format', 'mkdir', '-p', '/var/cache/dnf')
+                run('docker', 'cp', str(cache) + '/.', 'fncpn-format:/var/cache/dnf')
+
 
 
 if __name__ == '__main__':

@@ -13,11 +13,14 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from linux_support import EXTENSIONS, runtime_profile
 from guest_commands import run_command
+from dnf_downloads import run_dnf
 
 COMMAND_LOG = None
 
 
 def run(*args):
+    if args[0] == 'dnf':
+        return run_dnf(args[1:], log=COMMAND_LOG)
     return run_command(args, timeout=600, log=COMMAND_LOG)
 
 

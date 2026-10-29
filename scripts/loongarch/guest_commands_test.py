@@ -3,6 +3,8 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
+import dnf_downloads
 from guest_commands import run_command
 
 
@@ -31,6 +33,34 @@ class CommandTests(unittest.TestCase):
             import time
             time.sleep(1.1)
             self.assertFalse(marker.exists())
+
+
+class DNFDownloadsTest(unittest.TestCase):
+    def test_transient_transport_retries_are_bounded_and_keep_signature_options(self):
+        failure = subprocess.CalledProcessError(1, ['dnf'], output='Curl error (28): Timeout was reached')
+        with patch.object(dnf_downloads, 'run_command', side_effect=[failure, 'ok']) as command, patch.object(dnf_downloads.time, 'sleep'):
+            self.assertEqual(dnf_downloads.run_dnf(['install', '-y', '--setopt=localpkg_gpgcheck=True', 'candidate.rpm']), 'ok')
+            self.assertEqual(command.call_count, 2)
+            args = command.call_args.args[0]
+            self.assertIn('--setopt=keepcache=True', args)
+            self.assertIn('--setopt=localpkg_gpgcheck=True', args)
+            self.assertNotIn('--nogpgcheck', args)
+        with patch.object(dnf_downloads, 'run_command', side_effect=failure) as command, patch.object(dnf_downloads.time, 'sleep'):
+            with self.assertRaises(subprocess.CalledProcessError): dnf_downloads.run_dnf(['install', 'candidate.rpm'])
+            self.assertEqual(command.call_count, 3)
+
+    def test_offline_and_terminal_errors_do_not_retry(self):
+        for args, output in [(['install', 'candidate.rpm'], 'GPG check FAILED'),
+                             (['install', 'candidate.rpm'], 'conflicting requests'),
+                             (['install', 'candidate.rpm'], 'Curl error (28)\nError: Transaction failed'),
+                             (['--cacheonly', 'install', 'candidate.rpm'], 'Curl error (28)')]:
+            failure = subprocess.CalledProcessError(1, ['dnf'], output=output)
+            with self.subTest(args=args, output=output), patch.object(dnf_downloads, 'run_command', side_effect=failure) as command, patch.object(dnf_downloads.time, 'sleep') as sleep:
+                with self.assertRaises(subprocess.CalledProcessError): dnf_downloads.run_dnf(args)
+                self.assertEqual(command.call_count, 1)
+                sleep.assert_not_called()
+                if '--cacheonly' in args:
+                    self.assertEqual(command.call_args.args[0], ('dnf', *args))
 
 
 if __name__ == '__main__':

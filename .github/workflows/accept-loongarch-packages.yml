@@ -125,6 +125,14 @@ jobs:
           key: loongarch-${{ steps.cache-epoch.outputs.month }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/loongarch/environment.json', 'scripts/loongarch/provision.sh', 'go.sum', 'ui/go.sum') }}-${{ github.sha }}
           restore-keys: |
             loongarch-${{ steps.cache-epoch.outputs.month }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/loongarch/environment.json', 'scripts/loongarch/provision.sh', 'go.sum', 'ui/go.sum') }}-
+      - uses: actions/cache/restore@v4
+        if: matrix.target == 'openeuler-loong64'
+        id: dnf-cache
+        with:
+          path: ~/.cache/fncpn-loongarch-runtime/${{ matrix.target }}/dnf
+          key: loongarch-runtime-dnf-${{ matrix.target }}-${{ steps.cache-epoch.outputs.month }}-${{ hashFiles('packaging/linux/targets.json', 'scripts/loongarch/dnf_downloads.py', 'scripts/loongarch/probe-format.sh') }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            loongarch-runtime-dnf-${{ matrix.target }}-${{ steps.cache-epoch.outputs.month }}-${{ hashFiles('packaging/linux/targets.json', 'scripts/loongarch/dnf_downloads.py', 'scripts/loongarch/probe-format.sh') }}-
       - name: Install exact archives in clean upstream userspace and boot acceptance VM
         run: |
           sudo apt-get update
@@ -152,6 +160,22 @@ jobs:
             dist/linux/${{ matrix.target }}/**/guest-results.tar.gz
           if-no-files-found: warn
           overwrite: true
+      - name: Preserve downloaded dependency cache, including failed downloads
+        if: always() && matrix.target == 'openeuler-loong64'
+        run: |
+          cache="$HOME/.cache/fncpn-loongarch-runtime/$TARGET/dnf"
+          mkdir -p "$cache"
+          if docker inspect fncpn-format >/dev/null 2>&1; then
+            docker cp fncpn-format:/var/cache/dnf/. "$cache" || echo '::warning::Could not collect DNF cache'
+          fi
+          sudo chown -R "$(id -u):$(id -g)" "$cache"
+          # Cache only repository dependencies, never local product candidates.
+          find "$cache" -type f -name 'fncpn-*.rpm' -delete
+      - uses: actions/cache/save@v4
+        if: always() && matrix.target == 'openeuler-loong64' && steps.dnf-cache.outputs.cache-primary-key != ''
+        with:
+          path: ~/.cache/fncpn-loongarch-runtime/${{ matrix.target }}/dnf
+          key: ${{ steps.dnf-cache.outputs.cache-primary-key }}
       - name: Remove disposable environment
         if: always()
         run: docker rm -f fncpn-format fncpn-anolis-seed fncpn-format-kernel || true

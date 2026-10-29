@@ -19,6 +19,20 @@ spec.loader.exec_module(validation)
 
 
 class EvidenceTests(unittest.TestCase):
+    def test_dnf_cache_is_copied_into_a_fresh_runtime_not_an_installed_rootfs(self):
+        spec = importlib.util.spec_from_file_location('prepare', Path(__file__).with_name('prepare-compat.py'))
+        prepare = importlib.util.module_from_spec(spec); spec.loader.exec_module(prepare)
+        with tempfile.TemporaryDirectory() as temporary:
+            cache = Path(temporary)/'.cache/fncpn-loongarch-runtime/openeuler-loong64/dnf'
+            cache.mkdir(parents=True); (cache/'dependency.rpm').write_bytes(b'cached')
+            with patch.object(prepare.Path, 'home', return_value=Path(temporary)), patch.dict(os.environ, {'TARGET': 'openeuler-loong64'}), patch.object(prepare, 'download'), patch.object(prepare, 'run') as command:
+                prepare.main()
+            calls = [call.args for call in command.call_args_list]
+            create = next(i for i, args in enumerate(calls) if args[:3] == ('docker', 'run', '-d'))
+            copy = next(i for i, args in enumerate(calls) if args[:2] == ('docker', 'cp'))
+            self.assertLess(create, copy)
+            self.assertEqual(calls[copy], ('docker', 'cp', str(cache)+'/.', 'fncpn-format:/var/cache/dnf'))
+
     def test_vm_entrypoint_imports_release_validator_in_isolated_python(self):
         directory = Path(__file__).resolve().parent
         code = 'import runpy,sys;sys.path.insert(0,sys.argv[1]);runpy.run_path(sys.argv[2],run_name="import_check")'
