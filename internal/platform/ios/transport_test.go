@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 )
 
 type streamSystem struct {
@@ -86,5 +87,28 @@ func TestPrivateHTTPUsesPlatformStreamAndRejectsPublicTargets(t *testing.T) {
 	}
 	if sys.opens != 1 {
 		t.Fatal("invalid target reached native bridge")
+	}
+}
+
+// net/http reads idle connections in the background, and configuration watches
+// legitimately wait 25 seconds. Neither may acquire an implicit 3-second deadline.
+func TestPrivateStreamTimeoutFollowsExplicitDeadline(t *testing.T) {
+	c := &privateConn{}
+	for _, read := range []bool{true, false} {
+		if timeout, err := c.timeout(read); err != nil || timeout != 0 {
+			t.Fatalf("implicit deadline: %d %v", timeout, err)
+		}
+	}
+	c.SetDeadline(time.Now().Add(25 * time.Second))
+	if timeout, err := c.timeout(true); err != nil || timeout < 24000 {
+		t.Fatalf("watch deadline shortened: %d %v", timeout, err)
+	}
+	c.SetReadDeadline(time.Now().Add(-time.Second))
+	if _, err := c.timeout(true); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expired deadline: %v", err)
+	}
+	c.closed = true
+	if _, err := c.timeout(false); !errors.Is(err, net.ErrClosed) {
+		t.Fatalf("closed connection: %v", err)
 	}
 }

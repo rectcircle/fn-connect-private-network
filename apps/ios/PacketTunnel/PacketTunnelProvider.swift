@@ -189,7 +189,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         if method == "tcp.close" { connections.removeValue(forKey: id) }
         connectionsLock.unlock()
         if method == "tcp.close" { connection?.cancel(); return NSNull() }
-        guard let connection, let timeout = params["timeoutMs"] as? Int, (1...3000).contains(timeout) else { throw PlatformError.invalid }
+        guard let connection, let timeout = params["timeoutMs"] as? Int, timeout >= 0 else { throw PlatformError.invalid }
         let completed = DispatchSemaphore(value: 0)
         var failure: Error?
         var received = Data()
@@ -200,7 +200,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
             guard let value = params["data"] as? String, let data = Data(base64Encoded: value), data.count <= 16384 else { throw PlatformError.invalid }
             connection.write(data) { error in failure = error; completed.signal() }
         }
-        guard completed.wait(timeout: .now() + .milliseconds(timeout)) == .success else {
+        guard completed.wait(timeout: timeout == 0 ? .distantFuture : .now() + .milliseconds(timeout)) == .success else {
             connection.cancel(); throw PlatformError.timeout
         }
         if let failure { throw failure }

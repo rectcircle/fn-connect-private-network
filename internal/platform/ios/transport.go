@@ -88,12 +88,12 @@ func (c *privateConn) timeout(read bool) (int, error) {
 	if read {
 		d = c.readDeadline
 	}
-	timeout := 3 * time.Second
-	if !d.IsZero() {
-		if remaining := time.Until(d); remaining < timeout {
-			timeout = remaining
-		}
+	// A connection without a deadline must allow idle keep-alive reads and
+	// configuration watches. HTTP cancellation closes the native connection.
+	if d.IsZero() {
+		return 0, nil
 	}
+	timeout := time.Until(d)
 	if timeout <= 0 {
 		return 0, context.DeadlineExceeded
 	}
