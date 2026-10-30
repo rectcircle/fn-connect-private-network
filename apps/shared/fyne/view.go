@@ -111,7 +111,7 @@ func newClientView(backend daemonClient) *clientView {
 	v.primary.Importance = widget.HighImportance
 	retry := newTouchButton(tr("重新检测"), func() { v.command(client.MethodRetry) })
 	rows := []fyne.CanvasObject{}
-	for _, name := range []string{tr("连接路径"), tr("隧道地址"), tr("网络接口"), tr("最近握手"), "DNS", tr("特权服务"), tr("IPv6 检测"), "NAS IP"} {
+	for _, name := range []string{tr("连接路径"), tr("隧道地址"), tr("网络接口"), tr("最近握手"), "DNS", tr("网络服务"), tr("IPv6 检测"), "NAS IP"} {
 		label := widget.NewLabel(name)
 		label.Importance = widget.LowImportance
 		value := widget.NewLabel("—")
@@ -606,7 +606,7 @@ func (v *clientView) applyReport(report model.ClientDiagnostics, encoded string)
 	if report.PrivilegedActive {
 		root = tr("运行中")
 	}
-	value(tr("特权服务"), root)
+	value(tr("网络服务"), root)
 	messages := []string{}
 	for _, err := range append(report.Errors, report.Status.LastError, report.Status.DNS.LastError, report.Direct.LastError) {
 		if err != nil {

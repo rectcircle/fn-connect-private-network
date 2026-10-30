@@ -20,7 +20,7 @@ func init() {
 var events = map[string]bool{}
 
 func init() {
-	for _, event := range []string{"FN Connect discovery completed", "direct path unavailable", "direct connection attempted", "direct connection failed; trying next path", "client connected", "client reconnect requested", "WireGuard handshake waiting", "WireGuard handshake confirmed", "WireGuard handshake still pending", "extension started", "extension stopping", "extension stopped", "network settings applying", "network settings applied", "network settings failed", "platform operation failed", "automatic connection requested", "client configuration loaded"} {
+	for _, event := range []string{"client network unhealthy", "tunnel health probe failed; retaining current path", "FN Connect discovery completed", "direct path unavailable", "direct connection attempted", "direct connection failed; trying next path", "client connected", "client reconnect requested", "WireGuard handshake waiting", "WireGuard handshake confirmed", "WireGuard handshake still pending", "extension started", "extension stopping", "extension stopped", "network settings applying", "network settings applied", "network settings failed", "platform operation failed", "automatic connection requested", "client configuration loaded"} {
 		events[event] = true
 	}
 }

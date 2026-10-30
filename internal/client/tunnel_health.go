@@ -11,6 +11,11 @@ import (
 	"github.com/rectcircle/fn-connect-private-network/internal/model"
 )
 
+// A remote tunnel can cross mobile radio and routed networks. Keep its health
+// budget separate from the short physical-LAN selection probe.
+const tunnelHealthProbeTimeout = 3 * time.Second
+const tunnelHealthFailureThreshold = 2
+
 // Check the existing authenticated NAS endpoint through the tunnel, rather than
 // treating the age of a WireGuard key exchange as a connectivity test.
 func (m *Manager) tunnelHealthError(ctx context.Context, config *LocalConfig) error {
@@ -50,14 +55,14 @@ func (m *Manager) tunnelHealthError(ctx context.Context, config *LocalConfig) er
 		}
 		transport := &http.Transport{
 			// Binding the VPN source prevents a successful physical-LAN bypass.
-			DialContext: (&net.Dialer{LocalAddr: &net.TCPAddr{IP: net.IP(address.Addr().AsSlice())}, Timeout: localEndpointTimeout}).DialContext,
+			DialContext: (&net.Dialer{LocalAddr: &net.TCPAddr{IP: net.IP(address.Addr().AsSlice())}, Timeout: tunnelHealthProbeTimeout}).DialContext,
 		}
 		defer transport.CloseIdleConnections()
 		client = &http.Client{Transport: transport}
 	}
 	cloned := *client
 	cloned.Jar = nil
-	cloned.Timeout = localEndpointTimeout
+	cloned.Timeout = tunnelHealthProbeTimeout
 	cloned.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	probe := SystemLocalProbe{HTTPClient: &cloned}
 	var failure error
@@ -69,7 +74,7 @@ func (m *Manager) tunnelHealthError(ctx context.Context, config *LocalConfig) er
 			case <-time.After(localProbeHealthRetryInterval):
 			}
 		}
-		check, cancel := context.WithTimeout(ctx, localEndpointTimeout)
+		check, cancel := context.WithTimeout(ctx, tunnelHealthProbeTimeout)
 		ok, err := probe.Reachable(check, *configuration, config.DeviceID, NetworkSnapshot{})
 		cancel()
 		if ok || isAdmissionFailure(err) {

@@ -226,6 +226,8 @@ type Manager struct {
 	// The following connection evidence is owned by operation.
 	lastPlan               *model.ClientPlan
 	lastNetworkFingerprint string
+	// Consecutive failed authenticated probes on an otherwise active tunnel.
+	tunnelHealthFailures int
 	// reconnectRetryAfter holds the earliest time a full reconnect (and its
 	// address discovery) may run again after a recent connect failure. It protects
 	// fnos.net from a reconnect/rediscovery storm when the NAS is unreachable.
@@ -1579,14 +1581,32 @@ func (m *Manager) maintainHealth(ctx context.Context) {
 			statusErr,
 			m.bridge.Connected(),
 		)
+		if healthErr != nil {
+			// A stopped/degraded network or lost relay is a hard failure, not a
+			// slow NAS response; do not delay its existing recovery path.
+			m.tunnelHealthFailures = 0
+		}
 		if healthErr == nil {
 			healthErr = m.tunnelHealthError(ctx, config)
 			if isAdmissionFailure(healthErr) {
+				m.tunnelHealthFailures = 0
 				_ = m.fail(healthErr)
 				return
 			}
 			if ctx.Err() != nil {
 				return
+			}
+			if healthErr == nil {
+				m.tunnelHealthFailures = 0
+			} else if model.AsError(healthErr).Retryable {
+				m.tunnelHealthFailures++
+				if m.tunnelHealthFailures < tunnelHealthFailureThreshold {
+					m.logger.Warn("tunnel health probe failed; retaining current path",
+						append(logging.ErrorAttrs(healthErr), "attempts", m.tunnelHealthFailures)...)
+					return
+				}
+			} else {
+				m.tunnelHealthFailures = 0
 			}
 		}
 		if statusErr == nil {

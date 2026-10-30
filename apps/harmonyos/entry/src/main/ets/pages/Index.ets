@@ -550,7 +550,7 @@ struct Index {
                     Text(this.dns).fontColor($r('app.color.foreground')).layoutWeight(1)
                     if (this.dnsSuffix) { this.inlineAction($r('app.media.action_copy'), '复制 DNS 后缀', true, () => { this.copyText(this.dnsSuffix, 'DNS 后缀已复制'); }) }
                   }.width('100%').padding({ top: 4, bottom: 4 })
-                  StatusRow({ label: tr('特权服务'), value: this.privileged, tv: this.tv });
+                  StatusRow({ label: tr('网络服务'), value: this.privileged, tv: this.tv });
                   StatusRow({ label: tr('IPv6 检测'), value: this.direct, tv: this.tv });
                   Row() {
                     Text('NAS IP').fontColor($r('app.color.secondary')).width('36%')

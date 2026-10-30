@@ -586,6 +586,7 @@ func (m *Manager) commitConnection(ctx context.Context, publish func()) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	m.tunnelHealthFailures = 0
 	publish()
 	return nil
 }

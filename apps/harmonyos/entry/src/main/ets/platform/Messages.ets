@@ -419,6 +419,7 @@ const english: Record<string, string> = {
   "我已阅读并同意": "I have read and agree to ",
   "《隐私政策》": "Privacy Policy",
   "我已阅读并同意隐私政策": "I have read and agree to the Privacy Policy",
-  "请先阅读并同意隐私政策。": "Please read and agree to the Privacy Policy first."
+  "请先阅读并同意隐私政策。": "Please read and agree to the Privacy Policy first.",
+  "网络服务": "Network service"
 };
 export function tr(text: string): string { return i18n.System.getSystemLanguage().startsWith('zh') ? text : (english[text] ?? text); }
