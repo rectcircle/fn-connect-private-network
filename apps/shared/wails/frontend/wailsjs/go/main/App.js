@@ -26,6 +26,10 @@ export function OpenNAS(arg1) {
   return window['go']['main']['App']['OpenNAS'](arg1);
 }
 
+export function OpenSettings() {
+  return window['go']['main']['App']['OpenSettings']();
+}
+
 export function Quit() {
   return window['go']['main']['App']['Quit']();
 }
@@ -41,5 +45,3 @@ export function SetAutoStart(arg1) {
 export function UpdateTray(arg1, arg2, arg3, arg4, arg5) {
   return window['go']['main']['App']['UpdateTray'](arg1, arg2, arg3, arg4, arg5);
 }
-
-export function OpenSettings() { return window['go']['main']['App']['OpenSettings'](); }

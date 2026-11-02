@@ -55,7 +55,7 @@ if tuple(map(int, version.split('.'))) >= (1, 1, 2):
             if (build.get('productVersion') != version or build.get('commit') != revision or
                 build.get('architecture') != linux_arch or build.get('distribution') != linux_target or
                 build.get('packageFormat') != profile.get('format', linux_target) or build.get('workingTreeDirty') is not False):
-                raise SystemExit('Linux candidate must match the clean release version, commit, format and architecture')
+                raise SystemExit(f'Linux candidate must match the clean release version, commit, format and architecture: {linux_target}/{linux_arch}, workingTreeDirty={build.get("workingTreeDirty")}')
             if profile.get('format', linux_target) == 'rpm' and build.get('rpmSigning') != signing_identity():
                 raise SystemExit('RPM signing evidence does not match the project key')
             expected_names = {linux_package_name(component,version,linux_target,linux_arch) for component in ('core', 'ui')}

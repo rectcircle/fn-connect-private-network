@@ -30,6 +30,15 @@ else
  (cd "$ROOT_DIR/apps/shared/wails" && "$WAILS" build -clean -nopackage -platform "linux/$FNCPN_ARCH" -tags webkit2_41 -o fncpn-ui -ldflags "-s -w -X github.com/rectcircle/fn-connect-private-network/internal/version.Revision=$REVISION")
  cp "$ROOT_DIR/apps/shared/wails/build/bin/fncpn-ui" "$FNCPN_UI_BINARY"
 fi
+# Wails regenerates tracked bridge files. Detect drift before packaging rather
+# than producing a dirty candidate that the final inventory must reject.
+if [ "${RELEASE:-0}" = 1 ]; then
+ (cd "$ROOT_DIR" && python3 scripts/check-release-candidate.py) || {
+  echo 'UI build changed candidate source; regenerate and commit Wails bindings before release.' >&2
+  git -C "$ROOT_DIR" status --short >&2
+  exit 1
+ }
+fi
 export NFPM="${NFPM:-$(go env GOPATH)/bin/nfpm}"
 python3 "$ROOT_DIR/scripts/linux-package.py" ui "$TARGET" "$FNCPN_ARCH" "$FNCPN_UI_BINARY" "$OUT"
 if [ "${DEFER_LINUX_MANIFEST:-0}" != 1 ]; then
