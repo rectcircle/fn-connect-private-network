@@ -148,6 +148,15 @@ func fncpn_start(directory *C.char) *C.char {
 	engine.Logger = privilegedLogger
 	network := iosvpn.NewNetwork()
 	store := client.NewConfigStore(filepath.Join(C.GoString(directory), "client.json"), iosvpn.Secrets{System: sys})
+	var settingsDirectory string
+	if err := sys.Call("settings.directory", nil, &settingsDirectory); err == nil {
+		if err := store.UseSharedLinkSettings(settingsDirectory); err != nil {
+			return C.CString(model.SafeText(err.Error()))
+		}
+	} else {
+		logger.Warn("shared link settings unavailable; preserving provider-local preferences")
+	}
+
 	manager, err := client.NewManager(client.ManagerOptions{Store: store, Logger: logger, SpeedTestDialContext: engine.DialPrivate, DNSHTTPClient: &http.Client{Transport: &http.Transport{DialContext: engine.DialPrivate}, Timeout: 3 * time.Second}, Discoverer: client.DiscoveryClient{}, Remote: func(id string, cookies []client.Cookie, onCookies func([]client.Cookie) error) (client.RemoteService, error) {
 		u, e := client.DefaultRemoteURL(id)
 		if e != nil {

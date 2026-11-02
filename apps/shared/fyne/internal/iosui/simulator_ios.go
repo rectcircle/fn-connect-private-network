@@ -229,3 +229,11 @@ func simulatorBrowserAllowed(target string) error {
 	}
 	return nil
 }
+
+func simulatorCallSettingsPage(ctx context.Context) (string, error) {
+	directory, err := simulatorDirectory()
+	if err != nil {
+		return "", err
+	}
+	return client.NewSavedSettingsPage(ctx, client.NewConfigStore(filepath.Join(directory, "client.json"), nil))
+}

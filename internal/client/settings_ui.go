@@ -1,6 +1,7 @@
 package client
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/subtle"
@@ -11,6 +12,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"runtime"
 	"strings"
 	"time"
 
@@ -95,7 +97,11 @@ func (ui *settingsUI) serve(m settingsBackend, w http.ResponseWriter, r *http.Re
 	}
 	if path == "" && r.Method == http.MethodGet {
 		http.SetCookie(w, &http.Cookie{Name: ui.cookieName(), Value: ui.token, Path: settingsPath, HttpOnly: true, SameSite: http.SameSiteStrictMode})
-		data, _ := settingsFiles.ReadFile("settingsweb/index.html")
+		mobile := settingsMobilePlatform()
+		if layout := r.URL.Query().Get("layout"); layout != "" {
+			mobile = layout == "mobile"
+		}
+		data := settingsDocument(mobile)
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_, _ = w.Write(data)
 		return
@@ -114,7 +120,7 @@ func (ui *settingsUI) serve(m settingsBackend, w http.ResponseWriter, r *http.Re
 			fail(err)
 			return
 		}
-		_ = json.NewEncoder(w).Encode(map[string]any{"version": version.Current, "commit": version.Revision, "settings": links, "status": m.Status(), "infoOnly": isSettingsInfoOnly(m)})
+		_ = json.NewEncoder(w).Encode(map[string]any{"version": version.Current, "commit": version.Revision, "settings": links, "status": m.Status(), "infoOnly": isSettingsInfoOnly(m), "mobile": settingsMobilePlatform()})
 	case path == "/api/preferences" && r.Method == http.MethodPost:
 		var input LinkSettings
 		if err := decodeSettingsBody(w, r, &input); err != nil {
@@ -164,7 +170,10 @@ func decodeSettingsBody(w http.ResponseWriter, r *http.Request, target any) erro
 // NewSettingsInfoPage opens General without starting or authorizing a VPN. The
 // system-owned runtime provides the full page once a connection service exists.
 func NewSettingsInfoPage(ctx context.Context) (string, error) {
-	ui, err := startSettingsUI(settingsInfoBackend{})
+	return NewSavedSettingsPage(ctx, nil)
+}
+func NewSavedSettingsPage(ctx context.Context, store *ConfigStore) (string, error) {
+	ui, err := startSettingsUI(settingsInfoBackend{store: store})
 	if err != nil {
 		return "", err
 	}
@@ -178,15 +187,21 @@ type settingsBackend interface {
 	RunSpeedTest(context.Context, SpeedTestRequest, func(SpeedTestStatus) error) error
 	Status() model.ClientStatus
 }
-type settingsInfoBackend struct{}
+type settingsInfoBackend struct{ store *ConfigStore }
 
 func (settingsInfoBackend) Status() model.ClientStatus {
 	return model.ClientStatus{State: model.ClientUnconfigured}
 }
-func (settingsInfoBackend) LinkSettings(context.Context) (LinkSettings, error) {
+func (b settingsInfoBackend) LinkSettings(ctx context.Context) (LinkSettings, error) {
+	if b.store != nil {
+		return b.store.LinkSettings(ctx)
+	}
 	return LinkSettings{Links: defaultLinks()}, nil
 }
-func (settingsInfoBackend) SetLinkSettings(context.Context, LinkSettings) (LinkSettings, error) {
+func (b settingsInfoBackend) SetLinkSettings(ctx context.Context, input LinkSettings) (LinkSettings, error) {
+	if b.store != nil {
+		return b.store.SetLinkSettings(ctx, input)
+	}
 	return LinkSettings{}, errors.New("连接服务未启动，请先在主窗口连接 NAS，再重新打开设置。")
 }
 func (settingsInfoBackend) RunSpeedTest(context.Context, SpeedTestRequest, func(SpeedTestStatus) error) error {
@@ -217,4 +232,18 @@ func isSettingsInfoOnly(backend settingsBackend) bool {
 
 func (ui *settingsUI) cookieName() string {
 	return "fncpn_settings_" + strings.ReplaceAll(ui.address, ":", "_")
+}
+
+func settingsMobilePlatform() bool {
+	return runtime.GOOS == "android" || runtime.GOOS == "ios" || runtime.GOOS == "openharmony"
+}
+
+func settingsDocument(mobile bool) []byte {
+	data, _ := settingsFiles.ReadFile("settingsweb/index.html")
+	if mobile {
+		data = bytes.Replace(data, []byte(`<html lang=`), []byte(`<html data-layout="mobile" lang=`), 1)
+		data = bytes.Replace(data, []byte(`<section id="settings-menu" hidden>`), []byte(`<section id="settings-menu">`), 1)
+		data = bytes.Replace(data, []byte(`<section id="general">`), []byte(`<section id="general" hidden>`), 1)
+	}
+	return data
 }

@@ -514,5 +514,9 @@
   "测试结果仅供参考，会受到两端设备当时的网络状况及可用带宽影响；使用 FN Connect 时，还受中转服务器带宽限制。": "Results are for reference only and depend on the current network conditions and available bandwidth at both ends. FN Connect results are also affected by relay server bandwidth.",
   "局域网 · 始终优先": "LAN · Always first",
   "无效的设置页面地址": "Invalid settings page address",
-  "连接服务未启动，请先在主窗口连接 NAS，再重新打开设置。": "The connection service is not running. Connect to your NAS in the main window, then reopen Settings."
+  "连接服务未启动，请先在主窗口连接 NAS，再重新打开设置。": "The connection service is not running. Connect to your NAS in the main window, then reopen Settings.",
+  "返回设置": "Back to Settings",
+  "关于": "About",
+  "拖动调整优先级": "Drag to change priority",
+  "未连接时可调整已保存 NAS 的链路偏好；网络测试需先在主窗口连接 NAS。": "You can change saved NAS link preferences while disconnected. Connect to the NAS in the main window before testing."
 }

@@ -281,7 +281,9 @@ func call(raw []byte) ([]byte, error) {
 	connection, err := net.DialTimeout("unix", filepath.Join(r.Directory, "control.sock"), time.Second)
 	if err != nil {
 		if r.Method == "settings-url" {
-			settingsInfoOnce.Do(func() { settingsInfoURL, settingsInfoError = client.NewSettingsInfoPage(context.Background()) })
+			settingsInfoOnce.Do(func() {
+				settingsInfoURL, settingsInfoError = client.NewSavedSettingsPage(context.Background(), client.NewConfigStore(filepath.Join(r.Directory, "client.json"), nil))
+			})
 			return reply(map[string]string{"url": settingsInfoURL}, settingsInfoError), nil
 		}
 		if r.Method == "export-support" {

@@ -109,7 +109,7 @@ struct Index {
     if (this.busy) { return true; }
     if (this.networkDebug) { this.networkDebug = false; return true; }
     if (this.privacyURL) { this.closePrivacy(); return true; }
-    if (this.adminURL) { this.closeAdmin(); return true; }
+    if (this.adminURL) { if (this.backSettings()) { return true; } this.closeAdmin(); return true; }
     if (this.logsOpen) { this.logsOpen = false; return true; }
     if (this.menu) { this.closeMenu(); return true; }
     if (this.loginPage && this.loginFromMenu) {
@@ -164,7 +164,7 @@ struct Index {
   }
   private navigate(): void {
     if (this.privacyURL) { this.closePrivacy(); }
-    else if (this.adminURL) { this.closeAdmin(); }
+    else if (this.adminURL) { if (this.backSettings()) {} else { this.closeAdmin(); } }
     else if (this.logsOpen) { this.logsOpen = false; }
     else if (this.loginPage && this.loginFromMenu) { this.cancelLogin(); }
     else if (this.tv) { this.getUIContext().getFocusController().requestFocus('menu-重新登录'); }
@@ -267,6 +267,11 @@ struct Index {
       if (!this.challenge) { this.password = password; this.accessCode = accessCode; }
     } finally { this.busy = false; }
   }
+  private backSettings(): boolean {
+    if (!this.adminURL.includes('/app/fncpn/settings')) { return false; }
+    try { if (this.adminController.accessBackward()) { this.adminController.backward(); return true; } } catch (_) {}
+    return false;
+  }
   private settingsNavigation(request: WebResourceRequest): boolean {
     if (!this.adminURL.includes('/app/fncpn/settings')) { return false; }
     const target = request.getRequestUrl();
@@ -287,7 +292,7 @@ struct Index {
     try {
       const result = await this.client.call<Admin>('settings-url');
       if (!/^http:\/\/127\.0\.0\.1:\d+\/app\/fncpn\/settings\?fncpn_proxy=[a-f0-9]{64}$/.test(result.url)) { throw new Error(tr('无效的设置页面地址')); }
-      this.adminURL = result.url;
+      this.adminURL = result.url + (isDesktop() ? '&layout=desktop' : '&layout=mobile');
     } catch (error) { this.message = (error as Error).message || String(error); }
     finally { this.busy = false; }
   }

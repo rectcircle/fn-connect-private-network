@@ -523,6 +523,7 @@ char *fncpn_ui_call(const char *input) {
             dispatch_semaphore_signal(done); return;
         }
         if(manager && (manager.connection.status==NEVPNStatusConnected || manager.connection.status==NEVPNStatusReasserting)){send(manager);return;}
+        if([method isEqualToString:@"settings-url"]) {failure(@"VPN provider is not running");return;}
         if([method isEqualToString:@"ios-log-snapshot"]) {
             reply=[[NSJSONSerialization dataWithJSONObject:@{@"version":request[@"version"],@"id":request[@"id"],@"ok":@YES,@"result":@{@"available":@NO}} options:0 error:nil] copy];dispatch_semaphore_signal(done);return;
         }
@@ -598,5 +599,16 @@ char *fncpn_sim_secret(const char *input) {
     }
     NSData *reply=[NSJSONSerialization dataWithJSONObject:@{@"ok":(status==errSecSuccess ? @YES : @NO),@"status":@(status),@"result":result} options:0 error:nil];
     return reply?strdup([[NSString alloc]initWithData:reply encoding:NSUTF8StringEncoding].UTF8String):NULL;
+ }
+}
+
+char *fncpn_ui_shared_settings_directory(void) {
+ @autoreleasepool {
+  NSString *identifier=NSBundle.mainBundle.bundleIdentifier;
+  NSURL *base=[NSFileManager.defaultManager containerURLForSecurityApplicationGroupIdentifier:[@"group." stringByAppendingString:identifier]];
+  if(!base)return NULL;
+  NSURL *directory=[base URLByAppendingPathComponent:@"LinkSettings" isDirectory:YES];
+  if(![NSFileManager.defaultManager createDirectoryAtURL:directory withIntermediateDirectories:YES attributes:@{NSFileProtectionKey:NSFileProtectionCompleteUntilFirstUserAuthentication} error:nil])return NULL;
+  return strdup(directory.path.fileSystemRepresentation);
  }
 }

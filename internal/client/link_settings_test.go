@@ -1,9 +1,11 @@
 package client
 
 import (
+	"bytes"
 	"context"
 	"net/netip"
 	"os"
+	"path/filepath"
 	"slices"
 	"testing"
 	"testing/synctest"
@@ -92,5 +94,65 @@ func TestLinkPolicyAndForcedTestSelection(t *testing.T) {
 				}
 			})
 		})
+	}
+}
+
+func TestSharedPreferencesRemainEditableWithoutConnectionAndPreserveIdentity(t *testing.T) {
+	store := configuredManagerStore(t)
+	if err := store.saveLinks("home-nas", []LinkPreference{{"fn-connect", true}, {"ipv6", true}}); err != nil {
+		t.Fatal(err)
+	}
+	identity, _ := os.ReadFile(store.path)
+	legacy, _ := os.ReadFile(store.path + ".links")
+	directory := filepath.Join(t.TempDir(), "shared")
+	if err := store.UseSharedLinkSettings(directory); err != nil {
+		t.Fatal(err)
+	}
+	offline := SharedLinkSettingsStore(directory)
+	settings, err := offline.LinkSettings(t.Context())
+	if err != nil || settings.FNID != "home-nas" || settings.Links[0].Link != "fn-connect" {
+		t.Fatal(settings, err)
+	}
+	settings.Links[0].Enabled = false
+	if _, err := offline.SetLinkSettings(t.Context(), settings); err != nil {
+		t.Fatal(err)
+	}
+	runtime, err := store.LinkSettings(t.Context())
+	if err != nil || !slices.Equal(runtime.Links, settings.Links) {
+		t.Fatal(runtime, err)
+	}
+	after, _ := os.ReadFile(store.path)
+	old, _ := os.ReadFile(store.path + ".links")
+	if !bytes.Equal(identity, after) || !bytes.Equal(legacy, old) {
+		t.Fatal("identity or migration backup changed")
+	}
+	files, _ := os.ReadDir(directory)
+	for _, file := range files {
+		if file.Name() != "links.json" && file.Name() != "current-nas.json" && file.Name() != "links.lock" {
+			t.Fatal("unexpected shared identity data", file.Name())
+		}
+	}
+	if err := store.Clear(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := offline.SetLinkSettings(t.Context(), settings); err == nil {
+		t.Fatal("forgotten NAS remained editable")
+	}
+}
+
+func TestSharedPreferencesRejectFutureReferenceSchemaWithoutOverwriting(t *testing.T) {
+	store := configuredManagerStore(t)
+	directory := t.TempDir()
+	path := filepath.Join(directory, "current-nas.json")
+	future := []byte(`{"version":99,"fnId":"home-nas"}`)
+	if err := os.WriteFile(path, future, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UseSharedLinkSettings(directory); err == nil {
+		t.Fatal("accepted future reference schema")
+	}
+	after, _ := os.ReadFile(path)
+	if !bytes.Equal(future, after) {
+		t.Fatal("overwrote future reference schema")
 	}
 }

@@ -325,6 +325,15 @@ Windows、Linux/Wails、Android/iOS/Fyne 和 HarmonyOS 复用客户端内嵌的�
 这里的随机 loopback 端口只负责本机 UI，不是 NAS 测速服务；真正测速仍访问 NAS IP 的现有私网 API。
 
 Windows/WebView2 和 Linux/WebKit 仅对本地设置页提供自启状态及开关的窄接口，不向远程管理页面注入客户端业务能力。
-移动端没有桌面自启选项；VPN 服务未运行时可查看通用信息，网络页提示先连接 NAS 后重新打开设置，打开页面不会请求 VPN 授权。
+移动端以“网络链路 / 关于”列表作为设置首页，不显示通用页或自启选项。VPN 服务未运行时仍可修改已保存 NAS 的开关和优先级；只有网络测试要求连接服务在线，打开设置不会请求 VPN 授权。
 iOS 的测速使用平台私网拨号接口；HarmonyOS 应用内隧道使用 netstack，系统 VPN 与桌面继续使用绑定隧道地址的系统路由。
 这些是配套本地组件变化，不增加远程服务端要求，继续遵守唯一的产品 MINOR 准入规则。
+
+
+移动端数据包动画仅有一个 packet 元素，沿整条路径依次通过中继两侧的方向线；设备图标使用固定高度行，文字换行不影响图标和方向线对齐。
+IPv6 测速不再将接口 `HasPublicIPv6` 分类作为准入条件，直接复用正常建联的 NAS 地址发现、目标路由检测与握手，不回退其他链路。
+
+iOS 的离线链路偏好使用主 App 和扩展共同授权的 `group.<主 App bundle ID>` App Group；只共享
+`links.json`（独立 schema 1）与 `current-nas.json`（独立 schema 1），不迁移或共享身份、密钥、Cookie 或连接意图。
+首次启用时复制并保留原 `.links` 文件；共享配置用文件锁及原子写入协调 UI/扩展，未知 schema 拒绝覆盖。
+既有签名未包含 App Group 时保留原 provider-local 偏好及连接能力，离线共享编辑需要重新配置匹配的签名授权。

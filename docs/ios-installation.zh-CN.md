@@ -118,3 +118,7 @@ rm -rf "$install_dir"
 - 证书过期或被撤销：按服务方流程更新材料并重新签名，不需要重新编译源码。
 
 构建、模拟器和发布流程见[开发文档](development.md#ios-开发环境准备)。
+
+## 离线链路偏好的 App Group
+
+1.2.0 的移动设置页支持 VPN 未运行时修改链路优先级和开关。iOS 签名时，需要为主 App 与 PacketTunnel 扩展同时授权同名 App Group：`group.<主 App 的 bundle ID>`（默认 `group.cn.rectcircle.fncpn`）。修改 bundle ID 时也需同步修改并授权组名。组内只包含 NAS 标识和链路偏好，原有身份与密钥仍保留在扩展的原存储位置。未授权组时保留原有连接能力，离线编辑不可用。

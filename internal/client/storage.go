@@ -62,6 +62,7 @@ type SecretStore interface {
 
 type ConfigStore struct {
 	path         string
+	sharedLinks  string
 	secrets      SecretStore
 	credentialMu sync.Mutex
 }
@@ -148,7 +149,10 @@ func (s *ConfigStore) Save(config LocalConfig) (failure error) {
 	if err != nil {
 		return fmt.Errorf("encode client config: %w", err)
 	}
-	return writeClientFileAtomic(s.path, append(data, '\n'))
+	if err := writeClientFileAtomic(s.path, append(data, '\n')); err != nil {
+		return err
+	}
+	return s.publishLinkNAS(config.FNID)
 }
 
 func (s *ConfigStore) Clear() (failure error) {
@@ -157,6 +161,14 @@ func (s *ConfigStore) Clear() (failure error) {
 			failure = model.WithOperation(failure, "configuration.clear")
 		}
 	}()
+	if s.sharedLinks != "" {
+		if err := s.publishLinkNAS(""); err != nil {
+			return err
+		}
+		if err := os.Remove(s.linksPath()); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+	}
 	for _, sidecar := range []string{s.path + ".links", s.path + ".speedtests"} {
 		if err := os.Remove(sidecar); err != nil && !os.IsNotExist(err) {
 			return err

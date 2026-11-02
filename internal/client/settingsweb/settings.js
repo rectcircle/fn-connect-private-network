@@ -10,7 +10,8 @@ const params = new URLSearchParams(location.search), token=params.get('fncpn_pro
 if(token)sessionStorage.setItem('fncpn-settings-token',token);
 history.replaceState(null,'',location.pathname);
 const base=location.pathname;
-let state, saving=false, controller, last={}, historyValues=[], historyStage='', selection=[];
+let packetStage='',packetFrame=0,packetStarted=0;
+let layoutApplied=false,mobile=document.documentElement.dataset.layout==='mobile', dragging=false, state, saving=false, controller, last={}, historyValues=[], historyStage='', selection=[];
 const linkName = key => L(key==='ipv6'?'IPv6 直连':key==='fn-connect'?'FN Connect 中继':'局域网');
 function notice(text=''){ $('notice').textContent=text;$('notice').hidden=!text;$('dismiss').hidden=!text; }
 async function request(path, body, signal){
@@ -20,7 +21,7 @@ async function request(path, body, signal){
 function selectionChanged(){
  const links=[$('choose-ipv6').checked?'ipv6':'',$('choose-relay').checked?'fn-connect':''].filter(Boolean);
  $('selector').textContent=links.length===2?L('IPv6 与 FN Connect'):links.length?linkName(links[0]):L('选择测试链路');
- $('start').disabled=!links.length||!state?.settings.fnId;
+ $('start').disabled=!links.length||!state?.settings.fnId||!!state?.infoOnly;
  return links;
 }
 function setChoices(open){$('choices').hidden=!open;$('selector').setAttribute('aria-expanded',String(open));}
@@ -29,18 +30,39 @@ $('choices-done').onclick=()=>{setChoices(false);$('selector').focus();};
 $('choose-ipv6').onchange=selectionChanged;$('choose-relay').onchange=selectionChanged;
 document.addEventListener('click',e=>{if(!e.target.closest('.select-wrap'))setChoices(false);});
 document.addEventListener('keydown',e=>{if(e.key==='Escape')setChoices(false);});
-function page(links){$('general').hidden=links;$('links').hidden=!links;$('general-tab').classList.toggle('selected',!links);$('links-tab').classList.toggle('selected',links);}
-$('general-tab').onclick=()=>page(false);$('links-tab').onclick=()=>page(true);
+function page(name,push=true){
+ if(name!=='links'){controller?.abort();animatePacket('');}
+ if(push)history.pushState({settingsPage:name},'',base+'#'+name);
+ $('settings-menu').hidden=name!=='menu';$('general').hidden=name!=='general';$('links').hidden=name!=='links';
+ $('settings-back').hidden=!mobile||name==='menu';
+ $('general-tab').classList.toggle('selected',name==='general');$('links-tab').classList.toggle('selected',name==='links');
+ window.scrollTo(0,0);
+}
+function applyLayout(next){
+ if(layoutApplied)return;layoutApplied=true;
+ mobile=next;if(mobile)$('startup').hidden=true;document.documentElement.dataset.layout=mobile?'mobile':'desktop';
+ $('general-title').textContent=L(mobile?'关于':'通用');$('about-heading').hidden=mobile;
+ history.replaceState({settingsPage:mobile?'menu':'general'},'',base);page(mobile?'menu':'general',false);
+}
+$('general-tab').onclick=()=>page('general');$('links-tab').onclick=()=>page('links');
+$('mobile-links').onclick=()=>page('links');$('mobile-about').onclick=()=>page('general');
+$('settings-back').onclick=()=>history.back();
+window.addEventListener('popstate',event=>page(event.state?.settingsPage||(mobile?'menu':'general'),false));
 function renderPreferences(){
+ if(dragging)return;
  $('priorities').replaceChildren();
  for(const [index,link] of state.settings.links.entries()){
   const row=document.createElement('div');row.className='link-row';row.draggable=!saving&&!!state.settings.fnId;row.dataset.index=index;
   const grip=document.createElement('span');grip.textContent='⠿';grip.setAttribute('aria-hidden','true');
-  grip.className='grip';grip.onpointerdown=e=>{if(e.pointerType!=='touch'||saving||!state.settings.fnId)return;grip.setPointerCapture(e.pointerId);};grip.onpointerup=e=>{if(e.pointerType!=='touch'||saving||!state.settings.fnId)return;const target=document.elementFromPoint(e.clientX,e.clientY)?.closest('.link-row');if(target&&target.dataset.index!==String(index))save([...state.settings.links].reverse());};
+  grip.className='grip';grip.tabIndex=0;grip.setAttribute('role','button');grip.setAttribute('aria-label',L('拖动调整优先级')+' '+linkName(link.link));
+  grip.onkeydown=e=>{if((e.key==='Enter'||e.key===' ')&&!saving&&state.settings.fnId){e.preventDefault();save([...state.settings.links].reverse());}};
+  grip.onpointerdown=e=>{if(e.pointerType!=='touch'||saving||!state.settings.fnId)return;dragging=true;row.classList.add('dragging');grip.setPointerCapture(e.pointerId);};
+  grip.onpointerup=e=>{if(e.pointerType!=='touch'||!dragging)return;dragging=false;row.classList.remove('dragging');const target=document.elementFromPoint(e.clientX,e.clientY)?.closest('.link-row');if(target&&target.dataset.index!==String(index))save([...state.settings.links].reverse());};
+  grip.onpointercancel=()=>{dragging=false;row.classList.remove('dragging');};
   const name=document.createElement('label');name.htmlFor='preference-'+link.link;name.className='name';name.textContent=linkName(link.link);
   const move=document.createElement('button');move.textContent=index===0?'↓':'↑';move.title=L(index===0?'下移':'上移');move.setAttribute('aria-label',move.title+' '+linkName(link.link));move.disabled=saving||!state.settings.fnId;move.onclick=()=>save([...state.settings.links].reverse());
   const check=document.createElement('input');check.type='checkbox';check.id='preference-'+link.link;check.checked=link.enabled;check.disabled=saving||!state.settings.fnId;check.setAttribute('aria-label',linkName(link.link));check.onchange=()=>save(state.settings.links.map(entry=>({...entry,enabled:entry.link===link.link?check.checked:entry.enabled})));
-  row.append(grip,name,move,check);row.ondragstart=e=>{e.dataTransfer.setData('text/plain',String(index));row.classList.add('dragging');};row.ondragend=()=>row.classList.remove('dragging');row.ondragover=e=>e.preventDefault();row.ondrop=e=>{e.preventDefault();if(!saving&&e.dataTransfer.getData('text/plain')===String(1-index))save([...state.settings.links].reverse());};
+  row.append(grip,name,move,check);row.ondragstart=e=>{dragging=true;e.dataTransfer.setData('text/plain',String(index));row.classList.add('dragging');};row.ondragend=()=>{dragging=false;row.classList.remove('dragging');};row.ondragover=e=>e.preventDefault();row.ondrop=e=>{e.preventDefault();dragging=false;if(!saving&&e.dataTransfer.getData('text/plain')===String(1-index))save([...state.settings.links].reverse());};
   $('priorities').append(row);
  }
  $('reset').disabled=saving||!state.settings.fnId;
@@ -51,14 +73,14 @@ async function save(links){
 }
 $('reset').onclick=()=>save([{link:'ipv6',enabled:true},{link:'fn-connect',enabled:true}]);
 async function refresh(){
- try{const next=await(await request('state')).json();if(saving)return;state=next;$('unavailable').hidden=!state.infoOnly;$('version').textContent=L('版本')+' '+state.version;$('commit').textContent='Commit '+state.commit;$('nas').textContent='NAS · '+(state.settings.fnId||'—');$('current').textContent=state.status.path?linkName(state.status.path):L('尚未连接');renderPreferences();selectionChanged();}catch(e){notice(e.message);}
+ try{const next=await(await request('state')).json();if(saving||dragging)return;state=next;applyLayout(params.get('layout')?params.get('layout')==='mobile':!!state.mobile);$('unavailable').hidden=!state.infoOnly;$('version').textContent=L('版本')+' '+state.version;$('commit').textContent='Commit '+state.commit;$('nas').textContent='NAS · '+(state.settings.fnId||'—');$('current').textContent=state.status.path?linkName(state.status.path):L('尚未连接');renderPreferences();selectionChanged();}catch(e){notice(e.message);}
 }
 const phases={preparing:'准备测试',checking:'检查链路条件',queued:'等待连接任务',connecting:'正在建立真实链路',verifying:'正在验证 NAS',latency:'正在测试延迟',download:'正在测试下载',upload:'正在测试上传','upload-warmup':'正在预热上传','upload-waiting':'等待 NAS 接收数据','upload-confirming':'等待 NAS 完成确认','upload-complete':'上传完成',restoring:'正在恢复正常选路',completed:'测速完成',canceled:'测速已取消',failed:'测试失败'};
 function measurements(result){return ['latencyMs','downloadMbps','uploadMbps'].map((key,i)=>typeof result[key]==='number'?result[key].toFixed(1)+(i?' Mbps':' ms'):'—');}
 function renderTest(value){
  last=value;$('live').hidden=!value.active;$('phase').textContent=(value.link?linkName(value.link)+' · ':'')+L(phases[value.stage]||value.stage||'准备测试');
  const relay=value.link==='fn-connect';$('relay').hidden=!relay;$('relay-segment').hidden=!relay;
- $('topology').className=value.active&&['upload','download','latency'].includes(value.stage)?value.stage:'';
+ $('topology').className=value.active&&['upload','download','latency'].includes(value.stage)?value.stage:'';animatePacket($('topology').className);
  $('metric').textContent=value.stage==='latency'?(value.rttMs||0).toFixed(1)+' ms':value.stage==='upload-warmup'?L('预热中…'):value.stage==='upload-waiting'?L('等待接收…'):value.stage==='upload-confirming'?L('等待确认…'):['upload','upload-complete','download'].includes(value.stage)?(value.mbps||0).toFixed(1)+' Mbps':'';
  const family=(value.stage||'').startsWith('upload')?'upload':value.stage;
  if(historyStage!==family){historyValues=[];historyStage=family;}
@@ -87,12 +109,41 @@ $('confirm-start').onclick=async()=>{
  finally{if(controller===current){controller=undefined;$('cancel').hidden=true;}}
 };
 $('cancel').onclick=()=>controller?.abort();
-window.addEventListener('pagehide',()=>controller?.abort());
+window.addEventListener('pagehide',()=>{controller?.abort();animatePacket('');});
 // Only local settings containers provide this narrow launch-at-login bridge.
-function nativeState(data){if(data?.type!=='fncpn-settings')return;$('startup').hidden=false;$('auto-start').checked=!!data.autoStart;if(data.error)notice(data.error);}
+function nativeState(data){if(data?.type!=='fncpn-settings')return;$('startup').hidden=mobile;$('auto-start').checked=!!data.autoStart;if(data.error)notice(data.error);}
 window.chrome?.webview?.addEventListener('message',event=>nativeState(event.data));
 window.fncpnSettingsState=nativeState;
 function nativeSend(action){const value='fncpn-settings:'+action;if(window.chrome?.webview)window.chrome.webview.postMessage(value);else window.webkit?.messageHandlers?.fncpnSettings?.postMessage(value);}
 $('auto-start').onchange=()=>nativeSend($('auto-start').checked?'enable':'disable');
 nativeSend('ready');selectionChanged();await refresh();
 setInterval(()=>{if(!document.hidden){nativeSend('ready');if(!controller)refresh();}},5000);
+
+
+function animatePacket(stage){
+ if(stage===packetStage)return;
+ packetStage=stage;cancelAnimationFrame(packetFrame);$('packet').setAttribute('visibility','hidden');
+ if(!stage||matchMedia('(prefers-reduced-motion: reduce)').matches)return;
+ packetStarted=performance.now();
+ const ease=t=>t*t*(3-2*t);
+ function tick(now){
+  if(!packetStage)return;
+  const cycle=((now-packetStarted)%2000)/2000;
+  let down=stage==='download',progress=ease(((now-packetStarted)%1400)/1400),visible=true;
+  if(stage==='latency'){down=cycle>=.35;visible=cycle<.7;progress=ease(down?(cycle-.35)/.35:cycle/.35);}
+  const topology=$('topology').getBoundingClientRect();
+  const lines=[...$('topology').querySelectorAll(down?'.down':'.up')].filter(line=>line.getBoundingClientRect().width>0);
+  if(lines.length){
+   const first=lines[0].getBoundingClientRect(),last=lines.at(-1).getBoundingClientRect();
+   const left=first.left-topology.left,right=last.right-topology.left;
+   const x=down?right-(right-left)*progress:left+(right-left)*progress;
+   const y=first.top-topology.top+first.height/2;
+   // The one packet passes behind the relay device between the two wires.
+   visible=visible&&lines.some(line=>{const r=line.getBoundingClientRect();return x>=r.left-topology.left&&x<=r.right-topology.left;});
+   $('packet-layer').setAttribute('viewBox',`0 0 ${topology.width} ${topology.height}`);
+   $('packet').setAttribute('cx',x);$('packet').setAttribute('cy',y);$('packet').setAttribute('visibility',visible?'visible':'hidden');
+  }
+  packetFrame=requestAnimationFrame(tick);
+ }
+ packetFrame=requestAnimationFrame(tick);
+}

@@ -6,6 +6,7 @@ package iosui
 #include <stdlib.h>
 char *fncpn_ui_call(const char *request);
 int fncpn_ui_simulator(void);
+char *fncpn_ui_shared_settings_directory(void);
 void fncpn_ui_open(const char *url, int embedded);
 void fncpn_ui_share(const char *text);
 */
@@ -14,6 +15,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/rectcircle/fn-connect-private-network/internal/client"
 	"time"
 	"unsafe"
 
@@ -101,4 +103,16 @@ func Share(text string) error {
 	defer C.free(unsafe.Pointer(c))
 	C.fncpn_ui_share(c)
 	return nil
+}
+
+func SavedSettingsPage(ctx context.Context) (string, error) {
+	if Simulator() {
+		return simulatorCallSettingsPage(ctx)
+	}
+	directory := C.fncpn_ui_shared_settings_directory()
+	if directory == nil {
+		return client.NewSettingsInfoPage(ctx)
+	}
+	defer C.free(unsafe.Pointer(directory))
+	return client.NewSavedSettingsPage(ctx, client.SharedLinkSettingsStore(C.GoString(directory)))
 }

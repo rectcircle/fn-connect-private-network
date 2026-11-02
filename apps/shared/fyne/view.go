@@ -892,7 +892,15 @@ func (v *clientView) openSettings() {
 		}
 		if err := v.backend.Call(ctx, client.MethodSettingsURL, nil, &result); err != nil {
 			// General remains available without VPN permission or a running extension.
-			v.settingsInfoOnce.Do(func() { v.settingsInfoURL, v.settingsInfoError = client.NewSettingsInfoPage(v.ctx) })
+			v.settingsInfoOnce.Do(func() {
+				if platform, ok := v.backend.(interface {
+					SavedSettingsPage(context.Context) (string, error)
+				}); ok {
+					v.settingsInfoURL, v.settingsInfoError = platform.SavedSettingsPage(v.ctx)
+				} else {
+					v.settingsInfoURL, v.settingsInfoError = client.NewSettingsInfoPage(v.ctx)
+				}
+			})
 			if v.settingsInfoError != nil {
 				return v.settingsInfoError
 			}

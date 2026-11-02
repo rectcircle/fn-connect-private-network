@@ -156,18 +156,9 @@ func (m *Manager) RunSpeedTest(parent context.Context, input SpeedTestRequest, r
 			s.EchoSent = 0
 			s.EchoReceived = 0
 		})
-		if link == "ipv6" {
-			snapshot, checkErr := m.probe.Snapshot()
-			if checkErr != nil {
-				err = checkErr
-			} else if !snapshot.HasPublicIPv6 {
-				err = errors.New("当前网络不支持 IPv6")
-			} else {
-				err = nil
-			}
-		} else {
-			err = nil
-		}
+		// Forced tests use the same discovery and destination route check as
+		// ordinary connections; interface address classification is advisory.
+		err = nil
 		if err == nil {
 			measurement.updateSpeed(func(s *SpeedTestStatus) { s.Stage = "connecting" })
 			m.directRetryAfter = time.Time{}

@@ -63,6 +63,15 @@ func TestSettingsUIIsLocalAuthenticatedAndIndependentOfNAS(t *testing.T) {
 			}
 		})
 	}
+	mobileResponse, err := client.Get(address + "&layout=mobile")
+	if err != nil {
+		t.Fatal(err)
+	}
+	mobileHTML, _ := io.ReadAll(mobileResponse.Body)
+	mobileResponse.Body.Close()
+	if !strings.Contains(string(mobileHTML), `<html data-layout="mobile"`) || !strings.Contains(string(mobileHTML), `<section id="settings-menu">`) {
+		t.Fatal("mobile first paint is not the menu")
+	}
 	again, err := m.SettingsURL(context.Background())
 	if err != nil || again != address {
 		t.Fatal("listener was not reused")
@@ -167,5 +176,51 @@ func TestSettingsInfoPageDoesNotRequireVPN(t *testing.T) {
 	}
 	if !state.InfoOnly || state.Settings.FNID != "" {
 		t.Fatal("offline page exposed a connection runtime")
+	}
+}
+
+func TestOfflineSettingsPageEditsSavedNASWithoutStartingAConnection(t *testing.T) {
+	store := configuredManagerStore(t)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	address, err := NewSavedSettingsPage(ctx, store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	u, _ := url.Parse(address)
+	call := func(path string, body string) *http.Response {
+		t.Helper()
+		method := "GET"
+		if body != "" {
+			method = "POST"
+		}
+		r, _ := http.NewRequest(method, "http://"+u.Host+settingsPath+path, strings.NewReader(body))
+		r.Header.Set("Authorization", "Bearer "+u.Query().Get("fncpn_proxy"))
+		response, err := http.DefaultClient.Do(r)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return response
+	}
+	response := call("/api/state", "")
+	var state struct {
+		InfoOnly bool         `json:"infoOnly"`
+		Settings LinkSettings `json:"settings"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&state); err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if !state.InfoOnly || state.Settings.FNID != "home-nas" {
+		t.Fatal(state)
+	}
+	response = call("/api/preferences", `{"fnId":"home-nas","links":[{"link":"fn-connect","enabled":false},{"link":"ipv6","enabled":true}]}`)
+	defer response.Body.Close()
+	if response.StatusCode != 200 {
+		t.Fatal("offline preference update rejected", response.StatusCode)
+	}
+	result, err := store.LinkSettings(t.Context())
+	if err != nil || result.Links[0].Link != "fn-connect" || result.Links[0].Enabled {
+		t.Fatal(result, err)
 	}
 }

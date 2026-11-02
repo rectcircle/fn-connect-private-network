@@ -4,7 +4,9 @@ import (
 	"context"
 	"io"
 	"net/http"
+	"net/netip"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -50,7 +52,7 @@ func TestUploadUsesSSEReceiverCountAndRequiresCompletion(t *testing.T) {
 		})
 	}
 }
-func TestSpeedTestPrecheckAndCancellationRestoreIntent(t *testing.T) {
+func TestSpeedTestDiscoveryAndCancellationRestoreIntent(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		manager, _, n, _, _ := coordinationFixture(t)
 		stop := runCoordinated(t, manager)
@@ -59,7 +61,7 @@ func TestSpeedTestPrecheckAndCancellationRestoreIntent(t *testing.T) {
 		if err := manager.RunSpeedTest(t.Context(), SpeedTestRequest{Link: "ipv6"}, func(s SpeedTestStatus) error { final = s; return nil }); err != nil {
 			t.Fatal(err)
 		}
-		if final.Active || len(final.Results) != 1 || final.Results[0].Error != "当前网络不支持 IPv6" || n.applies.Load() != 0 {
+		if final.Active || len(final.Results) != 1 || final.Results[0].Error != "NAS 未提供可用的公网 IPv6" || n.applies.Load() != 0 {
 			t.Fatal(final)
 		}
 		entered := make(chan struct{}, 1)
@@ -115,4 +117,30 @@ func TestUploadHeartbeatsDoNotBecomeZeroRateSamples(t *testing.T) {
 	if stage != "upload" || rate <= 0 {
 		t.Fatal("receiver increments failed to resume throughput", rate, stage)
 	}
+}
+
+func TestSpeedTestDoesNotRejectIPv6WhenInterfaceClassificationIsFalse(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		m, p, n, d, _ := coordinationFixture(t)
+		snapshot, _ := p.Snapshot()
+		snapshot.HasPublicIPv6 = false
+		p.snapshot.Store(&snapshot)
+		d.discover = func(context.Context) (Discovery, error) { return Discovery{IPv6: []string{"240e::1"}}, nil }
+		m.ipv6RouteChecker = func(context.Context, netip.Addr, int) bool { return true }
+		var entered atomic.Bool
+		n.apply = func(ctx context.Context, _ model.ClientPlan) (model.ClientPrivilegedStatus, error) {
+			if ctx.Value(forcedLinkKey{}) == "ipv6" {
+				entered.Store(true)
+			}
+			return model.ClientPrivilegedStatus{}, model.NewError(model.ErrorUnavailable, "test handshake reached", true)
+		}
+		stop := runCoordinated(t, m)
+		defer stop()
+		if err := m.RunSpeedTest(t.Context(), SpeedTestRequest{Link: "ipv6"}, func(SpeedTestStatus) error { return nil }); err != nil {
+			t.Fatal(err)
+		}
+		if !entered.Load() {
+			t.Fatal("IPv6 test bypassed ordinary destination route/handshake path")
+		}
+	})
 }

@@ -88,3 +88,7 @@ func (iosClient) SetRailMenu(labels []string, icons []fyne.Resource, handler fun
 func (iosClient) SetRailAdmin(enabled bool) { iosui.SetRailAdmin(enabled) }
 
 func (iosClient) SetRailExpanded(expanded bool) { iosui.SetRailExpanded(expanded) }
+
+func (iosClient) SavedSettingsPage(ctx context.Context) (string, error) {
+	return iosui.SavedSettingsPage(ctx)
+}

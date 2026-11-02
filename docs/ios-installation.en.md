@@ -136,3 +136,7 @@ to verify the tunnel, rather than only checking that the app launches.
 - Expired or revoked certificate: obtain replacement materials and re-sign; recompilation is unnecessary.
 
 See [development documentation](development.md#ios-开发环境准备) for builds, simulator use and releases.
+
+## App Group for offline link preferences
+
+Starting with 1.2.0, editing link priority and switches while the VPN is stopped requires the same App Group entitlement in both the main app and PacketTunnel extension: `group.<main app bundle ID>` (default `group.cn.rectcircle.fncpn`). Update and provision the group when changing the bundle ID. Only NAS identifiers and link preferences are shared; identity and credentials stay in their original provider storage. Without the group, existing connection functionality remains available, but offline preference editing is unavailable.

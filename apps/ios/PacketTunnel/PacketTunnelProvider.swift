@@ -112,6 +112,12 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
 
     fileprivate func systemCall(_ method: String, _ params: [String: Any]) throws -> Any {
         switch method {
+        case "settings.directory":
+            let identifier = (Bundle.main.bundleIdentifier ?? "cn.rectcircle.fncpn.PacketTunnel").replacingOccurrences(of: ".PacketTunnel", with: "")
+            guard let shared = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: "group." + identifier) else { throw PlatformError.unavailable }
+            let directory = shared.appendingPathComponent("LinkSettings", isDirectory: true)
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication])
+            return directory.path
         case "device.name":
             let name = UIDevice.current.name.trimmingCharacters(in: .whitespacesAndNewlines)
             if !name.isEmpty && name != "iPhone" && name != "iPad" && name != "iPod touch" { return name }

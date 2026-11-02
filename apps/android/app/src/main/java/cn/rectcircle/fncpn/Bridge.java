@@ -87,6 +87,7 @@ public final class Bridge {
             if (params == null) params = new JSONObject();
             Object result;
             if (method.equals("service.ensure")) { ensure(); result = JSONObject.NULL; }
+            else if(method.equals("settings.directory")) { if(application==null)throw new Exception("Open FnCPN first");result=application.getFilesDir().getAbsolutePath(); }
             else if(method.equals("settings.status")) {
                 Context context=application;if(context==null)throw new Exception("Open FnCPN first");
                 java.io.File config=new java.io.File(context.getFilesDir(),"client.json");boolean automatic=false;

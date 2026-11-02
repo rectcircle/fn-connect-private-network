@@ -335,3 +335,11 @@ func fncpnUIProfile(directory *C.char) {
 	path := C.GoString(directory)
 	go uiperf.Capture(path, 45*time.Second)
 }
+
+func SavedSettingsPage(ctx context.Context) (string, error) {
+	var directory string
+	if err := (system{}).Call("settings.directory", nil, &directory); err != nil {
+		return "", err
+	}
+	return client.NewSavedSettingsPage(ctx, client.NewConfigStore(filepath.Join(directory, "client.json"), nil))
+}
