@@ -31,7 +31,7 @@ $('choose-ipv6').onchange=selectionChanged;$('choose-relay').onchange=selectionC
 document.addEventListener('click',e=>{if(!e.target.closest('.select-wrap'))setChoices(false);});
 document.addEventListener('keydown',e=>{if(e.key==='Escape')setChoices(false);});
 function page(name,push=true){
- if(name!=='links'){controller?.abort();animatePacket('');}
+ if(name!=='links'){controller?.abort();animatePacket('');setChoices(false);$('confirm').close();}
  if(push)history.pushState({settingsPage:name},'',base+'#'+name);
  $('settings-menu').hidden=name!=='menu';$('general').hidden=name!=='general';$('links').hidden=name!=='links';
  $('settings-back').hidden=!mobile||name==='menu';
