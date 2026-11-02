@@ -1,0 +1,118 @@
+package client
+
+import (
+	"context"
+	"io"
+	"net/http"
+	"strings"
+	"testing"
+	"testing/synctest"
+	"time"
+
+	"github.com/rectcircle/fn-connect-private-network/internal/model"
+	"github.com/rectcircle/fn-connect-private-network/internal/version"
+)
+
+func TestUploadUsesSSEReceiverCountAndRequiresCompletion(t *testing.T) {
+	for _, tc := range []struct {
+		name, events string
+		wantError    bool
+	}{
+		{"complete", "event: progress\ndata: {\"receivedBytes\":262144,\"totalBytes\":524288,\"elapsedMs\":1000}\n\nevent: complete\ndata: {\"receivedBytes\":524288,\"totalBytes\":1048576,\"elapsedMs\":2000}\n\n", false},
+		{"idle-before-complete", "event: progress\ndata: {\"receivedBytes\":524288,\"totalBytes\":1048576,\"elapsedMs\":2000}\n\nevent: progress\ndata: {\"receivedBytes\":524288,\"totalBytes\":1048576,\"elapsedMs\":2000}\n\nevent: complete\ndata: {\"receivedBytes\":524288,\"totalBytes\":1048576,\"elapsedMs\":2000}\n\n", false},
+		{"interrupted", "event: progress\ndata: {\"receivedBytes\":262144,\"totalBytes\":524288,\"elapsedMs\":1000}\n\n", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				manager, p, n, _, _ := coordinationFixture(t)
+				now := time.Now()
+				n.status = model.ClientPrivilegedStatus{Active: true, Interface: "utun9", LastHandshake: &now}
+				manager.setStatus(model.ClientDirect, "ipv6", "utun9", nil)
+				measurement := &speedMeasurement{Manager: manager, status: SpeedTestStatus{Results: []SpeedTestResult{{Link: "ipv6"}}}, report: func(SpeedTestStatus) error { return nil }}
+				h := &speedHTTP{base: "http://nas", client: &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+					if _, err := io.CopyN(io.Discard, r.Body, 1048576); err != nil {
+						return nil, err
+					}
+					return &http.Response{StatusCode: 200, Header: http.Header{"X-Fncpn-Version": {version.Current}, "Content-Type": {"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(tc.events))}, nil
+				})}}
+				snap, _ := p.Snapshot()
+				err := measurement.measureUpload(t.Context(), h, model.SpeedTestPath, 0, snap.Fingerprint())
+				if (err != nil) != tc.wantError {
+					t.Fatal(err)
+				}
+				if !tc.wantError {
+					got := measurement.status.Results[0].UploadMbps
+					if got == nil || *got != 2.097152 || measurement.status.Mbps != *got || measurement.status.Stage != "upload-complete" {
+						t.Fatal("upload counted socket writes instead of NAS reads", got)
+					}
+				}
+			})
+		})
+	}
+}
+func TestSpeedTestPrecheckAndCancellationRestoreIntent(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		manager, _, n, _, _ := coordinationFixture(t)
+		stop := runCoordinated(t, manager)
+		defer stop()
+		var final SpeedTestStatus
+		if err := manager.RunSpeedTest(t.Context(), SpeedTestRequest{Link: "ipv6"}, func(s SpeedTestStatus) error { final = s; return nil }); err != nil {
+			t.Fatal(err)
+		}
+		if final.Active || len(final.Results) != 1 || final.Results[0].Error != "当前网络不支持 IPv6" || n.applies.Load() != 0 {
+			t.Fatal(final)
+		}
+		entered := make(chan struct{}, 1)
+		n.apply = func(ctx context.Context, _ model.ClientPlan) (model.ClientPrivilegedStatus, error) {
+			entered <- struct{}{}
+			<-ctx.Done()
+			return model.ClientPrivilegedStatus{}, ctx.Err()
+		}
+		finished := make(chan error, 1)
+		go func() {
+			finished <- manager.RunSpeedTest(t.Context(), SpeedTestRequest{Link: "fn-connect"}, func(SpeedTestStatus) error { return nil })
+		}()
+		synctest.Wait()
+		<-entered
+		disconnected := make(chan error, 1)
+		go func() { disconnected <- manager.Disconnect(t.Context()) }()
+		time.Sleep(200 * time.Millisecond)
+		synctest.Wait()
+		if err := <-finished; err != nil {
+			t.Fatal(err)
+		}
+		if err := <-disconnected; err != nil {
+			t.Fatal(err)
+		}
+		cfg, _ := manager.store.Load()
+		if cfg.AutoConnect {
+			t.Fatal("disconnect intent was resurrected")
+		}
+	})
+}
+
+func TestUploadHeartbeatsDoNotBecomeZeroRateSamples(t *testing.T) {
+	meter := uploadProgressMeter{}
+	started := time.Now()
+	rate, stage := meter.observe(model.SpeedTestStats{Bytes: 100000, TotalBytes: 200000, ElapsedMS: 1000}, started, false)
+	if rate != 0.8 || stage != "upload" {
+		t.Fatal(rate, stage)
+	}
+	// Repeated SSE frames (including an old server advancing only its timer) carry no new payload.
+	rate, stage = meter.observe(model.SpeedTestStats{Bytes: 100000, TotalBytes: 200000, ElapsedMS: 1250}, started.Add(250*time.Millisecond), false)
+	if rate != 0.8 || stage != "upload" {
+		t.Fatal("heartbeat erased the measured rate", rate, stage)
+	}
+	rate, stage = meter.observe(model.SpeedTestStats{Bytes: 100000, TotalBytes: 200000, ElapsedMS: 1250}, started.Add(1500*time.Millisecond), false)
+	if stage != "upload-waiting" {
+		t.Fatal("stalled transfer was displayed as normal throughput", rate, stage)
+	}
+	_, stage = meter.observe(model.SpeedTestStats{Bytes: 100000, TotalBytes: 200000, ElapsedMS: 1250}, started.Add(1750*time.Millisecond), true)
+	if stage != "upload-confirming" {
+		t.Fatal("sender completion did not enter acknowledgment wait", stage)
+	}
+	rate, stage = meter.observe(model.SpeedTestStats{Bytes: 200000, TotalBytes: 300000, ElapsedMS: 2000}, started.Add(2*time.Second), true)
+	if stage != "upload" || rate <= 0 {
+		t.Fatal("receiver increments failed to resume throughput", rate, stage)
+	}
+}

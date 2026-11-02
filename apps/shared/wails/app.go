@@ -114,7 +114,7 @@ func (a *App) startDaemon() error {
 	return a.startPlatformDaemon()
 }
 
-var allowedMethods = map[string]bool{"diagnose": true, "status": true, "connect": true, "disconnect": true, "retry": true, "continue-remote": true, "authorization-begin": true, "authorization-cancel": true, "authorize-native": true, "detect-access-code": true}
+var allowedMethods = map[string]bool{"settings-url": true, "diagnose": true, "status": true, "connect": true, "disconnect": true, "retry": true, "continue-remote": true, "authorization-begin": true, "authorization-cancel": true, "authorize-native": true, "detect-access-code": true}
 
 func (a *App) Call(method string, params map[string]any) Reply {
 	a.mu.Lock()
@@ -185,6 +185,22 @@ func (a *App) Info() map[string]any {
 func (a *App) SetAutoStart(enabled bool) string { return nativeSetAutoStart(enabled) }
 func (a *App) UpdateTray(state, title, action string, needsLogin, busy bool) {
 	nativeTray(state, title, action, needsLogin, busy)
+}
+func (a *App) OpenSettings() Reply {
+	var result map[string]any
+	if err := a.client.Call(a.ctx, "settings-url", nil, &result); err != nil {
+		return Reply{Error: model.PublicError(err)}
+	}
+	address, _ := result["url"].(string)
+	if err := validateAdminURL(address); err != nil {
+		return Reply{Error: model.NewError(model.ErrorProtocol, err.Error(), false)}
+	}
+	u, _ := url.Parse(address)
+	if u.Path != "/app/fncpn/settings" {
+		return Reply{Error: model.NewError(model.ErrorProtocol, "invalid settings URL", false)}
+	}
+	nativeAdmin(address)
+	return Reply{Result: map[string]any{}}
 }
 func (a *App) OpenAdmin() Reply {
 	var result map[string]any
@@ -287,6 +303,8 @@ func nativeAction(action string) {
 		a.showMainWindow()
 	case "quit":
 		a.Quit()
+	case "settings":
+		a.OpenSettings()
 	case "homepage":
 		runtime.BrowserOpenURL(a.ctx, "https://fncpn.rectcircle.cn/#donate")
 	default:

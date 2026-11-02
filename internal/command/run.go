@@ -58,6 +58,8 @@ func Run(ctx context.Context, arguments []string, environment Environment) int {
 	case "status", "connect", "disconnect", "retry",
 		"authorize", "logout", "forget", "diagnose":
 		err = runClientCommand(ctx, arguments, environment)
+	case "link":
+		err = runLinkCommand(ctx, arguments[1:], environment)
 	case "client":
 		err = runClientProcess(ctx, arguments[1:], environment)
 	case "server":
@@ -1083,6 +1085,10 @@ func printUsage(writer io.Writer) {
   fncpn logout
   fncpn forget --yes
   fncpn diagnose [--json]
+  fncpn link list|reset [--socket PATH] [--json]
+  fncpn link priority ipv6 fn-connect
+  fncpn link enable|disable ipv6|fn-connect
+  fncpn link speedtest [--link ipv6|fn-connect | --all] [--json]
   fncpn client daemon [--socket PATH] [--privileged-socket PATH] [--config PATH]
   fncpn client privileged-daemon [--socket PATH] [--state-dir PATH]
   fncpn server daemon --socket PATH --state-dir PATH [--privileged-socket PATH]

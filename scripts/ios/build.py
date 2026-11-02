@@ -32,11 +32,14 @@ def main():
         raise SystemExit('Go 1.27.1 is required; run the environment setup first')
     # Enable ARC only for our UIKit adapter; leave upstream C/Objective-C flags unchanged.
     tags='no_emoji,migrated_fynedo'+(',fncpn_ios_simulator' if args.sdk=='iphonesimulator' and args.component=='app' else '')
+    revision=subprocess.check_output(['git','rev-parse','HEAD'],cwd=ROOT,text=True).strip()
+    if subprocess.check_output(['git','status','--porcelain'],cwd=ROOT,text=True).strip(): revision+='-dirty'
+    trace_flags='-X github.com/rectcircle/fn-connect-private-network/internal/version.Revision='+revision
     command=['go','build','-trimpath','-tags',tags]
-    if args.component=='core':command+=['-buildmode=c-archive','-o',str(args.out/'FnCPNCore.a'),'./apps/ios/go']
+    if args.component=='core':command+=['-ldflags',trace_flags,'-buildmode=c-archive','-o',str(args.out/'FnCPNCore.a'),'./apps/ios/go']
     else:
         modfile=fyne_scene.prepare('go',ROOT/'apps/shared/fyne',args.out,env)
-        ldflags='-w'
+        ldflags='-w '+trace_flags
         if args.sdk=='iphonesimulator':
             # Simulator securityd reads the simulated iOS identity from this
             # section. Do not give restricted iOS entitlements to macOS AMFI.

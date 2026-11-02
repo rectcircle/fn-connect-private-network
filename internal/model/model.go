@@ -226,8 +226,9 @@ type NetworkChange struct {
 // probing and DNS. Key is used only by the identity probe; DNS uses Endpoints.
 // The historical JSON shape is retained for released v1 clients.
 type PrivateAPIConfiguration struct {
-	Endpoints []string `json:"endpoints"`
-	Key       string   `json:"key"`
+	Endpoints    []string `json:"endpoints"`
+	Key          string   `json:"key"`
+	SpeedTestKey string   `json:"speedTestKey,omitempty"`
 }
 
 type LocalProbeRequest struct {

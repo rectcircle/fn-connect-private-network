@@ -1,7 +1,7 @@
 import './style.css';
 import {fallbackSymbols} from './icons.js';
 import translations from './en.json';
-import {Ready,Call,Info,SetAutoStart,UpdateTray,OpenAdmin,OpenNAS,OpenLogs,Copy,Quit} from '../wailsjs/go/main/App';
+import {Ready,Call,Info,OpenSettings,SetAutoStart,UpdateTray,OpenAdmin,OpenNAS,OpenLogs,Copy,Quit} from '../wailsjs/go/main/App';
 import {EventsOn,WindowShow,WindowGetSize,WindowSetSize} from '../wailsjs/runtime/runtime';
 import {normalizeFNID,presentation,describeFailure,directReasons,factorMessages} from './presentation.js';
 
@@ -29,7 +29,7 @@ function render() {
  const title=status.localNetworkWaiting?L('正在等待局域网访问权限'):p.title;
  set('identity',[diagnostics.fnId,diagnostics.username].filter(Boolean).join(' · '));set('status',title);$('status').className=p.needsLogin?'attention':p.connected?'connected':'';
  set('primary',status.localNetworkWaiting?L('继续远程连接'):p.action);$('primary').querySelector('img').dataset.symbol=p.needsLogin?'person.badge.key':p.connected?'stop.fill':'bolt.fill';applyIcons();show('relogin',!p.needsLogin);show('retry',!p.needsLogin&&!!diagnostics.fnId&&!status.localNetworkWaiting);
- set('path',L({local:'局域网',ipv6:'IPv6 / UDP','fn-connect':'FN Connect / WSS'}[status.path]||'-'));
+ set('path',L({local:'局域网',ipv6:'IPv6 直连','fn-connect':'FN Connect 中继'}[status.path]||'-'));
  set('address',diagnostics.clientAddress||'-');set('interface',(diagnostics.networkInterface||'-')+(diagnostics.mtu?` · MTU ${diagnostics.mtu}`:''));set('handshake',diagnostics.handshakeAge||'-');
  const dns=status.dns||{};
  set('dns',L({ready:'就绪',preparing:'正在读取',degraded:'降级',inactive:'未连接'}[dns.state]||'未连接')+' · '+(dns.suffix||''));$('copy-dns').disabled=busy||!dns.suffix;
@@ -77,6 +77,7 @@ $('fnid').addEventListener('blur',async()=>{
  const generation=++probeGeneration,fnId=normalizeFNID(value('fnid'));if(!fnId||busy)return;
  try{const reply=await call('detect-access-code',{fnId});if(generation===probeGeneration&&normalizeFNID(value('fnid'))===fnId){accessRequired=reply.required===true;render();}}catch{/* Credential-free probe is optional; login reports actionable errors. */}
 });
+$('settings').onclick=()=>perform(async()=>{const reply=await OpenSettings();if(reply.error)throw reply.error;});
 $('primary').onclick=primary;$('retry').onclick=()=>perform(()=>call('retry'));
 $('change').onclick=()=>login(true);$('relogin').onclick=()=>login();
 $('back').onclick=()=>{challenge=false;$('otp').value='';$('trust').checked=false;set('login-error','');render();$('password').focus();};

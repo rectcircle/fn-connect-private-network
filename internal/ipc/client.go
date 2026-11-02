@@ -19,7 +19,19 @@ type Client struct {
 	VerifyServer func(net.Conn) error
 }
 
-func (c Client) Call(ctx context.Context, method string, params, result any) (callErr error) {
+func (c Client) Call(ctx context.Context, method string, params, result any) error {
+	return c.Stream(ctx, method, params, func(payload json.RawMessage) (bool, error) {
+		if result == nil || len(payload) == 0 {
+			return true, nil
+		}
+		if err := json.Unmarshal(payload, result); err != nil {
+			return true, model.NormalizeError(fmt.Errorf("decode IPC result: %w", err), model.ErrorProtocol, "daemon returned an invalid result", false)
+		}
+		return true, nil
+	})
+}
+
+func (c Client) Stream(ctx context.Context, method string, params any, receive func(json.RawMessage) (bool, error)) (callErr error) {
 	id, err := requestID()
 	defer func() {
 		if callErr != nil {
@@ -83,36 +95,33 @@ func (c Client) Call(ctx context.Context, method string, params, result any) (ca
 			true,
 		)
 	}
-	response, err := ReadResponse(connection)
-	if err != nil {
-		if ctx.Err() != nil {
-			err = ctx.Err()
+	for {
+		response, err := ReadResponse(connection)
+		if err != nil {
+			if ctx.Err() != nil {
+				err = ctx.Err()
+			}
+			return model.NormalizeError(
+				err,
+				model.ErrorProtocol,
+				"daemon returned an invalid response",
+				false,
+			)
 		}
-		return model.NormalizeError(
-			err,
-			model.ErrorProtocol,
-			"daemon returned an invalid response",
-			false,
-		)
+		if response.ID != request.ID && (response.ID != "" || response.OK) {
+			return model.WrapError(model.ErrorProtocol, "IPC response ID mismatch", false, errors.New("response does not match request"))
+		}
+		if !response.OK {
+			return response.Error
+		}
+		done, err := receive(response.Result)
+		if err != nil {
+			return err
+		}
+		if done {
+			return nil
+		}
 	}
-	if response.ID != request.ID && (response.ID != "" || response.OK) {
-		return model.WrapError(model.ErrorProtocol, "IPC response ID mismatch", false, errors.New("response does not match request"))
-	}
-	if !response.OK {
-		return response.Error
-	}
-	if result == nil || len(response.Result) == 0 {
-		return nil
-	}
-	if err := json.Unmarshal(response.Result, result); err != nil {
-		return model.NormalizeError(
-			fmt.Errorf("decode IPC result: %w", err),
-			model.ErrorProtocol,
-			"daemon returned an invalid result",
-			false,
-		)
-	}
-	return nil
 }
 
 func requestID() (string, error) {

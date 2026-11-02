@@ -55,6 +55,9 @@ type hostState struct {
 
 var state hostState
 var lifecycle sync.Mutex
+var settingsInfoOnce sync.Once
+var settingsInfoURL string
+var settingsInfoError error
 
 func start(directory string, applicationOnly bool) error {
 	lifecycle.Lock()
@@ -110,14 +113,16 @@ func start(directory string, applicationOnly bool) error {
 	}}
 	store := client.NewConfigStore(filepath.Join(directory, "client.json"), platform.Secrets{System: sys})
 	var dnsHTTP *http.Client
+	var speedDial func(context.Context, string, string) (net.Conn, error)
 	if applicationOnly {
+		speedDial = engine.DialPrivate
 		dnsHTTP = &http.Client{Transport: &http.Transport{DialContext: engine.DialPrivate}, Timeout: 3 * time.Second}
 	}
 	var deviceName string
 	if err := sys.Call("device.name", nil, &deviceName); err != nil || deviceName == "" {
 		deviceName = "HarmonyOS device"
 	}
-	manager, err := client.NewManager(client.ManagerOptions{DNSHTTPClient: dnsHTTP, Store: store, Logger: logger, Discoverer: client.DiscoveryClient{}, Remote: func(id string, cookies []client.Cookie, onCookies func([]client.Cookie) error) (client.RemoteService, error) {
+	manager, err := client.NewManager(client.ManagerOptions{SpeedTestDialContext: speedDial, DNSHTTPClient: dnsHTTP, Store: store, Logger: logger, Discoverer: client.DiscoveryClient{}, Remote: func(id string, cookies []client.Cookie, onCookies func([]client.Cookie) error) (client.RemoteService, error) {
 		endpoint, err := client.DefaultRemoteURL(id)
 		if err != nil {
 			return nil, err
@@ -275,6 +280,10 @@ func call(raw []byte) ([]byte, error) {
 	}
 	connection, err := net.DialTimeout("unix", filepath.Join(r.Directory, "control.sock"), time.Second)
 	if err != nil {
+		if r.Method == "settings-url" {
+			settingsInfoOnce.Do(func() { settingsInfoURL, settingsInfoError = client.NewSettingsInfoPage(context.Background()) })
+			return reply(map[string]string{"url": settingsInfoURL}, settingsInfoError), nil
+		}
 		if r.Method == "export-support" {
 			archive, e := exportSupport(r.Directory, []byte("{}"))
 			return reply(archive, e), nil

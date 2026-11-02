@@ -162,3 +162,25 @@ HarmonyOS 已接入发布资产汇总、公开与夸克镜像校验；构建工�
 系统验证覆盖 Wi-Fi/Ethernet 或蜂窝切换、睡眠/锁屏唤醒、NAS 重启、弱网、多网卡与其他 VPN，
 观察健康连接保留、恢复及手动暂停意图。macOS 还需检查首次权限弹窗、拒绝/延迟允许、
 设置变更及 unsigned/ad-hoc 覆盖安装后的系统身份变化。自动化预算不代表所有环境的实际耗时。
+
+### 1.2.0 链路设置与测速候选（2026-11-01）
+
+- 自动化覆盖 local 固定优先、远程排序/禁用、强制链路不回退、同 LAN 临时 NAS host route、IPv6 前置跳过、取消/断开意图保留。
+- 使用真实 HTTP/1 socket 和流式请求体验证：上传 EOF 前 SSE 进度可达、预热字节排除、收到 complete 才成功、断流立即重试、空闲确认不延长计量、接收心跳不清零实时速度，以及同 NAS 并发上传/延迟请求无占用锁。
+- `scripts/preview-macos-settings.py` 渲染实际 AppKit 页面，覆盖通用、空闲、延迟、上传、完成、长错误和深色模式；校验最小宽度下侧栏、文档及结果表不溢出。同时验证三窗口程序坞策略（含最小化）、持续展开多选及选项切换时控件位置稳定、取消确认不启动请求，以及上传等待状态。fixture 预览不访问已安装 daemon。
+- `FNCPN_TEST_HISTORY=1 go test ./internal/server -run TestReleasedClientsAcceptExtendedPrivateAPI -count=1`
+  编译原始 `v1.0.0`、`v1.0.9`、`v1.1.0`、`v1.1.8` 客户端验证 bootstrap 和扩展配置响应。
+  这是变更相关接口验证，不代替所有历史正式版本的完整发布验收。
+- 真实 NAS 的双链路吞吐、FN Connect 上的 SSE 连续反馈、业务中断与恢复、休眠恢复仍需安装候选实机验证；不能据本地自动化宣称完成发布验收。
+- 本轮本地检查通过：`go test ./...`、`go test -race ./...`、`go vet ./...`、资源同步检查、服务端网页 Node 测试及上述历史接口验证。已构建 macOS Apple Silicon 未签名 PKG、独立 App 和 fnOS x64/arm64 FPK；候选未发布，未替换已安装客户端或 NAS。
+
+
+### 1.2.0 其他客户端设置对齐（2026-11-01）
+
+- 共享本地页面覆盖桌面侧栏、手机页签、持久多选、确认取消不发起请求、优先级保存及结果表；
+  `node scripts/preview-shared-settings.mjs` 使用 Chrome 的真实桌面/390px 手机视口验证生产资源，fixture 不接触已安装服务。
+- 本地接口测试覆盖随机 loopback 引导、Host/Origin/凭据拒绝、越界配置、未启动 VPN 的通用页，以及流式进度和关闭页面取消请求。
+- 通过根 module 测试及 client/clienthost/IPC 竞态检查，共享 Fyne 的 `-tags ci` 测试及竞态检查、Wails Go/前端测试和构建；
+  已构建 Android arm64-v8a/x86_64 本地验证包、HarmonyOS 未签名设备 HAP 及 iOS 模拟器 App，iOS 真机目标未签名编译通过。
+- Windows 原生及 Linux GTK/WebKit 容器仍需在对应系统编译并验收；移动设备的真实 NAS 双链路、
+  SSE 连续反馈、前后台切换及关闭页面恢复行为仍需实机验证。上述结果不等同于完整发布验收。

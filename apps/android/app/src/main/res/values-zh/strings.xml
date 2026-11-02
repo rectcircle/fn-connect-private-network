@@ -20,4 +20,5 @@
     <string name="admin_failed">管理后台加载失败，请重试。</string>
     <string name="retry">重试</string>
     <string name="browser_missing">未找到可用浏览器。</string>
+    <string name="opening_settings">正在打开设置…</string>
 </resources>

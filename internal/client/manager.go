@@ -152,17 +152,19 @@ func (s NetworkSnapshot) Fingerprint() string {
 type ManagerOptions struct {
 	// DNSHTTPClient optionally supplies the private-network transport for DNS and
 	// tunnel health probes. Neither uses its cookie jar.
-	DNSHTTPClient    *http.Client
-	Store            *ConfigStore
-	Discoverer       Discoverer
-	Remote           RemoteFactory
-	Privileged       PrivilegedNetwork
-	Bridge           Bridge
-	Probe            LocalProbe
-	Monitor          NetworkMonitor
-	Authenticator    NativeAuthenticator
-	WebAuthenticator AdminWebAuthenticator
-	AdminWebProbe    func(context.Context, string, []Cookie) error
+	DNSHTTPClient *http.Client
+	// SpeedTestDialContext enters a platform-owned userspace tunnel when required.
+	SpeedTestDialContext func(context.Context, string, string) (net.Conn, error)
+	Store                *ConfigStore
+	Discoverer           Discoverer
+	Remote               RemoteFactory
+	Privileged           PrivilegedNetwork
+	Bridge               Bridge
+	Probe                LocalProbe
+	Monitor              NetworkMonitor
+	Authenticator        NativeAuthenticator
+	WebAuthenticator     AdminWebAuthenticator
+	AdminWebProbe        func(context.Context, string, []Cookie) error
 	// AccessCodeVerify exchanges a user-supplied gateway access code for its
 	// session cookie. When nil, the FN Connect gateway endpoint is used.
 	AccessCodeVerify func(context.Context, string, string) (Cookie, error)
@@ -175,28 +177,30 @@ type ManagerOptions struct {
 }
 
 type Manager struct {
-	control          *nasControlRouter
-	dnsHTTPClient    *http.Client
-	dns              clientDNS
-	mu               sync.RWMutex
-	operation        sync.Mutex
-	store            *ConfigStore
-	discoverer       Discoverer
-	remote           RemoteFactory
-	privileged       PrivilegedNetwork
-	bridge           Bridge
-	probe            LocalProbe
-	monitor          NetworkMonitor
-	authenticator    NativeAuthenticator
-	webAuthenticator AdminWebAuthenticator
-	adminWebProbe    func(context.Context, string, []Cookie) error
-	accessCodeVerify func(context.Context, string, string) (Cookie, error)
-	deviceName       string
-	logger           *slog.Logger
-	handshakeTimeout time.Duration
-	directRetryAfter time.Time
-	direct           model.DirectDiagnostics
-	privateAPIConfig *model.PrivateAPIConfiguration
+	linkRetryAfter       time.Time
+	control              *nasControlRouter
+	dnsHTTPClient        *http.Client
+	speedTestDialContext func(context.Context, string, string) (net.Conn, error)
+	dns                  clientDNS
+	mu                   sync.RWMutex
+	operation            sync.Mutex
+	store                *ConfigStore
+	discoverer           Discoverer
+	remote               RemoteFactory
+	privileged           PrivilegedNetwork
+	bridge               Bridge
+	probe                LocalProbe
+	monitor              NetworkMonitor
+	authenticator        NativeAuthenticator
+	webAuthenticator     AdminWebAuthenticator
+	adminWebProbe        func(context.Context, string, []Cookie) error
+	accessCodeVerify     func(context.Context, string, string) (Cookie, error)
+	deviceName           string
+	logger               *slog.Logger
+	handshakeTimeout     time.Duration
+	directRetryAfter     time.Time
+	direct               model.DirectDiagnostics
+	privateAPIConfig     *model.PrivateAPIConfiguration
 	// nasAddress is the NAS's LAN IPv4 extracted from the private API endpoints.
 	// It is retained even when the LAN probe itself fails: once the VPN tunnel
 	// is up this address is reachable, so it is shown on the client's details
@@ -221,6 +225,8 @@ type Manager struct {
 	adminActivityNext       time.Time
 	adminActivityGeneration uint64
 	adminProxy              *AdminProxy
+	settingsUI              *settingsUI
+	settingsClosed          bool
 	coordinatorMu           sync.Mutex
 	coordinator             *connectionCoordinator
 	// The following connection evidence is owned by operation.
@@ -308,10 +314,11 @@ func NewManager(options ManagerOptions) (*Manager, error) {
 		ipv6RouteChecker = hasIPv6RouteTo
 	}
 	return &Manager{
-		dnsHTTPClient: options.DNSHTTPClient,
-		store:         options.Store,
-		control:       control,
-		discoverer:    controlDiscoverer{Discoverer: options.Discoverer, router: control},
+		dnsHTTPClient:        options.DNSHTTPClient,
+		speedTestDialContext: options.SpeedTestDialContext,
+		store:                options.Store,
+		control:              control,
+		discoverer:           controlDiscoverer{Discoverer: options.Discoverer, router: control},
 		remote: func(fnID string, cookies []Cookie, onCookies func([]Cookie) error) (RemoteService, error) {
 			remote, err := options.Remote(fnID, cookies, onCookies)
 			if client, ok := remote.(*RemoteClient); err == nil && ok {
@@ -915,6 +922,7 @@ func (m *Manager) ClosePaused(ctx context.Context) error {
 }
 
 func (m *Manager) close(ctx context.Context, pause bool) error {
+	m.closeSettingsUI()
 	if m.control != nil {
 		m.control.deactivate()
 	}
@@ -1663,7 +1671,17 @@ func (m *Manager) maintainHealth(ctx context.Context) {
 		}
 	}
 
-	if status.State == model.ClientRelay &&
+	links, settingsErr := m.store.loadLinks(config.FNID)
+	if settingsErr != nil {
+		m.recordMaintenanceError("link_settings", settingsErr)
+		return
+	}
+	if status.State == model.ClientDirect && links[0].Link == "fn-connect" && links[0].Enabled && time.Now().After(m.linkRetryAfter) {
+		m.linkRetryAfter = time.Now().Add(5 * time.Minute)
+		_ = m.reconnect(ctx, *config)
+		return
+	}
+	if status.State == model.ClientRelay && linkEnabled(links, "ipv6") && (links[0].Link == "ipv6" || !links[0].Enabled) &&
 		!m.directRetryAfter.IsZero() &&
 		time.Now().After(m.directRetryAfter) {
 		// Address discovery alone must not tear down a working relay.
@@ -2083,6 +2101,17 @@ func (m *Manager) connectWithOptionalConfiguration(
 		return m.fail(selection.err)
 	}
 	local := selection.reachable
+	forced, _ := ctx.Value(forcedLinkKey{}).(string)
+	if forced != "" {
+		local = false
+	}
+	links, settingsErr := m.store.loadLinks(config.FNID)
+	if settingsErr != nil {
+		return m.fail(settingsErr)
+	}
+	if forced != "" {
+		links = []LinkPreference{{forced, true}}
+	}
 	if !local {
 		checkErr := checkRemoteVersion(ctx, remote)
 		if checkErr != nil && model.AsError(checkErr).Code == model.ErrorAuthRequired {
@@ -2214,6 +2243,12 @@ func (m *Manager) connectWithOptionalConfiguration(
 		logger.Info("client connected", "state", model.ClientLocal, "path", "local", "elapsed_ms", time.Since(connectionStarted).Milliseconds())
 		return nil
 	}
+	if !linkEnabled(links, "ipv6") && !linkEnabled(links, "fn-connect") {
+		if err := m.replaceNetwork(ctx); err != nil {
+			return m.fail(err)
+		}
+		return m.fail(model.NewError(model.ErrorUnavailable, "only local connections are enabled; NAS is not reachable on LAN", true))
+	}
 	logger.Info("FN Connect discovery started")
 	evidence := <-discoveryResults
 	discovery, err := evidence.value, evidence.err
@@ -2240,7 +2275,7 @@ func (m *Manager) connectWithOptionalConfiguration(
 		// Only probe IPv6 when the current device actually has an IPv6 uplink,
 		// otherwise fall straight through to relay instead of failing a handshake.
 		direct.Reason = "no_local_ipv6"
-	case time.Now().Before(m.directRetryAfter):
+	case forced == "" && time.Now().Before(m.directRetryAfter):
 		direct.Reason = "cooldown"
 		retryAfter := m.directRetryAfter
 		direct.RetryAfter = &retryAfter
@@ -2254,11 +2289,47 @@ func (m *Manager) connectWithOptionalConfiguration(
 		config.Configuration,
 		networkSnapshot.Prefixes,
 	)
+	if forced != "" && m.privateAPIConfig != nil {
+		// A temporary NAS host route makes on-LAN tests use the requested remote tunnel too.
+		for _, endpoint := range m.privateAPIConfig.Endpoints {
+			host, _, err := net.SplitHostPort(endpoint)
+			if err != nil {
+				continue
+			}
+			address, err := netip.ParseAddr(host)
+			if err != nil || !address.Is4() || !address.IsPrivate() {
+				continue
+			}
+			// Only destinations already authorized by the NAS configuration may be routed.
+			for _, value := range config.Configuration.AllowedIPs {
+				prefix, err := netip.ParsePrefix(value)
+				if err == nil && prefix.Contains(address) {
+					allowedIPs = appendUnique(allowedIPs, netip.PrefixFrom(address, 32).String())
+					break
+				}
+			}
+		}
+	}
 	logger.Info("client routes selected", "route_count", len(allowedIPs),
 		"lan_overlap", configurationHasLANOverlap(config.Configuration, networkSnapshot.Prefixes))
 	privateKey, err := m.store.EnsureWireGuardKey(config.FNID)
 	if err != nil {
 		return m.fail(err)
+	}
+	relayAttempted := false
+	if len(links) > 0 && links[0].Link == "fn-connect" && links[0].Enabled {
+		relayAttempted = true
+		m.linkRetryAfter = time.Now().Add(5 * time.Minute)
+		relayErr := m.establishRelay(ctx, config, discovery, networkSnapshot, privateKey.String(), allowedIPs)
+		if relayErr == nil || ctx.Err() != nil || isAdmissionFailure(relayErr) {
+			return relayErr
+		}
+		if forced != "" {
+			return relayErr
+		}
+	}
+	if !linkEnabled(links, "ipv6") {
+		direct.Reason = "disabled"
 	}
 	if direct.Reason == "probing" {
 		// Bound the complete direct phase so many stale addresses cannot starve relay.
@@ -2357,13 +2428,25 @@ func (m *Manager) connectWithOptionalConfiguration(
 	logger.Info("direct path unavailable", "reason", direct.Reason, "attempts", direct.AttemptCount,
 		"endpoint", direct.Endpoint, "retry_after", direct.RetryAfter)
 
+	if !linkEnabled(links, "fn-connect") || relayAttempted {
+		if forced == "ipv6" {
+			return m.fail(model.NewError(model.ErrorUnavailable, directFailureMessage(direct.Reason), true))
+		}
+		return m.fail(model.NewError(model.ErrorUnavailable, "没有可用的已启用远程链路", true))
+	}
+	return m.establishRelay(ctx, config, discovery, networkSnapshot, privateKey.String(), allowedIPs)
+}
+
+func (m *Manager) establishRelay(ctx context.Context, config LocalConfig, discovery Discovery, networkSnapshot NetworkSnapshot, privateKey string, allowedIPs []string) error {
+	connectionStarted := time.Now()
+	logger := logging.FromContext(ctx, m.logger).With("fn_id", config.FNID, "device_id", config.DeviceID)
 	relayURL, err := relayURLFromDiscovery(config.FNID, discovery)
 	if err != nil {
 		return m.fail(err)
 	}
 	// A same-plan manual check must preserve a healthy relay bridge and tunnel.
 	if m.lastPlan != nil && m.lastPlan.Mode == "relay" {
-		plan := clientPlan(config.Configuration, privateKey.String(), "relay", m.lastPlan.Endpoint, allowedIPs, 1280)
+		plan := clientPlan(config.Configuration, privateKey, "relay", m.lastPlan.Endpoint, allowedIPs, 1280)
 		if m.keepCurrentPlan(ctx, plan, networkSnapshot) {
 			m.publishControlRoute(config, networkSnapshot)
 			return nil
@@ -2390,7 +2473,7 @@ func (m *Manager) connectWithOptionalConfiguration(
 	}
 	plan := clientPlan(
 		config.Configuration,
-		privateKey.String(),
+		privateKey,
 		"relay",
 		endpoint,
 		allowedIPs,
@@ -3292,4 +3375,21 @@ func checkRemoteVersion(ctx context.Context, remote RemoteService) error {
 		return err
 	}
 	return version.Check(version.Current, bootstrap.ServerVersion)
+}
+
+func directFailureMessage(reason string) string {
+	switch reason {
+	case "no_local_ipv6":
+		return "本机没有到 NAS 的可用 IPv6 路由"
+	case "no_server_ipv6":
+		return "NAS 未提供可用的公网 IPv6"
+	case "server_disabled":
+		return "NAS 已禁用公网 IPv6 访问"
+	case "discovery_failed":
+		return "无法获取 NAS 的 IPv6 链路信息"
+	case "handshake_failed":
+		return "IPv6 直连握手失败，请检查 NAS 的 IPv6 可达性"
+	default:
+		return "IPv6 直连未能建立，请检查网络后重试"
+	}
 }

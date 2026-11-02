@@ -14,6 +14,9 @@ import (
 )
 
 const (
+	MethodLinkSettings        = "link-settings"
+	MethodSettingsURL         = "settings-url"
+	MethodSetLinkSettings     = "set-link-settings"
 	MethodStatus              = "status"
 	MethodWatchStatus         = "watch-client-status"
 	MethodConnect             = "connect"
@@ -148,6 +151,43 @@ func (s *Service) Handle(
 	}
 	var err error
 	switch request.Method {
+	case MethodSettingsURL:
+		runtime, ok := s.runtime.(interface {
+			SettingsURL(context.Context) (string, error)
+		})
+		if !ok {
+			return ipc.Failure(request.ID, model.NewError(model.ErrorUnavailable, "settings unavailable", false))
+		}
+		address, err := runtime.SettingsURL(ctx)
+		if err != nil {
+			return ipc.Failure(request.ID, err)
+		}
+		return ipc.Success(request.ID, map[string]string{"url": address})
+	case MethodLinkSettings, MethodSetLinkSettings:
+		runtime, ok := s.runtime.(interface {
+			LinkSettings(context.Context) (LinkSettings, error)
+			SetLinkSettings(context.Context, LinkSettings) (LinkSettings, error)
+		})
+		if !ok {
+			return ipc.Failure(request.ID, model.NewError(model.ErrorUnavailable, "link settings are unavailable", false))
+		}
+		if request.Method == MethodLinkSettings {
+			result, err := runtime.LinkSettings(ctx)
+			if err != nil {
+				return ipc.Failure(request.ID, err)
+			}
+			return ipc.Success(request.ID, result)
+		}
+		input, err := ipc.DecodeParams[LinkSettings](request)
+		if err != nil {
+			return ipc.Failure(request.ID, err)
+		}
+		result, err := runtime.SetLinkSettings(ctx, input)
+		if err != nil {
+			return ipc.Failure(request.ID, err)
+		}
+		return ipc.Success(request.ID, result)
+
 	case MethodStatus:
 		return ipc.Success(request.ID, s.runtime.Status())
 	case MethodWatchStatus:
@@ -713,4 +753,31 @@ func (s *Service) PrepareMaintenanceShutdown() (func(), error) {
 		return nil, model.NewError(model.ErrorFailedPrecondition, "client daemon cannot be stopped", false)
 	}
 	return shutdown, nil
+}
+
+const MethodSpeedTest = "speedtest"
+
+func (s *Service) HandleStream(ctx context.Context, request ipc.Request, emit func(ipc.Response) error) bool {
+	if request.Method != MethodSpeedTest {
+		return false
+	}
+	if peer, ok := ipc.PeerIdentityFromContext(ctx); ok && peer.SID == "S-1-5-18" {
+		_ = emit(ipc.Failure(request.ID, model.NewError(model.ErrorPermissionDenied, "LocalSystem may only stop the daemon", false)))
+		return true
+	}
+	runtime, ok := s.runtime.(interface {
+		RunSpeedTest(context.Context, SpeedTestRequest, func(SpeedTestStatus) error) error
+	})
+	if !ok {
+		_ = emit(ipc.Failure(request.ID, model.NewError(model.ErrorUnavailable, "speed test unavailable", false)))
+		return true
+	}
+	input, err := ipc.DecodeParams[SpeedTestRequest](request)
+	if err == nil {
+		err = runtime.RunSpeedTest(ctx, input, func(status SpeedTestStatus) error { return emit(ipc.Success(request.ID, status)) })
+	}
+	if err != nil {
+		_ = emit(ipc.Failure(request.ID, err))
+	}
+	return true
 }

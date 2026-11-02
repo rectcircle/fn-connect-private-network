@@ -41,7 +41,9 @@ def main():
     for name in privacy_assets:
         shutil.copyfile(privacy_source/name,privacy_target/name)
     target=dict(env,GOOS='openharmony',GOARCH='arm64',CGO_ENABLED='1',CC=str(cc),GOTOOLCHAIN='local')
-    subprocess.run([go,'build','-buildmode=c-shared','-o',libs/'libfncpn.so','./apps/harmonyos/go'],cwd=ROOT,env=target,check=True)
+    revision=subprocess.check_output(['git','rev-parse','HEAD'],cwd=ROOT,text=True).strip()
+    if subprocess.check_output(['git','status','--porcelain'],cwd=ROOT,text=True).strip(): revision+='-dirty'
+    subprocess.run([go,'build','-ldflags','-X github.com/rectcircle/fn-connect-private-network/internal/version.Revision='+revision,'-buildmode=c-shared','-o',libs/'libfncpn.so','./apps/harmonyos/go'],cwd=ROOT,env=target,check=True)
     version=(ROOT/'internal/version/VERSION').read_text().strip()
     info=app/'AppScope/app.json5';data=json.loads(info.read_text());data['app']['versionName']=version;data['app']['versionCode']=int((app/'BUILD_NUMBER').read_text().strip());info.write_text(json.dumps(data,indent=2)+'\n')
     for qualifier in ['base', 'en_US']:

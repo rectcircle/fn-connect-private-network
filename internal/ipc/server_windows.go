@@ -197,6 +197,9 @@ func (s Server) handleConnection(parent context.Context, connection net.Conn, id
 	ctx = logging.WithLogger(ctx, logger.With(
 		"ipc_request_id", model.SafeRequestID(request.ID), "ipc_method", request.Method,
 	))
+	if stream, ok := s.Handler.(StreamHandler); ok && stream.HandleStream(ctx, request, func(response Response) error { return WriteResponse(connection, response) }) {
+		return
+	}
 	response := s.Handler.Handle(ctx, request)
 	if response.ProductVersion == "" {
 		response.ProductVersion = version.Current

@@ -29,7 +29,7 @@ public final class AdminActivity extends Activity {
         frame=new FrameLayout(this);
         loading=new LinearLayout(this);loading.setOrientation(LinearLayout.VERTICAL);loading.setGravity(android.view.Gravity.CENTER);loading.setBackgroundColor(AppChrome.background(this));
         progress=new ProgressBar(this);loading.addView(progress);
-        message=new TextView(this);message.setTextColor(AppChrome.primary(this));message.setText(R.string.opening_admin);loading.addView(message);
+        message=new TextView(this);message.setTextColor(AppChrome.primary(this));message.setText(isSettings()?R.string.opening_settings:R.string.opening_admin);loading.addView(message);
         retry=new Button(this);retry.setText(R.string.retry);retry.setVisibility(View.GONE);retry.setOnClickListener(v->{showLoading();web.loadUrl(entry);});loading.addView(retry);
         frame.addView(loading,new FrameLayout.LayoutParams(-1,-1));AppChrome.install(this,frame);
         // Draw the shell before loading Chromium or clearing its data.
@@ -74,9 +74,10 @@ public final class AdminActivity extends Activity {
             SupportLog.event(this,"admin_open",null);
         } catch(RuntimeException error){SupportLog.event(this,"admin_open_failed",error);showFailure();retry.setOnClickListener(v->{if(web!=null){frame.removeView(web);web.destroy();web=null;}showLoading();frame.post(this::initializeWeb);});}
     }
+    private boolean isSettings(){return origin!=null && "/app/fncpn/settings".equals(origin.getPath());}
     private boolean failed;
     private int loadGeneration;
-    private void showLoading(){failed=false;int generation=++loadGeneration;loading.setVisibility(View.VISIBLE);progress.setVisibility(View.VISIBLE);message.setText(R.string.opening_admin);retry.setVisibility(View.GONE);loading.postDelayed(()->{if(!closed && generation==loadGeneration && loading.getVisibility()==View.VISIBLE){if(web!=null)web.stopLoading();showFailure();}},30000);}
+    private void showLoading(){failed=false;int generation=++loadGeneration;loading.setVisibility(View.VISIBLE);progress.setVisibility(View.VISIBLE);message.setText(isSettings()?R.string.opening_settings:R.string.opening_admin);retry.setVisibility(View.GONE);loading.postDelayed(()->{if(!closed && generation==loadGeneration && loading.getVisibility()==View.VISIBLE){if(web!=null)web.stopLoading();showFailure();}},30000);}
     private void showFailure(){failed=true;loadGeneration++;loading.setVisibility(View.VISIBLE);progress.setVisibility(View.GONE);message.setText(R.string.admin_failed);retry.setVisibility(View.VISIBLE);}
     private boolean navigate(Uri target,boolean gesture,boolean popup){
         if(sameOrigin(target)){if(popup && web!=null)web.loadUrl(target.toString());return popup;}

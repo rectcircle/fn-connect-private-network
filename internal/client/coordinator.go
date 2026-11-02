@@ -55,6 +55,7 @@ type connectionCoordinator struct {
 	activeEpoch   uint64
 	cancel        context.CancelFunc
 	epoch         uint64
+	epochDone     chan struct{}
 	suspended     bool
 	stopped       bool
 	relayError    error
@@ -113,6 +114,9 @@ func (c *connectionCoordinator) manual(ctx context.Context) error {
 		c.mu.Unlock()
 		return context.Canceled
 	}
+	if c.suspended {
+		c.invalidateLocked()
+	}
 	c.suspended = false
 	joinable := c.active&workManual != 0 || canJoinAutomatic &&
 		(c.active&workReconcile != 0 || c.active&workStartup != 0 && status.State == model.ClientProbing)
@@ -144,7 +148,7 @@ func notifyConnectionWaiters(waiters []chan error, err error) {
 func (m *Manager) suspendConnections() {
 	if c := m.connectionCoordinator(); c != nil {
 		c.mu.Lock()
-		c.epoch++
+		c.invalidateLocked()
 		c.suspended = true
 		c.pending = 0
 		c.authRecovery.finish(context.Canceled)
@@ -173,7 +177,7 @@ func (c *connectionCoordinator) networkChanged() {
 	if c.stopped || c.suspended {
 		return
 	}
-	c.epoch++
+	c.invalidateLocked()
 	if c.cancel != nil {
 		c.cancel()
 	}
@@ -270,6 +274,7 @@ func (m *Manager) runCoordinator(ctx context.Context) {
 	defer func() {
 		c.mu.Lock()
 		c.stopped = true
+		c.invalidateLocked()
 		c.authRecovery.finish(context.Canceled)
 		if c.cancel != nil {
 			c.cancel()
@@ -380,8 +385,8 @@ func (m *Manager) runCoordinator(ctx context.Context) {
 				continue
 			}
 			c.pending = 0
-			c.active = work
 			c.activeWaiters, c.waiters = c.waiters, nil
+			c.active = work
 			epoch := c.epoch
 			attempt++
 			budget := connectionAttemptTimeout
@@ -486,6 +491,7 @@ func (m *Manager) runConnectionWork(ctx context.Context, work connectionWork, re
 	defer func() {
 		logger.Info("connection evaluation finished", "elapsed_ms", time.Since(started).Milliseconds(), "state", m.Status().State)
 	}()
+
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
@@ -595,4 +601,13 @@ func (m *Manager) commitConnection(ctx context.Context, publish func()) error {
 // enables AutoConnect and is ignored by a suspended coordinator.
 func (m *Manager) RecheckNetwork() {
 	m.scheduleConnection(workHealth)
+}
+
+// invalidateLocked broadcasts connection-intent invalidation without a task registry.
+func (c *connectionCoordinator) invalidateLocked() {
+	c.epoch++
+	if c.epochDone != nil {
+		close(c.epochDone)
+	}
+	c.epochDone = make(chan struct{})
 }

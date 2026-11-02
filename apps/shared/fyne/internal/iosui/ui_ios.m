@@ -392,8 +392,9 @@ void fncpn_ui_share_file(const char *path) {
 @implementation FnCPNBrowser
 - (void)viewDidLoad {
     [super viewDidLoad];self.view.backgroundColor=UIColor.systemBackgroundColor;
+    if([self.url.path isEqualToString:@"/app/fncpn/settings"])self.navigationItem.title=uiText("设置");
     self.spinner=[[UIActivityIndicatorView alloc] initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleMedium];
-    self.message=[UILabel new];self.message.text=uiText("正在打开管理后台…");self.message.numberOfLines=0;self.message.textAlignment=NSTextAlignmentCenter;
+    self.message=[UILabel new];self.message.text=uiText([self.url.path isEqualToString:@"/app/fncpn/settings"] ? "正在打开设置…" : "正在打开管理后台…");self.message.numberOfLines=0;self.message.textAlignment=NSTextAlignmentCenter;
     self.retry=[UIButton buttonWithType:UIButtonTypeSystem];[self.retry setTitle:uiText("重试") forState:UIControlStateNormal];[self.retry addTarget:self action:@selector(reload) forControlEvents:UIControlEventTouchUpInside];self.retry.hidden=YES;
     self.loading=[[UIStackView alloc] initWithArrangedSubviews:@[self.spinner,self.message,self.retry]];self.loading.axis=UILayoutConstraintAxisVertical;self.loading.alignment=UIStackViewAlignmentCenter;self.loading.spacing=12;self.loading.translatesAutoresizingMaskIntoConstraints=NO;
     [self.view addSubview:self.loading];[NSLayoutConstraint activateConstraints:@[[self.loading.centerXAnchor constraintEqualToAnchor:self.view.centerXAnchor],[self.loading.centerYAnchor constraintEqualToAnchor:self.view.centerYAnchor],[self.loading.widthAnchor constraintLessThanOrEqualToAnchor:self.view.widthAnchor multiplier:0.85]]];[self.spinner startAnimating];
@@ -409,7 +410,7 @@ void fncpn_ui_share_file(const char *path) {
     });
 }
 - (void)showLoading {
-    self.failed=NO;self.loading.hidden=NO;self.web.hidden=YES;self.message.text=uiText("正在打开管理后台…");self.retry.hidden=YES;[self.spinner startAnimating];
+    self.failed=NO;self.loading.hidden=NO;self.web.hidden=YES;self.message.text=uiText([self.url.path isEqualToString:@"/app/fncpn/settings"] ? "正在打开设置…" : "正在打开管理后台…");self.retry.hidden=YES;[self.spinner startAnimating];
     NSInteger generation=++self.loadGeneration;__weak FnCPNBrowser *weakSelf=self;
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW,30*NSEC_PER_SEC),dispatch_get_main_queue(), ^{FnCPNBrowser *owner=weakSelf;if(owner && generation==owner.loadGeneration && !owner.loading.hidden){[owner.web stopLoading];[owner showFailure];}});
 }
@@ -442,7 +443,15 @@ void fncpn_ui_share_file(const char *path) {
 - (void)webView:(WKWebView *)web didFailNavigation:(WKNavigation *)navigation withError:(NSError *)error {if(error.code!=NSURLErrorCancelled)[self showFailure];}
 - (void)webViewWebContentProcessDidTerminate:(WKWebView *)web {[self showFailure];}
 - (WKWebView *)webView:(WKWebView *)web createWebViewWithConfiguration:(WKWebViewConfiguration *)configuration forNavigationAction:(WKNavigationAction *)action windowFeatures:(WKWindowFeatures *)features {if([self allowsURL:action.request.URL])[web loadRequest:action.request];else if([self externalURL:action.request.URL])[UIApplication.sharedApplication openURL:action.request.URL options:@{} completionHandler:nil];return nil;}
-- (void)close {self.loadGeneration++;[self.web stopLoading];[self dismissViewControllerAnimated:YES completion:nil];}
+- (void)releaseWeb {
+ self.loadGeneration++;[self.web stopLoading];self.web.navigationDelegate=nil;self.web.UIDelegate=nil;
+ [self.web loadHTMLString:@"" baseURL:nil];[self.web removeFromSuperview];self.web=nil;
+}
+- (void)viewWillDisappear:(BOOL)animated {
+ [super viewWillDisappear:animated];
+ if(self.isBeingDismissed || self.navigationController.isBeingDismissed)[self releaseWeb];
+}
+- (void)close {[self releaseWeb];[self dismissViewControllerAnimated:YES completion:nil];}
 @end
 int fncpn_ui_simulator(void) { return TARGET_OS_SIMULATOR; }
 void fncpn_ui_open(const char *input,int embedded) {

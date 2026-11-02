@@ -157,6 +157,11 @@ func (s *ConfigStore) Clear() (failure error) {
 			failure = model.WithOperation(failure, "configuration.clear")
 		}
 	}()
+	for _, sidecar := range []string{s.path + ".links", s.path + ".speedtests"} {
+		if err := os.Remove(sidecar); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+	}
 	if err := os.Remove(s.path); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("remove client config: %w", err)
 	}
@@ -495,6 +500,7 @@ func (s *ConfigStore) SavePrivateAPIConfig(fnID string, cfg model.PrivateAPIConf
 	if err != nil {
 		return err
 	}
+	cfg.SpeedTestKey = "" // Test credentials are fetched for each task, never persisted in the probe cache.
 	data, err := json.Marshal(persistedPrivateAPI{Configuration: cfg, CheckedAt: time.Now().UTC()})
 	if err != nil {
 		return fmt.Errorf("encode private API configuration: %w", err)

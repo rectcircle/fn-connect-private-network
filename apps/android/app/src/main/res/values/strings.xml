@@ -20,4 +20,5 @@
     <string name="admin_failed">Administration failed to load. Please retry.</string>
     <string name="retry">Retry</string>
     <string name="browser_missing">No browser is available.</string>
+    <string name="opening_settings">Opening settings…</string>
 </resources>

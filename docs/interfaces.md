@@ -257,3 +257,74 @@ server state schema 1 → 2，client config schema 2 → 3；本地 IPC 版本�
 读取旧正式 schema 并验证后，先保留 `state.schema-1.backup.json` / `config.json.schema-2.backup`，
 再以原子写入提交新 schema。保留设备、网络、身份凭据和 autoConnect；DNS 设置缺省自动生效。
 旧程序拒绝新 schema；回滚需恢复旧程序及对应备份，不自动清空或重新授权。
+
+## 链路设置与测速（1.2.0）
+
+macOS 原生 App 与 CLI 共用 daemon 的链路策略。local 固定第一且始终启用；远程链路默认为
+`ipv6`、`fn-connect`，允许排序和禁用。设置按本机及 FN ID 保存在配置旁的 `.links`
+（独立 schema 1），缺少文件使用默认顺序，不改写身份配置；未知 schema 不覆盖。
+
+| IPC 方法 | 行为 |
+| --- | --- |
+| `link-settings` | 返回 `{fnId, links:[{link, enabled}]}`，local 不可编辑 |
+| `set-link-settings` | 提交同结构，必须且仅包含两条远程链路；FN ID 变更时拒绝 |
+| `speedtest` | `{link:"ipv6"\|"fn-connect"\|"all"}`，一次请求输出连续进度帧，最后一帧 `active:false` |
+
+测速没有独立任务 ID、状态查询、取消接口或持久化任务。流式 IPC 仅用于新 `speedtest` 方法，
+沿用原有长度帧、请求 ID、产品与业务 IPC 验证；普通请求和维护协议仍返回单帧。
+关闭调用连接取消测试 I/O，daemon 用独立且有界的清理上下文恢复正常选路。
+App 关闭设置窗口会取消该调用；CLI Ctrl-C 同理。重新测试先取消当前调用，再发起新调用。
+连接操作仍由既有 operation 锁串行执行，用户主动断开/更换连接意图会使旧连接 generation 失效，
+测试不得复活旧意图。没有全 NAS 测速占用锁，不同设备可同时测试。
+
+测速全部访问现有 NAS IP 的私网 HTTP API（默认 TCP 54790），不新增端口、overlay listener
+或网关测速入口。认证网关的 private API 配置响应增加可忽略的 `speedTestKey`，独立于探测密钥，
+每次调用获取且不写入旧探测缓存；旧 probe、DNS、网关和 relay 接口保持原行为。
+
+| 私网接口 | 行为 |
+| --- | --- |
+| `GET /api/v1/speedtest/latency` | WebSocket 升级后使用 RFC 6455 Ping/Pong，排除建联耗时 |
+| `GET /api/v1/speedtest/download` | 普通 HTTP 二进制下载，客户端计量接收字节与耗时 |
+| `POST /api/v1/speedtest/upload` | 普通 HTTP 上传，同请求响应体以 SSE 返回接收统计 |
+
+三个接口均校验 `X-FnCPN-Client-Version`，请求另带 `X-FnCPN-Device`、`X-FnCPN-Time`
+（Unix 秒，±30 秒）及 `X-FnCPN-Proof`。证明为 `speedTestKey` 对 UTF-8 字符串
+`fncpn-speedtest-v2\n{deviceId}\n{method}\n{path}\n{timestamp}` 的 HMAC-SHA256，编码为无填充
+base64url。证明绑定设备、方法及路径，并且只接受来自该启用设备 WireGuard 源地址的请求；
+没有服务端 token、nonce 注册表或跨请求会话。短时间内同一设备可重新发起同一接口，不产生占用。
+不接受 Cookie，不允许客户端代理或 HTTP 重定向绕过指定 NAS。
+
+上传服务端在 HTTP/1 调用 `ResponseController.EnableFullDuplex`，同时读取请求体、写入 SSE，
+响应类型 `text/event-stream`，每约 250 ms Flush 一次统计。只有当前请求内的计数与读写同步。
+事件 `progress`、`complete` 的 data 均为 `{receivedBytes, elapsedMs, totalBytes}`；前两项排除首秒预热，
+`totalBytes` 用于最终确认及流量上限。读取请求体 EOF 后发送 `complete`，读取失败发送 `error` 或断流。
+客户端必须收到有效 `complete` 才能记录成功，不能将最后一次 progress 当作完成；SSE 不自动重连。
+
+每方向最大 512 MiB；下载发送最多约 9 秒，上传由客户端约 9 秒后正常结束请求体，服务端不以相近的
+时间强制截断上传，而以 45 秒请求期限兜底，保留尾部排空及完成确认时间。正式计量排除首秒预热，
+有效样本不足 0.5 秒报错。实时上行由 NAS 接收统计约一秒窗口的增量计算；无新增字节的心跳不产生零速率样本，持续停顿显示等待接收，发送结束后显示等待确认。接收计量截止最后一个实际载荷，不包含尾部确认等待；最终取有效接收总字节 / 有效时间；
+下行由 Mac 实际接收计量。结果为单 TCP 流应用吞吐，其他设备/业务流量可能影响结果。
+
+测速先走现有真实建联、WireGuard 握手及 NAS 身份验证，强制所选链路且禁止回退。
+本机没有公网 IPv6 时前置跳过 IPv6，其他所选链路继续。对同 LAN 测试，仅向配置已授权的 NAS
+IP 增加临时 /32 隧道路由，绑定 WireGuard 源地址，结束后恢复正常路由与选路。
+已完成单项实时呈现，整轮结束后才展示结果表；失败仅属于本轮结果，新测试和关闭提示不会被历史错误反复覆盖。
+
+
+### 跨客户端设置容器
+
+Windows、Linux/Wails、Android/iOS/Fyne 和 HarmonyOS 复用客户端内嵌的本地设置页面，macOS 原生页面保持 AppKit。
+本地 IPC 新增 `settings-url`，仅返回该客户端 Manager 持有的 `127.0.0.1` 随机端口页面及随机引导凭据。
+页面默认通用；手机窄屏使用顶部页签。局域网固定且不可配置，远程链路支持拖动、触屏拖动、上下移动和开关。
+
+本地页面位于 `/app/fncpn/settings`，静态资源完全内嵌；Host、Origin 与访问凭据均校验，无 CORS。
+引导凭据从地址中移除，API 使用 Bearer 头；HttpOnly/SameSite cookie 仅支持页面刷新，不授权写接口。
+本地 `GET /api/state` 读取版本、commit、偏好与状态，`POST /api/preferences` 保存当前 NAS 偏好，
+`POST /api/test` 在单个请求内以 NDJSON 输出已有 `RunSpeedTest` 的进度与最终结果；路径均相对于设置页。
+测试取消或关闭 WebView 取消请求上下文，恢复仍由现有核心流程负责。没有测速任务 ID、轮询状态或全局占用锁。
+这里的随机 loopback 端口只负责本机 UI，不是 NAS 测速服务；真正测速仍访问 NAS IP 的现有私网 API。
+
+Windows/WebView2 和 Linux/WebKit 仅对本地设置页提供自启状态及开关的窄接口，不向远程管理页面注入客户端业务能力。
+移动端没有桌面自启选项；VPN 服务未运行时可查看通用信息，网络页提示先连接 NAS 后重新打开设置，打开页面不会请求 VPN 授权。
+iOS 的测速使用平台私网拨号接口；HarmonyOS 应用内隧道使用 netstack，系统 VPN 与桌面继续使用绑定隧道地址的系统路由。
+这些是配套本地组件变化，不增加远程服务端要求，继续遵守唯一的产品 MINOR 准入规则。

@@ -21,3 +21,5 @@ export function Ready():Promise<void>;
 export function SetAutoStart(arg1:boolean):Promise<string>;
 
 export function UpdateTray(arg1:string,arg2:string,arg3:string,arg4:boolean,arg5:boolean):Promise<void>;
+
+export function OpenSettings(): Promise<main.Reply>;

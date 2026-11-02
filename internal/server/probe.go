@@ -17,6 +17,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -197,7 +198,8 @@ func (s *PrivateAPIService) Configuration(
 		)
 	}
 	return model.PrivateAPIConfiguration{
-		Endpoints: endpoints,
+		Endpoints:    endpoints,
+		SpeedTestKey: base64.RawURLEncoding.EncodeToString(s.speedTestKey(device)),
 		Key: base64.RawURLEncoding.EncodeToString(
 			s.deviceKey(device),
 		),
@@ -267,6 +269,10 @@ func (s *PrivateAPIService) ServeHTTP(
 	writer.Header().Set("X-Request-ID", requestID)
 	writer.Header().Set("Cache-Control", "no-store")
 	writer.Header().Set("X-Content-Type-Options", "nosniff")
+	if request.URL.Path == model.SpeedTestPath || strings.HasPrefix(request.URL.Path, model.SpeedTestPath+"/") {
+		s.serveSpeedTest(writer, request)
+		return
+	}
 	if request.Method == http.MethodPost && request.URL.Path == model.DNSQueryPath {
 		s.privateDNSQuery(writer, request)
 		return

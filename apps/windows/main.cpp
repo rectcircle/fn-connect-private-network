@@ -89,6 +89,7 @@ constexpr int kDiagnosticValue = 1030;
 constexpr int kStatusError = 1031;
 constexpr int kLoginReturn = 1032;
 constexpr int kLoginCancel = 1033;
+constexpr int kSettings = 1041;
 constexpr int kCopyDNSSuffix = 1034;
 constexpr int kAccessCode = 1035, kAccessCodeLabel = 1036;
 constexpr int kOTP = 1037, kOTPLabel = 1038, kTrustDevice = 1039, kLoginBack = 1040;
@@ -112,6 +113,7 @@ HWND g_fnIdLabel{};
 HWND g_usernameLabel{};
 HWND g_passwordLabel{};
 HWND g_retry{};
+HWND g_settings{};
 HWND g_relogin{};
 HWND g_changeServer{};
 HWND g_admin{};
@@ -1035,7 +1037,7 @@ void Layout(HWND window) {
         EnableWindow(g_fnIdInput, !g_loginInFlight && !g_externalAuthorization);
         EnableWindow(g_usernameInput, !g_loginInFlight); EnableWindow(g_passwordInput, !g_loginInFlight);
         EnableWindow(g_loginButton, !g_loginInFlight);
-        ShowControls(false, {GetDlgItem(window, kRefresh), GetDlgItem(window, kExit), g_state, g_connect, g_retry, g_relogin, g_changeServer, g_admin, g_copyDiagnostics, g_openLog, g_openNas, g_repair, g_autostart, g_statusError, g_diagnosticValue, g_diagnosticsLabel, g_dnsLabel, g_dnsValue, g_copyDNSSuffix});
+        ShowControls(false, {GetDlgItem(window, kRefresh), GetDlgItem(window, kExit), g_state, g_settings, g_connect, g_retry, g_relogin, g_changeServer, g_admin, g_copyDiagnostics, g_openLog, g_openNas, g_repair, g_autostart, g_statusError, g_diagnosticValue, g_diagnosticsLabel, g_dnsLabel, g_dnsValue, g_copyDNSSuffix});
         for (int i = 0; i < 7; ++i) ShowControls(false, {g_values[i], g_fieldLabels[i]});
     } else {
         Move(window, g_state, margin, 142, contentWidth, 36);
@@ -1061,9 +1063,11 @@ void Layout(HWND window) {
         Move(window, g_dnsValue, valueX, dnsY, dnsWidth, 26);
         Move(window, g_copyDNSSuffix, valueX + dnsWidth + 6, dnsY, 26, 26);
         EnableWindow(g_copyDNSSuffix, !g_dnsSuffix.empty());
-        Move(window, g_connect, margin, 469, 150, 34);
-        Move(window, g_relogin, margin + 160, 469, 130, 34);
-        Move(window, g_retry, margin + 300, 469, 140, 34);
+        const int actionWidth = (contentWidth - 30) / 4;
+        Move(window, g_connect, margin, 469, actionWidth, 34);
+        Move(window, g_relogin, margin + actionWidth + 10, 469, actionWidth, 34);
+        Move(window, g_retry, margin + (actionWidth + 10) * 2, 469, actionWidth, 34);
+        Move(window, g_settings, margin + (actionWidth + 10) * 3, 469, actionWidth, 34);
         int y = 519;
         if (errorVisible) { Move(window, g_statusError, margin, y, contentWidth, 38); y += 44; }
         Move(window, g_diagnosticsLabel, margin, y, contentWidth, 25); y += 32;
@@ -1080,7 +1084,7 @@ void Layout(HWND window) {
         y += 45;
         Move(window, g_autostart, margin, y, 126, 28); y += 35;
         if (repairVisible) Move(window, g_repair, margin, y, contentWidth, 32);
-        ShowControls(true, {GetDlgItem(window, kExit), g_state, g_connect, g_retry, g_relogin, g_changeServer, g_copyDiagnostics, g_openLog, g_openNas, g_autostart, g_diagnosticValue, g_diagnosticsLabel, GetDlgItem(window, kRefresh)});
+        ShowControls(true, {GetDlgItem(window, kExit), g_state, g_settings, g_connect, g_retry, g_relogin, g_changeServer, g_copyDiagnostics, g_openLog, g_openNas, g_autostart, g_diagnosticValue, g_diagnosticsLabel, GetDlgItem(window, kRefresh)});
         ShowControls(true, {g_dnsLabel, g_dnsValue, g_copyDNSSuffix});
         ShowControls(false, {g_statusError});
         ShowControls(g_configured && g_administrator, {g_admin}); EnableWindow(g_admin, !g_adminOpening);
@@ -1111,8 +1115,8 @@ void SetAutoStart(bool enabled) {
         const auto length = GetModuleFileNameW(nullptr, path.data(), static_cast<DWORD>(path.size()));
         if (!length || length >= path.size()) { RegCloseKey(key); return; }
         std::wstring value = L"\"" + std::wstring(path.data(), length) + L"\" --background";
-        RegSetValueExW(key, L"FnCPN", 0, REG_SZ, reinterpret_cast<const BYTE*>(value.c_str()), static_cast<DWORD>((value.size() + 1) * sizeof(wchar_t)));
-    } else RegDeleteValueW(key, L"FnCPN");
+        if (RegSetValueExW(key, L"FnCPN", 0, REG_SZ, reinterpret_cast<const BYTE*>(value.c_str()), static_cast<DWORD>((value.size() + 1) * sizeof(wchar_t))) != ERROR_SUCCESS) { RegCloseKey(key); return; }
+    } else { const auto removed = RegDeleteValueW(key, L"FnCPN"); if (removed != ERROR_SUCCESS && removed != ERROR_FILE_NOT_FOUND) { RegCloseKey(key); return; } }
     RegCloseKey(key);
     g_autoStart = enabled;
     if (g_autostart) SendMessageW(g_autostart, BM_SETCHECK, enabled ? BST_CHECKED : BST_UNCHECKED, 0);
@@ -1375,7 +1379,7 @@ bool IsValidProxyUrl(const std::wstring& value) {
     if (hostname != L"127.0.0.1" && hostname != L"::1" && hostname != L"[::1]") return false;
     const std::wstring pathname(path, parts.dwUrlPathLength);
     const std::wstring extra(query, parts.dwExtraInfoLength);
-    if (pathname != L"/app/fncpn") return false;
+    if (pathname != L"/app/fncpn" && pathname != L"/app/fncpn/settings") return false;
     constexpr std::wstring_view prefix = L"?fncpn_proxy=";
     if (!extra.starts_with(prefix) || extra.size() != prefix.size() + 64) return false;
     const auto token = extra.substr(prefix.size());
@@ -1484,6 +1488,7 @@ void ShowAdminWebView(HWND owner, const std::wstring& url) {
             bounds.left,bounds.top,bounds.right-bounds.left,bounds.bottom-bounds.top, owner, nullptr, GetModuleHandleW(nullptr), nullptr);
     }
     if (!g_adminWindow) return;
+    SetWindowTextW(g_adminWindow, g_adminUrl.find(L"/settings?") != std::wstring::npos ? L("设置") : L("FnCPN 管理后台"));
     ShowWindow(g_adminWindow, SW_RESTORE);
     SetWindowPos(g_adminWindow,HWND_TOP,0,0,0,0,SWP_NOMOVE|SWP_NOSIZE);
     SetForegroundWindow(g_adminWindow);
@@ -1534,7 +1539,7 @@ void ShowAdminWebView(HWND owner, const std::wstring& url) {
                                         if (request) request->get_Uri(&uri);
                                         if (response) response->get_StatusCode(&status);
                                         const bool local = uri && IsAllowedAdminUrl(uri); CoTaskMemFree(uri);
-                                        if (local && (status == 401 || status == 403)) {
+                                        if (local && g_adminUrl.find(L"/settings?") == std::wstring::npos && (status == 401 || status == 403)) {
                                             g_operationError = L("登录已失效，请重新输入密码");
                                             SetWindowTextW(g_statusError, g_operationError.c_str());
                                             PostMessageW(g_adminWindow, WM_CLOSE, 0, 0);
@@ -1543,6 +1548,24 @@ void ShowAdminWebView(HWND owner, const std::wstring& url) {
                                         return S_OK;
                                     }).Get(), &g_responseToken);
                             }
+                            EventRegistrationToken settingsMessage{};
+                            g_webView->add_WebMessageReceived(Microsoft::WRL::Callback<ICoreWebView2WebMessageReceivedEventHandler>(
+                                [](ICoreWebView2* view, ICoreWebView2WebMessageReceivedEventArgs* args) -> HRESULT {
+                                    LPWSTR rawSource{}, rawMessage{};
+                                    args->get_Source(&rawSource);
+                                    const std::wstring source = rawSource ? rawSource : L""; CoTaskMemFree(rawSource);
+                                    if (g_adminUrl.find(L"/settings?") == std::wstring::npos || !IsAllowedAdminUrl(source) || source.find(L"/app/fncpn/settings") == std::wstring::npos) return S_OK;
+                                    if (FAILED(args->TryGetWebMessageAsString(&rawMessage))) return S_OK;
+                                    const std::wstring message = rawMessage ? rawMessage : L""; CoTaskMemFree(rawMessage);
+                                    if (message == L"fncpn-settings:enable") SetAutoStart(true);
+                                    else if (message == L"fncpn-settings:disable") SetAutoStart(false);
+                                    else if (message != L"fncpn-settings:ready") return S_OK;
+                                    JsonObject reply; reply.Insert(L"type", JsonValue::CreateStringValue(L"fncpn-settings"));
+                                    reply.Insert(L"autoStart", JsonValue::CreateBooleanValue(g_autoStart));
+                                    if ((message == L"fncpn-settings:enable" && !g_autoStart) || (message == L"fncpn-settings:disable" && g_autoStart)) reply.Insert(L"error",JsonValue::CreateStringValue(L("无法设置开机自启")));
+                                    view->PostWebMessageAsJson(reply.Stringify().c_str());
+                                    return S_OK;
+                                }).Get(), &settingsMessage);
                             g_webView->Navigate(url.c_str());
                             return S_OK;
                         }).Get());
@@ -1561,6 +1584,7 @@ void ShowTrayMenu(HWND window) {
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu, MF_STRING | (g_autoStart ? MF_CHECKED : 0), 5, L("开机启动"));
     AppendMenuW(menu, MF_STRING, 7, L("官网 · 捐赠"));
+    AppendMenuW(menu, MF_STRING, 8, L("设置"));
     AppendMenuW(menu, MF_STRING, 6, L("退出"));
     POINT point{};
     GetCursorPos(&point);
@@ -1573,6 +1597,7 @@ void ShowTrayMenu(HWND window) {
     if (selected == 3) PostMessageW(window, WM_COMMAND, kRelogin, 0);
     if (selected == 4) PostMessageW(window, WM_COMMAND, kRetry, 0);
     if (selected == 5) SetAutoStart(!g_autoStart);
+    if (selected == 8) PostMessageW(window, WM_COMMAND, kSettings, 0);
     if (selected == 6) PostMessageW(window, WM_COMMAND, kExit, 0);
     if (selected == 7) ShellExecuteW(window, L"open", L"https://fncpn.rectcircle.cn/#donate", nullptr, nullptr, SW_SHOWNORMAL);
 }
@@ -1603,6 +1628,7 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
         AddControl(L"BUTTON", L("刷新"), BS_PUSHBUTTON, kRefresh);
         AddControl(L"BUTTON", L("退出"), BS_PUSHBUTTON, kExit);
         g_retry = AddControl(L"BUTTON", L("重新检测"), BS_PUSHBUTTON, kRetry);
+        g_settings = AddControl(L"BUTTON", L("设置"), BS_PUSHBUTTON, kSettings);
         g_relogin = AddControl(L"BUTTON", L("重新登录"), BS_PUSHBUTTON, kRelogin);
         g_changeServer = AddControl(L"BUTTON", L("更换 NAS"), BS_PUSHBUTTON, kChangeServer);
         g_admin = AddControl(L"BUTTON", L("管理后台"), BS_PUSHBUTTON, kAdmin);
@@ -1635,7 +1661,7 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
         g_loginReturn = AddControl(L"BUTTON", L("返回详情"), BS_PUSHBUTTON, kLoginReturn);
         g_loginCancel = AddControl(L"BUTTON", L("取消"), BS_PUSHBUTTON, kLoginCancel);
         g_loginBack = AddControl(L"BUTTON", L("上一步"), BS_PUSHBUTTON, kLoginBack);
-        static const wchar_t* rowNames[] = {L("连接路径"), L("隧道地址"), L("网络接口"), L("最近握手"), L("特权服务"), L("IPv6 检测"), L"NAS IP"};
+        static const wchar_t* rowNames[] = {L("网络链路"), L("隧道地址"), L("网络接口"), L("最近握手"), L("特权服务"), L("IPv6 检测"), L"NAS IP"};
         for (int i = 0; i < 7; ++i) {
             g_fieldLabels[i] = AddControl(L"STATIC", L(rowNames[i]).c_str(), SS_LEFT | SS_CENTERIMAGE, 1100 + i);
             g_values[i] = AddControl(L"STATIC", L"-", SS_LEFT | SS_CENTERIMAGE, 1200 + i);
@@ -1650,7 +1676,7 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
         SendMessageW(g_autostart, BM_SETCHECK, g_autoStart ? BST_CHECKED : BST_UNCHECKED, 0);
         SendMessageW(g_identity, WM_SETFONT, reinterpret_cast<WPARAM>(GetStockObject(DEFAULT_GUI_FONT)), TRUE);
         SendMessageW(g_state, WM_SETFONT, reinterpret_cast<WPARAM>(GetStockObject(DEFAULT_GUI_FONT)), TRUE);
-        for (int id : {kConnect, kRefresh, kExit, kRetry, kRelogin, kChangeServer, kAdmin, kCopyDiagnostics, kCopyDNSSuffix, kOpenLog, kOpenNas, kAutostart, kRepair, kStatusError, kDiagnosticValue, kLoginReturn, kLoginCancel}) SendMessageW(GetDlgItem(window, id), WM_SETFONT, reinterpret_cast<WPARAM>(GetStockObject(DEFAULT_GUI_FONT)), TRUE);
+        for (int id : {kSettings, kConnect, kRefresh, kExit, kRetry, kRelogin, kChangeServer, kAdmin, kCopyDiagnostics, kCopyDNSSuffix, kOpenLog, kOpenNas, kAutostart, kRepair, kStatusError, kDiagnosticValue, kLoginReturn, kLoginCancel}) SendMessageW(GetDlgItem(window, id), WM_SETFONT, reinterpret_cast<WPARAM>(GetStockObject(DEFAULT_GUI_FONT)), TRUE);
         for (int id : {kFnIdLabel, kFnId, kUsernameLabel, kUsername, kPasswordLabel, kPassword, kAccessCodeLabel, kAccessCode, kOTPLabel, kOTP, kTrustDevice, kLoginError, kLogin})
             SendMessageW(GetDlgItem(window, id), WM_SETFONT, reinterpret_cast<WPARAM>(GetStockObject(DEFAULT_GUI_FONT)), TRUE);
         for (int i = 0; i < 7; ++i) { SendMessageW(g_values[i], WM_SETFONT, reinterpret_cast<WPARAM>(GetStockObject(DEFAULT_GUI_FONT)), TRUE); SendMessageW(g_fieldLabels[i], WM_SETFONT, reinterpret_cast<WPARAM>(GetStockObject(DEFAULT_GUI_FONT)), TRUE); }
@@ -2015,15 +2041,17 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
             g_operationInFlight = true; g_busy = true; g_operationError.clear();
             StartWorker(RepairServiceFromWorker); return 0;
         }
+        case kSettings:
         case kAdmin: {
-            if (!g_administrator || g_adminOpening) return 0;
+            if ((LOWORD(wParam) == kAdmin && !g_administrator) || g_adminOpening) return 0;
             g_adminOpening = true;
             g_adminError.clear();
-            StartWorker([] {
+            const bool settings = LOWORD(wParam) == kSettings;
+            StartWorker([settings] {
                 winrt::init_apartment(winrt::apartment_type::multi_threaded);
                 struct ApartmentGuard { ~ApartmentGuard() { winrt::uninit_apartment(); } } apartmentGuard;
                 std::wstring url, error;
-                try { url = JsonString(CallIpc(L"admin-proxy").GetNamedObject(L"result"), L"url"); }
+                try { url = JsonString(CallIpc(settings ? L"settings-url" : L"admin-proxy").GetNamedObject(L"result"), L"url"); }
                 catch (const winrt::hresult_error& failure) { error = failure.message().c_str(); }
                 auto* data = new std::pair<std::wstring, std::wstring>(std::move(url), std::move(error));
                 PostPayload(kAdminReady, data, 0);

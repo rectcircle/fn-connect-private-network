@@ -62,7 +62,7 @@ macos_app_finish() {
   cp -R "$ROOT_DIR/apps/macos/packaging/en.lproj" "$ROOT_DIR/apps/macos/packaging/zh-Hans.lproj" "$resources/"
   cp -X "$ROOT_DIR/LICENSE" "$ROOT_DIR/THIRD_PARTY_NOTICES.md" "$resources/"
   cp -X "$ROOT_DIR/apps/macos/packaging/install-prompt.applescript" "$ROOT_DIR/apps/macos/packaging/install-prompt.plist" "$resources/"
-  python3 - "$ROOT_DIR" "$APP" "$APP_OUTPUT" "$VERSION" "$BUILD_NUMBER" "$MACOSX_DEPLOYMENT_TARGET" <<'PY'
+  python3 - "$ROOT_DIR" "$APP" "$APP_OUTPUT" "$VERSION" "$BUILD_NUMBER" "$MACOSX_DEPLOYMENT_TARGET" "$REVISION" <<'PY'
 import pathlib, plistlib, sys
 root, app, final_app = map(pathlib.Path, sys.argv[1:4])
 path = app/'Contents/Info.plist'
@@ -72,6 +72,7 @@ info.update(plistlib.loads((root/'apps/macos/packaging/Info.plist').read_bytes()
 info['FnCPNProductVersion'] = info['CFBundleShortVersionString'] = sys.argv[4]
 info['CFBundleVersion'] = sys.argv[5]
 info['LSMinimumSystemVersion'] = sys.argv[6]
+info['FnCPNRevision'] = sys.argv[7]
 path.write_bytes(plistlib.dumps(info))
 agent = plistlib.loads((root/'apps/macos/packaging/cn.rectcircle.fncpn.client.plist').read_bytes())
 agent['ProgramArguments'][0] = str(final_app/'Contents/Resources/fncpn')

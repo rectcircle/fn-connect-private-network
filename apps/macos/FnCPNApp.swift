@@ -127,12 +127,13 @@ private func clientSocketPath() -> String {
 }
 
 private final class IPCClient {
-    func call(method: String, params: Any? = nil) throws -> [String: Any] {
+    func call(method: String, params: Any? = nil, cancellation: IPCCancellation? = nil, receive: (([String: Any]) -> Bool)? = nil) throws -> [String: Any] {
         let descriptor = Darwin.socket(AF_UNIX, SOCK_STREAM, 0)
         guard descriptor >= 0 else { throw POSIXError(.EIO) }
-        defer { Darwin.close(descriptor) }
+        defer { cancellation?.detach(); Darwin.close(descriptor) }
+        try cancellation?.attach(descriptor)
         try setTimeout(
-            seconds: ["authorize-native", "watch-client-status"].contains(method) ? 310 :
+            seconds: ["authorize-native", "watch-client-status", "speedtest"].contains(method) ? 310 :
                 ["connect", "retry"].contains(method) ? 45 : 30,
             on: descriptor
         )
@@ -152,6 +153,7 @@ private final class IPCClient {
             }
         }
         try connect(descriptor, to: &address)
+        if cancellation?.isCanceled == true { throw POSIXError(.ECANCELED) }
 
         let requestID = UUID().uuidString
         var request: [String: Any] = [
@@ -168,6 +170,7 @@ private final class IPCClient {
         frame.append(payload)
         try writeAll(frame, to: descriptor)
 
+        while true {
         let header = try readExactly(4, from: descriptor)
         let responseLength = header.withUnsafeBytes {
             $0.loadUnaligned(as: UInt32.self).bigEndian
@@ -211,7 +214,9 @@ private final class IPCClient {
                 userInfo: [NSLocalizedDescriptionKey: message, "failure": responseError ?? [:]]
             )
         }
-        return result as? [String: Any] ?? [:]
+        let value = result as? [String: Any] ?? [:]
+        if let receive { if receive(value) { return value } } else { return value }
+        }
     }
 
     private func connect(
@@ -477,6 +482,7 @@ private final class HandCursorButton: NSButton {
 @main
 private final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
     private let ipc = IPCClient()
+ private var linkSettingsWindow: LinkSettingsController?
     private let launchAgent = LaunchAgentManager()
     private let statusValue = NSTextField(labelWithString: L("尚未连接"))
     private let serverValue = NSTextField(labelWithString: "")
@@ -521,7 +527,6 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDel
     private var refreshRetryDelay: TimeInterval = 1
     private var window: NSWindow!
     private var adminWindow: NSWindow?
-    private var adminWindowOpen = false
     private var refreshInFlight = false
     private var refreshPending = false
     private var waitingForLocalNetwork = false
@@ -554,7 +559,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDel
         let application = NSApplication.shared
         let delegate = AppDelegate()
         application.delegate = delegate
-        // Menu-bar/accessory app: no Dock icon, lives only in the status bar.
+        // Start in the menu bar; user windows promote the app to a regular Dock app.
         application.setActivationPolicy(.accessory)
         // There is no nib/storyboard to create or retain the delegate.
         withExtendedLifetime(delegate) {
@@ -566,6 +571,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDel
         let menu = NSMenu()
         let appMenu = NSMenu(title: "FnCPN")
         appMenu.addItem(withTitle: L("官网 · 捐赠"), action: #selector(openHomepage), keyEquivalent: "").target = self
+        appMenu.addItem(withTitle: L("设置…"), action: #selector(openSettings), keyEquivalent: ",").target = self
         appMenu.addItem(.separator())
         appMenu.addItem(withTitle: L("退出"), action: #selector(quit), keyEquivalent: "q").target = self
         let appItem = NSMenuItem(title: "FnCPN", action: nil, keyEquivalent: "")
@@ -590,6 +596,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDel
         window.contentMinSize = NSSize(width: 680, height: 440)
         window.isReleasedWhenClosed = false
         window.contentView = content
+        WindowPresence.shared.register(window)
         window.center()
         // Do not show the window yet: we show it once the first diagnostics
         // round trip returns so an already-logged-in user goes straight to the
@@ -742,7 +749,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDel
         dnsContainer.spacing = 8
         dnsContainer.alignment = .centerY
         let grid = NSGridView(views: [
-            row(L("连接路径"), pathValue), row(L("隧道地址"), addressValue),
+            row(L("网络链路"), pathValue), row(L("隧道地址"), addressValue),
             row(L("网络接口"), interfaceValue), row(L("最近握手"), handshakeValue),
             [nasLabel("DNS"), dnsContainer], row(L("特权服务"), rootValue), row(L("IPv6 检测"), directValue),
             [nasLabel("NAS IP"), nasContainer]
@@ -764,7 +771,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDel
         primaryButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 126).isActive = true
         loginButton = button(L("重新登录"), symbol: "person.badge.key", action: #selector(relogin))
         retryButton = button(L("重新检测"), symbol: "arrow.clockwise", action: #selector(retryConnection))
-        detailsView.addArrangedSubview(horizontal([primaryButton, loginButton, retryButton]))
+        detailsView.addArrangedSubview(horizontal([primaryButton, loginButton, retryButton, button(L("设置"), symbol: "gearshape", action: #selector(openSettings))]))
         let errorLabel = NSTextField(labelWithString: L("诊断详情"))
         errorLabel.textColor = .secondaryLabelColor
         detailsView.addArrangedSubview(errorLabel)
@@ -937,26 +944,13 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDel
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        // Reopening from Finder re-activates the app, which can transiently place
-        // a regular Dock icon. Re-assert the menu-bar/accessory policy so no Dock
-        // icon ever appears (the status bar remains the only entry point), unless
-        // the management WebView (which needs a Dock icon) is showing.
-        if !adminWindowOpen {
-            NSApp.setActivationPolicy(.accessory)
-            DispatchQueue.main.async {
-                guard !self.adminWindowOpen else { return }
-                NSApp.setActivationPolicy(.accessory)
-            }
-        }
         if !flag { showWindow() }
+        WindowPresence.shared.update()
         return true
     }
 
     func applicationDidBecomeActive(_ notification: Notification) {
-        // Finder "Open" of a running app, or any external activation, can raise a
-        // regular Dock icon briefly. Force accessory so the Dock icon stays hidden.
-        guard !adminWindowOpen else { return }
-        NSApp.setActivationPolicy(.accessory)
+        WindowPresence.shared.update()
     }
 
     func application(_ application: NSApplication, open urls: [URL]) {
@@ -991,6 +985,10 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDel
         refreshAutoStartItem()
         menu.addItem(.separator())
         menu.addItem(withTitle: L("官网 · 捐赠"), action: #selector(openHomepage), keyEquivalent: "")
+        // Avoid AppKit's automatic Settings action image in the otherwise text-only status menu.
+        let settingsItem = menu.addItem(withTitle: L("设置…"), action: #selector(showPreferencesFromStatusMenu), keyEquivalent: "")
+        settingsItem.image = nil
+        if #available(macOS 27.0, *) { settingsItem.preferredImageVisibility = .hidden }
         menu.addItem(withTitle: L("退出"), action: #selector(quit), keyEquivalent: "q")
         menu.autoenablesItems = false
         for entry in menu.items { entry.target = self }
@@ -1005,6 +1003,16 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDel
         let enabled = SMAppService.mainApp.status == .enabled
         autoStartItem?.title = L("开机自启")
         autoStartItem?.state = enabled ? .on : .off
+    }
+
+    @objc private func showPreferencesFromStatusMenu() { openSettings() }
+
+    @objc private func openSettings() {
+        if linkSettingsWindow == nil {
+            linkSettingsWindow = LinkSettingsController()
+            linkSettingsWindow?.toggleLoginItem = { [weak self] in self?.toggleAutoStart() }
+        }
+        linkSettingsWindow?.open()
     }
 
     @objc private func toggleAutoStart() {
@@ -1026,9 +1034,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDel
     }
 
     @objc private func showWindow() {
-        window?.deminiaturize(nil)
-        window?.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
+        if let window { WindowPresence.shared.show(window) }
     }
 
     @objc private func openHomepage() {
@@ -1109,28 +1115,14 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDel
             window.isReleasedWhenClosed = false
             window.center()
             adminWindow = window
-            // Restore the menu-bar/accessory policy once the admin window closes
-            // so the regular Dock icon disappears again.
-            NotificationCenter.default.addObserver(
-                forName: NSWindow.willCloseNotification,
-                object: window,
-                queue: .main
-            ) { [weak self] _ in
-                self?.adminWindowOpen = false
-                NSApp.setActivationPolicy(.accessory)
-            }
+            WindowPresence.shared.register(window)
         }
         let webView = WKWebView()
         webView.frame = window.contentView?.bounds ?? NSRect(x: 0, y: 0, width: 1000, height: 720)
         webView.autoresizingMask = [.width, .height]
         webView.load(URLRequest(url: proxyURL))
         window.contentView = webView
-        // The management UI appears as a regular window (with a Dock icon); the
-        // menu-bar/accessory policy is restored when it closes.
-        adminWindowOpen = true
-        NSApp.setActivationPolicy(.regular)
-        window.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
+        WindowPresence.shared.show(window)
     }
 
     /// Detects when the root privileged daemon is unavailable (e.g. the user
@@ -1547,8 +1539,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDel
         initialWindowShown = true
         if let frontmost = NSWorkspace.shared.frontmostApplication,
            frontmost.bundleIdentifier != "com.apple.loginwindow" {
-            window.makeKeyAndOrderFront(nil)
-            NSApp.activate(ignoringOtherApps: true)
+            WindowPresence.shared.show(window)
         }
     }
 
@@ -1795,5 +1786,618 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDel
         ]
         diagnostics["privilegedAvailable"] = false
         render()
+    }
+}
+
+// Fixed sidebar and independently constrained document pages. Only the selected
+// page participates in layout; test events never resize the window horizontally.
+private final class LinkSettingsController: NSWindowController, NSWindowDelegate, NSTableViewDataSource, NSTableViewDelegate {
+    private let rpc = IPCClient()
+    private let work = DispatchQueue(label: "cn.rectcircle.fncpn.settings")
+    private let testing = DispatchQueue(label: "cn.rectcircle.fncpn.measurement")
+    private let sidebar = SettingsTableView()
+    private let table = SettingsTableView()
+    private let scroll = NSScrollView()
+    private let pageDocument = SettingsDocumentView()
+    private let general = NSStackView()
+    private let page = NSStackView()
+    private let nas = NSTextField(labelWithString: "")
+    private let current = NSTextField(labelWithString: "")
+    private let notice = NSTextField(wrappingLabelWithString: "")
+    private let errorDetails = NSTextField(wrappingLabelWithString: "")
+    private let detailsButton = SettingsButton(title: L("详细信息"), target: nil, action: nil)
+    private let results = NSGridView()
+    private let resultArea = NSStackView()
+    private let liveResults = NSTextField(wrappingLabelWithString: "")
+    private let phase = NSTextField(labelWithString: "")
+    private let canvas = SpeedTestCanvas()
+    private let selector = SettingsButton(title: L("选择测试链路"), target: nil, action: nil)
+    private let startButton = SettingsButton(title: L("开始测试"), target: nil, action: nil)
+    private let cancelButton = SettingsButton(title: L("取消"), target: nil, action: nil)
+    private let autoStart = SettingsSwitch()
+    private var values: [[NSTextField]] = []
+    private var links: [[String: Any]] = []
+    private var selected = Set(["ipv6", "fn-connect"])
+    private var fnID = ""
+    private var currentPath = ""
+    private var polling: Timer?
+    private var inFlight = false
+    private var saving = false
+    private var active = false
+    private var cancellation: IPCCancellation?
+    private var pageBottom: NSLayoutConstraint?
+    private var errorMessage = ""
+    private var selectorPopover: NSPopover?
+    private var confirming = false
+    private var lastState: [String: Any] = [:]
+    var toggleLoginItem: (() -> Void)?
+
+    init() {
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 840, height: 720), styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
+        window.title = L("设置")
+        window.contentMinSize = NSSize(width: 780, height: 620)
+        window.isReleasedWhenClosed = false
+        super.init(window: window)
+        window.delegate = self
+        WindowPresence.shared.register(window)
+        window.contentView = SettingsBackgroundView(frame: window.contentView!.frame)
+        let root = window.contentView!
+        let rail = NSVisualEffectView()
+        rail.material = .sidebar; rail.blendingMode = .behindWindow
+        rail.translatesAutoresizingMaskIntoConstraints = false
+        root.addSubview(rail)
+        let column = NSTableColumn(identifier: .init("section")); column.resizingMask = .autoresizingMask; sidebar.addTableColumn(column)
+        sidebar.allRowsClickable = true
+        sidebar.backgroundColor = .clear
+        sidebar.headerView = nil; sidebar.rowHeight = 36; sidebar.style = .plain
+        sidebar.delegate = self; sidebar.dataSource = self
+        sidebar.setAccessibilityLabel(L("设置分类"))
+        let navigation = NSScrollView(); navigation.documentView = sidebar; navigation.drawsBackground = false
+        navigation.translatesAutoresizingMaskIntoConstraints = false
+        rail.addSubview(navigation)
+        scroll.translatesAutoresizingMaskIntoConstraints = false
+        scroll.drawsBackground = false; scroll.hasVerticalScroller = true; scroll.autohidesScrollers = true
+        pageDocument.translatesAutoresizingMaskIntoConstraints = false; scroll.documentView = pageDocument
+        root.addSubview(scroll)
+        NSLayoutConstraint.activate([
+            rail.leadingAnchor.constraint(equalTo: root.leadingAnchor), rail.topAnchor.constraint(equalTo: root.topAnchor), rail.bottomAnchor.constraint(equalTo: root.bottomAnchor), rail.widthAnchor.constraint(equalToConstant: 150),
+            navigation.leadingAnchor.constraint(equalTo: rail.leadingAnchor, constant: 10), navigation.trailingAnchor.constraint(equalTo: rail.trailingAnchor, constant: -10), navigation.topAnchor.constraint(equalTo: rail.topAnchor, constant: 22), navigation.heightAnchor.constraint(equalToConstant: 84),
+            scroll.leadingAnchor.constraint(equalTo: rail.trailingAnchor), scroll.trailingAnchor.constraint(equalTo: root.trailingAnchor), scroll.topAnchor.constraint(equalTo: root.topAnchor), scroll.bottomAnchor.constraint(equalTo: root.bottomAnchor),
+            pageDocument.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor)
+        ])
+        for stack in [general, page] {
+            stack.orientation = .vertical; stack.alignment = .leading; stack.spacing = 20
+            stack.translatesAutoresizingMaskIntoConstraints = false
+        }
+        buildGeneral(); buildLinks()
+        sidebar.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
+        displayPage(0)
+        window.center()
+    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) is unavailable") }
+    private func label(_ text: String, size: CGFloat = 13, secondary: Bool = false) -> NSTextField {
+        let view = NSTextField(wrappingLabelWithString: text)
+        view.font = .systemFont(ofSize: size)
+        view.textColor = secondary ? .secondaryLabelColor : .labelColor
+        view.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        return view
+    }
+    private func fill(_ view: NSView, in stack: NSStackView) {
+        stack.addArrangedSubview(view); view.translatesAutoresizingMaskIntoConstraints = false
+        view.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+    }
+    private func heading(_ text: String, in stack: NSStackView) {
+        let view = label(text, size: 24); view.font = .systemFont(ofSize: 24, weight: .semibold); fill(view, in: stack)
+    }
+    private func group(_ title: String, help: String? = nil, in stack: NSStackView) -> NSStackView {
+        let row = NSStackView(); row.orientation = .horizontal
+        let name = label(title, size: 14); name.font = .systemFont(ofSize: 14, weight: .semibold)
+        row.addArrangedSubview(name)
+        if let help {
+            let button = HoverHelpButton(title: "", target: nil, action: nil)
+            button.bezelStyle = .helpButton; button.helpText = help
+            button.setAccessibilityLabel(title + L("说明")); row.addArrangedSubview(button)
+        }
+        fill(row, in: stack)
+        let card = SettingsCard(); fill(card, in: stack); return card.body
+    }
+    private func buildGeneral() {
+        heading(L("通用"), in: general)
+        let startup = group(L("启动"), in: general)
+        let row = NSStackView(); row.orientation = .horizontal; row.distribution = .fill
+        let title = label(L("开机自启")); row.addArrangedSubview(title)
+        let spacer = NSView(); spacer.setContentHuggingPriority(.defaultLow, for: .horizontal); row.addArrangedSubview(spacer)
+        autoStart.target = self; autoStart.action = #selector(toggleAutoStartSetting); row.addArrangedSubview(autoStart)
+        fill(row, in: startup)
+        let about = group(L("关于 FnCPN"), in: general)
+        let brand = NSStackView(); brand.orientation = .horizontal; brand.spacing = 14
+        let icon = NSImageView(image: Bundle.main.image(forResource: "AppIcon") ?? NSImage(systemSymbolName: "network", accessibilityDescription: nil)!)
+        icon.widthAnchor.constraint(equalToConstant: 48).isActive = true; icon.heightAnchor.constraint(equalToConstant: 48).isActive = true
+        brand.addArrangedSubview(icon)
+        let brandName = label("FnCPN", size: 20); brandName.font = .systemFont(ofSize: 20, weight: .semibold); brand.addArrangedSubview(brandName)
+        fill(brand, in: about)
+        let version = Bundle.main.object(forInfoDictionaryKey: "FnCPNProductVersion") as? String ?? "—"
+        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "—"
+        fill(label(L("版本 {0} · 构建 {1}", version, build), secondary: true), in: about)
+        let revision = Bundle.main.object(forInfoDictionaryKey: "FnCPNRevision") as? String ?? "unknown"
+        let commit = label("Commit  " + revision, secondary: true); commit.isSelectable = true
+        fill(commit, in: about)
+        for (tag, title) in [L("GitHub 项目"), L("官方网站"), L("下载服务端与其他客户端")].enumerated() {
+            let button = SettingsButton(title: title + " ↗", target: self, action: #selector(openLink(_:)))
+            button.tag = tag; button.isBordered = false; button.contentTintColor = .linkColor
+            about.addArrangedSubview(button)
+        }
+    }
+    private func buildLinks() {
+        heading(L("网络链路"), in: page)
+        let summary = NSStackView(views: [nas, current]); summary.orientation = .vertical; summary.alignment = .leading; summary.spacing = 6
+        current.font = .systemFont(ofSize: 12); current.textColor = .secondaryLabelColor
+        nas.lineBreakMode = .byTruncatingMiddle; current.lineBreakMode = .byTruncatingTail
+        fill(summary, in: page)
+        for text in [nas, current] { text.translatesAutoresizingMaskIntoConstraints = false; text.widthAnchor.constraint(equalTo: summary.widthAnchor).isActive = true; text.setContentCompressionResistancePriority(.defaultLow, for: .horizontal) }
+        let policy = group(L("开关与优先级"), help: L("从上到下尝试链路，拖动可调整远程链路优先级。局域网始终第一且不能禁用。禁用两条远程链路后，仅能在局域网连接。"), in: page)
+        let column = NSTableColumn(identifier: .init("link")); table.addTableColumn(column)
+        column.resizingMask = .autoresizingMask; table.columnAutoresizingStyle = .lastColumnOnlyAutoresizingStyle
+        table.headerView = nil; table.rowHeight = 42; table.intercellSpacing = NSSize(width: 0, height: 2)
+        table.backgroundColor = .clear; table.delegate = self; table.dataSource = self
+        table.registerForDraggedTypes([.string]); table.setDraggingSourceOperationMask(.move, forLocal: true)
+        table.setAccessibilityLabel(L("链路优先级"))
+        let rows = NSScrollView(); rows.documentView = table; rows.drawsBackground = false; rows.hasVerticalScroller = false
+        rows.heightAnchor.constraint(equalToConstant: 132).isActive = true; fill(rows, in: policy)
+        let controls = NSStackView(); controls.orientation = .horizontal
+        for (tag, title) in [L("上移"), L("下移"), L("恢复默认设置")].enumerated() {
+            let button = SettingsButton(title: title, target: self, action: #selector(reorder(_:))); button.tag = tag; controls.addArrangedSubview(button)
+        }
+        fill(controls, in: policy)
+        let network = group(L("网络链路测试"), in: page)
+        let controlsRow = NSStackView(); controlsRow.orientation = .horizontal; controlsRow.spacing = 10
+        selector.bezelStyle = .rounded; selector.target = self; selector.action = #selector(showLinkSelector)
+        selector.image = NSImage(systemSymbolName: "chevron.down", accessibilityDescription: nil); selector.imagePosition = .imageTrailing
+        selector.widthAnchor.constraint(equalToConstant: 210).isActive = true
+        selector.setAccessibilityLabel(L("测试链路"))
+        controlsRow.addArrangedSubview(label(L("测试链路")))
+        updateSelector(); controlsRow.addArrangedSubview(selector)
+        startButton.target = self; startButton.action = #selector(startTest); startButton.bezelStyle = .rounded; startButton.keyEquivalent = ""
+        controlsRow.addArrangedSubview(startButton)
+        cancelButton.target = self; cancelButton.action = #selector(cancelTest); cancelButton.isHidden = true; controlsRow.addArrangedSubview(cancelButton)
+        fill(controlsRow, in: network)
+        fill(phase, in: network); phase.isHidden = true
+        canvas.heightAnchor.constraint(equalToConstant: 210).isActive = true; fill(canvas, in: network); canvas.isHidden = true
+        liveResults.font = .monospacedDigitSystemFont(ofSize: 12, weight: .regular); fill(liveResults, in: network); liveResults.isHidden = true
+        resultArea.orientation = .vertical; resultArea.alignment = .leading; resultArea.spacing = 10
+        let resultTitle = label(L("测试结果")); resultTitle.font = .systemFont(ofSize: 13, weight: .semibold); resultArea.addArrangedSubview(resultTitle)
+        results.columnSpacing = 12; results.rowSpacing = 10
+        results.addRow(with: [L("链路"), L("延迟"), L("下载"), L("上传")].map { label($0, size: 12, secondary: true) })
+        for title in [L("IPv6 直连"), L("FN Connect 中继")] {
+            let cells = (0..<3).map { _ in label("—", size: 12) }; values.append(cells)
+            cells.forEach { $0.font = .monospacedDigitSystemFont(ofSize: 12, weight: .regular) }
+            results.addRow(with: [label(title, size: 12)] + cells)
+        }
+        results.column(at: 0).width = 130
+        for index in 1...3 { results.column(at: index).width = 105 }
+        resultArea.addArrangedSubview(results); fill(resultArea, in: network); resultArea.isHidden = true
+        let errorRow = NSStackView(); errorRow.orientation = .horizontal; errorRow.alignment = .top
+        notice.font = .systemFont(ofSize: 12); notice.textColor = .systemRed
+        notice.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        errorRow.addArrangedSubview(notice)
+        let dismiss = NSButton(image: NSImage(systemSymbolName: "xmark.circle", accessibilityDescription: L("关闭提示"))!, target: self, action: #selector(dismissNotice))
+        dismiss.isBordered = false; errorRow.addArrangedSubview(dismiss)
+        fill(errorRow, in: network); errorRow.isHidden = true
+        detailsButton.target = self; detailsButton.action = #selector(toggleErrorDetails); detailsButton.isBordered = false; detailsButton.contentTintColor = .secondaryLabelColor
+        network.addArrangedSubview(detailsButton); detailsButton.isHidden = true
+        errorDetails.font = .monospacedSystemFont(ofSize: 11, weight: .regular); errorDetails.textColor = .secondaryLabelColor
+        errorDetails.isSelectable = true; errorDetails.lineBreakMode = .byCharWrapping
+        fill(errorDetails, in: network); errorDetails.isHidden = true
+    }
+    func open(linkPage: Bool = false) {
+        sidebar.selectRowIndexes(IndexSet(integer: linkPage ? 1 : 0), byExtendingSelection: false); displayPage(linkPage ? 1 : 0)
+        autoStart.state = SMAppService.mainApp.status == .enabled ? .on : .off
+        if let window { WindowPresence.shared.show(window) }
+        polling?.invalidate(); polling = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in self?.poll() }; poll()
+        if !lastState.isEmpty { canvas.update(lastState) }
+    }
+    private func displayPage(_ index: Int) {
+        selectorPopover?.close()
+        pageBottom?.isActive = false
+        for old in pageDocument.subviews { old.removeFromSuperview() }
+        let view = index == 0 ? general : page
+        pageDocument.addSubview(view)
+        NSLayoutConstraint.activate([view.leadingAnchor.constraint(equalTo: pageDocument.leadingAnchor, constant: 24), view.trailingAnchor.constraint(equalTo: pageDocument.trailingAnchor, constant: -28), view.topAnchor.constraint(equalTo: pageDocument.topAnchor, constant: 24)])
+        pageBottom = pageDocument.bottomAnchor.constraint(equalTo: view.bottomAnchor, constant: 24); pageBottom?.isActive = true
+        pageDocument.layoutSubtreeIfNeeded(); pageDocument.scroll(.zero)
+    }
+    func windowWillClose(_ notification: Notification) { selectorPopover?.close(); cancellation?.cancel(); polling?.invalidate(); polling = nil; canvas.stopAnimation() }
+    func numberOfRows(in tableView: NSTableView) -> Int { tableView === sidebar ? 2 : 1 + links.count }
+    func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? { tableView === sidebar ? SettingsSidebarRow() : nil }
+    func tableViewSelectionDidChange(_ notification: Notification) { if notification.object as? NSTableView === sidebar { displayPage(max(0, sidebar.selectedRow)) } }
+    func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
+        if tableView === sidebar {
+            let cell = NSTableCellView(); let name = NSTextField(labelWithString: row == 0 ? L("通用") : L("网络链路")); name.translatesAutoresizingMaskIntoConstraints = false
+            cell.addSubview(name); cell.textField = name
+            NSLayoutConstraint.activate([name.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 12), name.centerYAnchor.constraint(equalTo: cell.centerYAnchor)])
+            return cell
+        }
+        let cell = NSTableCellView()
+        let name = row == 0 ? "local" : links[row - 1]["link"] as? String ?? ""
+        let enabled = row == 0 || links[row - 1]["enabled"] as? Bool == true
+        let suffix = row == 0 ? L(" · 始终优先") : currentPath == name ? L(" · 当前使用") : !enabled ? L(" · 已禁用") : ""
+        let text = label((row == 0 ? "" : "⠿  ") + linkName(name) + suffix)
+        text.textColor = row == 0 ? .tertiaryLabelColor : enabled ? .labelColor : .secondaryLabelColor
+        text.translatesAutoresizingMaskIntoConstraints = false; cell.addSubview(text)
+        NSLayoutConstraint.activate([text.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 6), text.centerYAnchor.constraint(equalTo: cell.centerYAnchor)])
+        if row > 0 {
+            let toggle = SettingsSwitch(); toggle.state = enabled ? .on : .off; toggle.target = self; toggle.action = #selector(toggleLink(_:)); toggle.tag = row - 1; toggle.isEnabled = !saving && !fnID.isEmpty
+            toggle.setAccessibilityLabel(L("启用 {0}", linkName(name))); toggle.translatesAutoresizingMaskIntoConstraints = false; cell.addSubview(toggle)
+            NSLayoutConstraint.activate([toggle.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -6), toggle.centerYAnchor.constraint(equalTo: cell.centerYAnchor), text.trailingAnchor.constraint(lessThanOrEqualTo: toggle.leadingAnchor, constant: -8)])
+        } else { text.trailingAnchor.constraint(lessThanOrEqualTo: cell.trailingAnchor).isActive = true }
+        return cell
+    }
+    private func linkName(_ key: String) -> String { key == "local" ? L("局域网") : key == "ipv6" ? L("IPv6 直连") : key == "fn-connect" ? L("FN Connect 中继") : L("未连接") }
+    private func poll() {
+        guard !inFlight, !saving else { return }; inFlight = true
+        work.async { [weak self] in
+            guard let self else { return }
+            do {
+                let settings = try self.rpc.call(method: "link-settings"), connection = try self.rpc.call(method: "status")
+                DispatchQueue.main.async {
+                    self.inFlight = false
+                    let next = settings["links"] as? [[String: Any]] ?? [], fn = settings["fnId"] as? String ?? "", path = connection["path"] as? String ?? ""
+                    let changed = !NSArray(array: next).isEqual(to: self.links) || fn != self.fnID || path != self.currentPath
+                    self.links = next; self.fnID = fn; self.currentPath = path
+                    self.nas.stringValue = fn.isEmpty ? L("请先登录 NAS") : L("当前 NAS：{0}", fn)
+                    self.current.stringValue = L("当前链路：{0}", self.linkName(path))
+                    self.startButton.isEnabled = !fn.isEmpty && !self.selected.isEmpty && !self.confirming
+                    if changed { self.table.reloadData() }
+                }
+            } catch { DispatchQueue.main.async { self.inFlight = false } }
+        }
+    }
+    @objc private func toggleAutoStartSetting() { toggleLoginItem?(); autoStart.state = SMAppService.mainApp.status == .enabled ? .on : .off }
+    @objc private func openLink(_ sender: NSButton) {
+        let links = ["https://github.com/rectcircle/fn-connect-private-network", "https://fncpn.rectcircle.cn", "https://github.com/rectcircle/fn-connect-private-network/releases"]
+        if let url = URL(string: links[sender.tag]) { NSWorkspace.shared.open(url) }
+    }
+    private func showNotice(_ message: String) {
+        notice.stringValue = message.count > 180 ? String(message.prefix(140)) + "…" : message
+        notice.superview?.isHidden = message.isEmpty
+        errorDetails.stringValue = message; errorDetails.isHidden = true
+        detailsButton.isHidden = message.count <= 180
+    }
+    @objc private func toggleErrorDetails() { errorDetails.isHidden.toggle() }
+    @objc private func dismissNotice() { errorMessage = ""; showNotice("") }
+    private func updateSelector() {
+        selector.title = selected.count == 2 ? L("IPv6 与 FN Connect") : selected.contains("ipv6") ? L("IPv6 直连") : selected.contains("fn-connect") ? L("FN Connect 中继") : L("选择测试链路")
+        startButton.isEnabled = !selected.isEmpty && !fnID.isEmpty && !confirming
+    }
+    @objc private func showLinkSelector() {
+        if selectorPopover?.isShown == true { selectorPopover?.close(); return }
+        let controller = NSViewController()
+        let stack = NSStackView(); stack.orientation = .vertical; stack.alignment = .leading; stack.spacing = 12
+        for (index, key) in ["ipv6", "fn-connect"].enumerated() {
+            let check = SettingsButton(checkboxWithTitle: linkName(key), target: self, action: #selector(selectLink(_:)))
+            check.tag = index; check.state = selected.contains(key) ? .on : .off; stack.addArrangedSubview(check)
+        }
+        let done = SettingsButton(title: L("完成"), target: self, action: #selector(closeLinkSelector)); done.bezelStyle = .rounded; stack.addArrangedSubview(done)
+        let view = NSView(frame: NSRect(x: 0, y: 0, width: 240, height: 116)); stack.translatesAutoresizingMaskIntoConstraints = false; view.addSubview(stack)
+        NSLayoutConstraint.activate([stack.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 18), stack.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -18), stack.topAnchor.constraint(equalTo: view.topAnchor, constant: 18), stack.bottomAnchor.constraint(equalTo: view.bottomAnchor, constant: -16)])
+        controller.view = view
+        let popover = NSPopover(); popover.behavior = .transient; popover.animates = false; popover.contentViewController = controller; selectorPopover = popover
+        popover.show(relativeTo: selector.bounds, of: selector, preferredEdge: .maxY)
+    }
+    @objc private func closeLinkSelector() { selectorPopover?.close() }
+    @objc private func selectLink(_ sender: NSButton) {
+        let key = sender.tag == 0 ? "ipv6" : "fn-connect"
+        if sender.state == .on { selected.insert(key) } else { selected.remove(key) }
+        updateSelector()
+    }
+    @objc private func startTest() {
+        guard !selected.isEmpty, !confirming, let window else { return }
+        selectorPopover?.close()
+        let selection = selected
+        let alert = NSAlert()
+        alert.messageText = L("开始网络链路测试？")
+        alert.informativeText = L("测试期间会重新建立连接，现有连接可能短暂中断。") + "\n\n" + L("测试结果仅供参考，会受到 Mac 与 NAS 当时的网络状况及可用带宽影响；使用 FN Connect 时，还受中转服务器带宽限制。")
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: L("开始测试")); alert.addButton(withTitle: L("取消"))
+        confirming = true; updateSelector()
+        alert.beginSheetModal(for: window) { [weak self] result in
+            guard let self else { return }
+            self.confirming = false; self.updateSelector()
+            if result == .alertFirstButtonReturn { self.beginTest(selection) }
+        }
+    }
+    private func beginTest(_ selection: Set<String>) {
+        cancellation?.cancel()
+        let token = IPCCancellation(); cancellation = token
+        errorMessage = ""; showNotice(""); resultArea.isHidden = true; canvas.reset()
+        active = true; startButton.title = L("重新测试"); cancelButton.isHidden = false
+        render(["active": true, "stage": "preparing", "results": []])
+        window?.contentView?.layoutSubtreeIfNeeded(); canvas.scrollToVisible(canvas.bounds)
+        let target = selection.count == 2 ? "all" : selection.first!
+        testing.async { [weak self] in
+            guard let self else { return }
+            do {
+                _ = try self.rpc.call(method: "speedtest", params: ["link": target], cancellation: token, receive: { state in
+                    DispatchQueue.main.async { guard self.cancellation === token else { return }; self.render(state) }
+                    return state["active"] as? Bool != true
+                })
+            } catch {
+                let message = error.localizedDescription
+                DispatchQueue.main.async {
+                    guard self.cancellation === token else { return }
+                    var state = self.lastState; state["active"] = false; state["stage"] = token.isCanceled ? "canceled" : "failed"
+                    self.render(state)
+                    if !token.isCanceled { self.showNotice(message) }
+                }
+            }
+        }
+    }
+    @objc private func cancelTest() { cancellation?.cancel(); phase.stringValue = L("正在取消并恢复连接…"); cancelButton.isEnabled = false }
+    private func render(_ state: [String: Any]) {
+        let wasActive = active
+        lastState = state; active = state["active"] as? Bool == true
+        let stage = state["stage"] as? String ?? "idle"
+        canvas.isHidden = !active; canvas.nasName = fnID; canvas.update(state)
+        phase.isHidden = !active; phase.stringValue = active ? L("正在测试：{0}", linkName(state["link"] as? String ?? "")) : ""
+        cancelButton.isHidden = !active; cancelButton.isEnabled = active && stage != "restoring"
+        startButton.title = active ? L("重新测试") : L("开始测试")
+        let rows = state["results"] as? [[String: Any]] ?? []
+        resultArea.isHidden = active || rows.isEmpty
+        var summaries: [String] = [], failures: [String] = []
+        for (i, key) in ["ipv6", "fn-connect"].enumerated() {
+            let result = rows.first { $0["link"] as? String == key }
+            results.row(at: i + 1).isHidden = result == nil
+            guard let result else { continue }
+            var completed: [String] = []
+            for (j, field) in ["latencyMs", "downloadMbps", "uploadMbps"].enumerated() {
+                if let number = result[field] as? Double { let text = String(format: j == 0 ? "%.1f ms" : "%.1f Mbps", number); values[i][j].stringValue = text; completed.append([L("延迟"), L("下载"), L("上传")][j] + " " + text) }
+                else { values[i][j].stringValue = result["error"] != nil ? L("未完成") : stage == "canceled" ? L("已取消") : "—" }
+            }
+            if !completed.isEmpty { summaries.append(linkName(key) + " · " + completed.joined(separator: "  ")) }
+            if let error = result["error"] as? String { let message = linkName(key) + "：" + L(error); failures.append(message); if active { summaries.append(message) } }
+            values[i].forEach { $0.toolTip = result["completedAt"] as? String }
+        }
+        liveResults.isHidden = !active || summaries.isEmpty; liveResults.stringValue = summaries.joined(separator: "\n")
+        if !active {
+            if let error = state["restoreError"] as? String, !error.isEmpty { failures.append(error) }
+            showNotice(failures.joined(separator: "\n"))
+            if wasActive { window?.contentView?.layoutSubtreeIfNeeded(); resultArea.scrollToVisible(resultArea.bounds) }
+        }
+    }
+    func tableView(_ tableView: NSTableView, pasteboardWriterForRow row: Int) -> NSPasteboardWriting? {
+        guard tableView === table, row > 0, !saving else { return nil }; let item = NSPasteboardItem(); item.setString(String(row), forType: .string); return item
+    }
+    func tableView(_ tableView: NSTableView, validateDrop info: NSDraggingInfo, proposedRow row: Int, proposedDropOperation operation: NSTableView.DropOperation) -> NSDragOperation {
+        guard tableView === table, info.draggingSource as? NSTableView === table, row >= 1, !saving else { return [] }; table.setDropRow(row, dropOperation: .above); return .move
+    }
+    func tableView(_ tableView: NSTableView, acceptDrop info: NSDraggingInfo, row: Int, dropOperation: NSTableView.DropOperation) -> Bool {
+        guard tableView === table, let value = info.draggingPasteboard.string(forType: .string), let source = Int(value), source > 0, source <= links.count, row >= 1 else { return false }
+        let target = min(links.count - 1, max(0, row - 1 - (row > source ? 1 : 0)))
+        if target != source - 1 { var next = links; let entry = next.remove(at: source - 1); next.insert(entry, at: target); save(next) }; return true
+    }
+    @objc private func toggleLink(_ sender: NSSwitch) { guard links.indices.contains(sender.tag) else { return }; var next = links; next[sender.tag]["enabled"] = sender.state == .on; save(next) }
+    @objc private func reorder(_ sender: NSButton) {
+        guard !saving, !fnID.isEmpty else { return }
+        if sender.tag == 2 { save([["link": "ipv6", "enabled": true], ["link": "fn-connect", "enabled": true]]); return }
+        let source = table.selectedRow - 1, target = table.selectedRow - 1 + (sender.tag == 0 ? -1 : 1)
+        guard links.indices.contains(source), links.indices.contains(target) else { return }; var next = links; next.swapAt(source, target); save(next); table.selectRowIndexes(IndexSet(integer: target + 1), byExtendingSelection: false)
+    }
+    private func save(_ next: [[String: Any]]) {
+        guard !saving else { return }; saving = true; let target = fnID
+        work.async { [weak self] in
+            guard let self else { return }
+            do { _ = try self.rpc.call(method: "set-link-settings", params: ["fnId": target, "links": next]); DispatchQueue.main.async { self.saving = false; self.poll() } }
+            catch { let message = error.localizedDescription; DispatchQueue.main.async { self.saving = false; self.showNotice(message); self.table.reloadData() } }
+        }
+    }
+}
+
+private final class SettingsCard: NSView {
+    let body = NSStackView()
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        wantsLayer = true; layer?.cornerRadius = 10; layer?.borderWidth = 0.5
+        body.orientation = .vertical; body.alignment = .leading; body.spacing = 12; body.translatesAutoresizingMaskIntoConstraints = false; addSubview(body)
+        NSLayoutConstraint.activate([body.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16), body.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16), body.topAnchor.constraint(equalTo: topAnchor, constant: 16), body.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -16)])
+    }
+    convenience init() { self.init(frame: .zero) }
+    required init?(coder: NSCoder) { fatalError("init(coder:) is unavailable") }
+    override var wantsUpdateLayer: Bool { true }
+    override func updateLayer() { layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor; layer?.borderColor = NSColor.separatorColor.withAlphaComponent(0.35).cgColor }
+}
+
+private final class SpeedTestCanvas: NSView {
+    private var state: [String: Any] = [:]
+    private var timer: Timer?
+    private var history: [Double] = []
+    private var sequence: UInt64 = 0
+    private var sent: UInt64 = 0
+    private var received: UInt64 = 0
+    private var pingAt: TimeInterval = 0
+    private var pongAt: TimeInterval = 0
+    var nasName = ""
+    override init(frame frameRect: NSRect) { super.init(frame: frameRect); wantsLayer = true; layer?.cornerRadius = 12; setAccessibilityLabel(L("链路测速动画")) }
+    convenience init() { self.init(frame: .zero) }
+    required init?(coder: NSCoder) { fatalError("init(coder:) is unavailable") }
+    func reset() { history = []; sent = 0; received = 0; sequence = 0 }
+    func stopAnimation() { timer?.invalidate(); timer = nil }
+    func update(_ next: [String: Any]) {
+        let oldStage = state["stage"] as? String ?? ""
+        let newStage = next["stage"] as? String ?? ""
+        let sameUpload = oldStage.hasPrefix("upload") && newStage.hasPrefix("upload")
+        if (!sameUpload && oldStage != newStage) || state["link"] as? String != next["link"] as? String { history = []; sent = 0; received = 0; pingAt = 0; pongAt = 0 }
+        state = next
+        let now = ProcessInfo.processInfo.systemUptime
+        let nextSent = (state["echoSent"] as? NSNumber)?.uint64Value ?? 0
+        let nextReceived = (state["echoReceived"] as? NSNumber)?.uint64Value ?? 0
+        if nextSent != sent { sent = nextSent; if now >= pongAt + 0.6 { pingAt = now } }
+        if nextReceived != received { received = nextReceived; pongAt = max(now, pingAt + 0.25) }
+        let nextSequence = (state["sequence"] as? NSNumber)?.uint64Value ?? 0
+        if nextSequence != sequence { sequence = nextSequence; if ["download", "upload"].contains(state["stage"] as? String ?? "") { history.append(state["mbps"] as? Double ?? 0); if history.count > 80 { history.removeFirst() } } }
+        if state["active"] as? Bool == true && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+            if timer == nil { timer = Timer.scheduledTimer(withTimeInterval: 1.0 / 30, repeats: true) { [weak self] _ in self?.needsDisplay = true } }
+        } else { stopAnimation() }
+        needsDisplay = true
+    }
+    private func text(_ value: String, rect: NSRect, size: CGFloat = 12, color: NSColor = .labelColor, weight: NSFont.Weight = .regular) {
+        let paragraph = NSMutableParagraphStyle(); paragraph.alignment = .center; paragraph.lineBreakMode = .byTruncatingMiddle
+        (value as NSString).draw(in: rect, withAttributes: [.font: NSFont.systemFont(ofSize: size, weight: weight), .foregroundColor: color, .paragraphStyle: paragraph])
+    }
+    override func draw(_ dirtyRect: NSRect) {
+        NSColor.controlBackgroundColor.setFill(); NSBezierPath(roundedRect: bounds, xRadius: 12, yRadius: 12).fill()
+        let stage = state["stage"] as? String ?? "idle"
+        let link = state["link"] as? String ?? ""
+        let names = ["idle": L("选择链路开始测速"), "preparing": L("准备测试"), "checking": L("检查链路条件"), "failed": L("测试失败"), "queued": L("等待连接任务"), "connecting": L("正在建立真实链路"), "verifying": L("正在验证 NAS"), "latency": L("正在测试延迟"), "download": L("正在测试下载"), "upload": L("正在测试上传"), "upload-warmup": L("正在预热上传"), "upload-waiting": L("等待 NAS 接收数据"), "upload-confirming": L("等待 NAS 完成确认"), "upload-complete": L("上传完成"), "restoring": L("正在恢复正常选路"), "completed": L("测速完成"), "canceled": L("测速已取消"), "canceling": L("正在取消")]
+        text(names[stage] ?? stage, rect: NSRect(x: 12, y: bounds.height - 30, width: bounds.width - 24, height: 20), size: 13, weight: .medium)
+        let y: CGFloat = 121
+        let xs: [CGFloat] = link == "fn-connect" ? [58, bounds.midX, bounds.width - 58] : [58, bounds.width - 58]
+        let active = state["active"] as? Bool == true
+        let moving = active && ["latency", "download", "upload"].contains(stage)
+        let reduced = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        let now = ProcessInfo.processInfo.systemUptime
+        let left = xs.first! + 31; let right = xs.last! - 31
+        for index in 0..<(xs.count - 1) {
+            let a = xs[index] + 31; let b = xs[index + 1] - 31
+            for direction in 0..<2 {
+                let laneY = y + (direction == 0 ? 8 : -8)
+                let highlight = moving && (stage == "latency" || (stage == "upload" && direction == 0) || (stage == "download" && direction == 1))
+                (highlight ? NSColor.controlAccentColor : NSColor.separatorColor).setStroke()
+                let path = NSBezierPath(); path.lineWidth = highlight ? 2.5 : 1.5; path.move(to: NSPoint(x: a, y: laneY)); path.line(to: NSPoint(x: b, y: laneY)); path.stroke()
+                let arrow = NSBezierPath(); let tip = direction == 0 ? b : a; let offset: CGFloat = direction == 0 ? -5 : 5
+                arrow.move(to: NSPoint(x: tip + offset, y: laneY + 4)); arrow.line(to: NSPoint(x: tip, y: laneY)); arrow.line(to: NSPoint(x: tip + offset, y: laneY - 4)); arrow.stroke()
+                if highlight && !reduced {
+                    var positions: [Double] = []
+                    if stage == "latency" { let age = now - (direction == 0 ? pingAt : pongAt); if age >= 0 && age < 0.25 && (direction == 0 ? sent > 0 : received > 0) { let t = age / 0.25; positions = [t * t * (3 - 2 * t)] } }
+                    else { positions = (0..<3).map { (now * 0.65 + Double($0) / 3).truncatingRemainder(dividingBy: 1) } }
+                    for progress in positions { let x = direction == 0 ? left + (right - left) * progress : right - (right - left) * progress; if x >= a && x <= b { NSColor.controlAccentColor.setFill(); NSBezierPath(ovalIn: NSRect(x: x - 3, y: laneY - 3, width: 6, height: 6)).fill() } }
+                }
+            }
+        }
+        for (index, x) in xs.enumerated() {
+            let frame = NSRect(x: x - 27, y: y - 24, width: 54, height: 48)
+            NSColor.windowBackgroundColor.setFill(); NSBezierPath(roundedRect: frame, xRadius: 10, yRadius: 10).fill()
+            (moving ? NSColor.controlAccentColor : NSColor.separatorColor).setStroke(); NSBezierPath(roundedRect: frame, xRadius: 10, yRadius: 10).stroke()
+            let symbol = index == 0 ? "laptopcomputer" : index == xs.count - 1 ? "externaldrive.connected.to.line.below" : "server.rack"
+            if let image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)?.withSymbolConfiguration(NSImage.SymbolConfiguration(paletteColors: [.labelColor])) { image.draw(in: frame.insetBy(dx: 13, dy: 10)) }
+            text(index == 0 ? L("这台 Mac") : index == xs.count - 1 ? (nasName.isEmpty ? "NAS" : nasName) : L("FN Connect 中转"), rect: NSRect(x: x - 60, y: y - 47, width: 120, height: 18), size: 10, color: .secondaryLabelColor)
+        }
+        let rate = state["mbps"] as? Double ?? 0
+        let metric: String
+        switch stage {
+        case "latency": metric = String(format: "%.1f ms", state["rttMs"] as? Double ?? 0)
+        case "upload", "upload-complete", "download": metric = String(format: "%.1f Mbps", rate)
+        case "upload-warmup": metric = L("预热中…")
+        case "upload-waiting": metric = L("等待接收…")
+        case "upload-confirming": metric = L("等待确认…")
+        default: metric = link == "ipv6" ? L("IPv6 直连") : link == "fn-connect" ? L("FN Connect 中继") : ""
+        }
+        text(metric, rect: NSRect(x: 12, y: 43, width: bounds.width - 24, height: 28), size: 23, weight: .semibold)
+        if history.count > 1 {
+            let maximum = max(history.max() ?? 1, 1)
+            let graph = NSBezierPath(); graph.lineWidth = 1.5
+            for (i, sample) in history.enumerated() { let point = NSPoint(x: 24 + (bounds.width - 48) * CGFloat(i) / CGFloat(max(79, history.count - 1)), y: 9 + CGFloat(sample / maximum) * 22); if i == 0 { graph.move(to: point) } else { graph.line(to: point) } }
+            NSColor.controlAccentColor.setStroke(); graph.stroke()
+        }
+        if moving { let progress = min(1, max(0, state["progress"] as? Double ?? 0)); NSColor.controlAccentColor.withAlphaComponent(0.3).setFill(); NSBezierPath(rect: NSRect(x: 0, y: 0, width: bounds.width * progress, height: 3)).fill() }
+    }
+}
+
+private final class SettingsDocumentView: NSView { override var isFlipped: Bool { true } }
+
+private final class IPCCancellation {
+ private let lock = NSLock()
+ private var descriptor: Int32?
+ private var canceled = false
+ var isCanceled: Bool { lock.lock(); defer { lock.unlock() }; return canceled }
+ func attach(_ fd: Int32) throws { lock.lock(); defer { lock.unlock() }; if canceled { throw POSIXError(.ECANCELED) }; descriptor = fd }
+ func detach() { lock.lock(); descriptor = nil; lock.unlock() }
+ func cancel() { lock.lock(); canceled = true; if let fd = descriptor { _ = Darwin.shutdown(fd, SHUT_RDWR) }; lock.unlock() }
+}
+
+private final class SettingsBackgroundView: NSView {
+ override func draw(_ dirtyRect: NSRect) { NSColor.windowBackgroundColor.setFill(); bounds.fill() }
+}
+private final class SettingsSidebarRow: NSTableRowView {
+ override var interiorBackgroundStyle: NSView.BackgroundStyle { .normal }
+ override func drawSelection(in dirtyRect: NSRect) {
+  NSColor.controlAccentColor.withAlphaComponent(0.16).setFill()
+  NSBezierPath(roundedRect: bounds.insetBy(dx: 2, dy: 2), xRadius: 7, yRadius: 7).fill()
+ }
+}
+
+// Only user-facing windows participate. Popovers and sheets must not keep an
+// otherwise headless menu-bar app in the Dock; minimized windows still count.
+private final class WindowPresence {
+    static let shared = WindowPresence()
+    private let windows = NSHashTable<NSWindow>.weakObjects()
+    private var observers: [NSObjectProtocol] = []
+    private init() {
+        for name in [NSWindow.willCloseNotification, NSWindow.didMiniaturizeNotification, NSWindow.didDeminiaturizeNotification, NSWindow.didBecomeKeyNotification] {
+            observers.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] note in
+                guard let self, let window = note.object as? NSWindow, self.windows.contains(window) else { return }
+                self.update(excluding: note.name == NSWindow.willCloseNotification ? window : nil)
+            })
+        }
+    }
+    func register(_ window: NSWindow) { windows.add(window) }
+    func show(_ window: NSWindow) {
+        register(window)
+        if NSApp.activationPolicy() != .regular { NSApp.setActivationPolicy(.regular) }
+        window.deminiaturize(nil); window.makeKeyAndOrderFront(nil)
+        update(); NSApp.activate(ignoringOtherApps: true)
+    }
+    func update(excluding closing: NSWindow? = nil) {
+        let visible = windows.allObjects.contains { $0 !== closing && ($0.isVisible || $0.isMiniaturized) }
+        let policy: NSApplication.ActivationPolicy = visible ? .regular : .accessory
+        if NSApp.activationPolicy() != policy { NSApp.setActivationPolicy(policy) }
+    }
+}
+
+private final class HoverHelpButton: SettingsButton {
+    var helpText = "" { didSet { setAccessibilityHelp(helpText) } }
+    private var tracking: NSTrackingArea?
+    private var popover: NSPopover?
+    override func updateTrackingAreas() {
+        if let tracking { removeTrackingArea(tracking) }
+        let area = NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect], owner: self, userInfo: nil)
+        addTrackingArea(area); tracking = area; super.updateTrackingAreas()
+    }
+    override func mouseEntered(with event: NSEvent) { showExplanation() }
+    override func mouseExited(with event: NSEvent) { popover?.close() }
+    override func viewDidMoveToWindow() { super.viewDidMoveToWindow(); if window == nil { popover?.close() } }
+    override func accessibilityPerformPress() -> Bool { showExplanation(); return true }
+    private func showExplanation() {
+        guard window != nil, popover?.isShown != true else { return }
+        let text = NSTextField(wrappingLabelWithString: helpText); text.font = .systemFont(ofSize: 12); text.preferredMaxLayoutWidth = 288
+        let height = min(220, max(60, (text.cell?.cellSize(forBounds: NSRect(x: 0, y: 0, width: 288, height: 1000)).height ?? 80) + 28))
+        let view = NSView(frame: NSRect(x: 0, y: 0, width: 320, height: height)); text.translatesAutoresizingMaskIntoConstraints = false; view.addSubview(text)
+        NSLayoutConstraint.activate([text.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16), text.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16), text.topAnchor.constraint(equalTo: view.topAnchor, constant: 14), text.bottomAnchor.constraint(lessThanOrEqualTo: view.bottomAnchor, constant: -14)])
+        let controller = NSViewController(); controller.view = view
+        let help = NSPopover(); help.behavior = .transient; help.animates = false; help.contentViewController = controller; popover = help
+        help.show(relativeTo: bounds, of: self, preferredEdge: .maxY)
+    }
+}
+
+// Native controls use an arrow by default; settings exposes clickable regions
+// consistently, including popover choices and the navigation rows.
+private class SettingsButton: NSButton {
+    override func resetCursorRects() {
+        super.resetCursorRects()
+        if isEnabled { addCursorRect(bounds, cursor: .pointingHand) }
+    }
+}
+private final class SettingsSwitch: NSSwitch {
+    override func resetCursorRects() {
+        super.resetCursorRects()
+        if isEnabled { addCursorRect(bounds, cursor: .pointingHand) }
+    }
+}
+private final class SettingsTableView: NSTableView {
+    var allRowsClickable = false
+    override func resetCursorRects() {
+        super.resetCursorRects()
+        for row in 0..<numberOfRows where allRowsClickable || row > 0 {
+            addCursorRect(rect(ofRow: row), cursor: .pointingHand)
+        }
     }
 }

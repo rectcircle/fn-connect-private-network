@@ -80,6 +80,9 @@ type clientView struct {
 	diagnosticText                            string
 	editing                                   bool
 	drawer                                    *navigationDrawer
+	settingsInfoOnce                          sync.Once
+	settingsInfoURL                           string
+	settingsInfoError                         error
 }
 
 func newClientView(backend daemonClient) *clientView {
@@ -111,7 +114,7 @@ func newClientView(backend daemonClient) *clientView {
 	v.primary.Importance = widget.HighImportance
 	retry := newTouchButton(tr("重新检测"), func() { v.command(client.MethodRetry) })
 	rows := []fyne.CanvasObject{}
-	for _, name := range []string{tr("连接路径"), tr("隧道地址"), tr("网络接口"), tr("最近握手"), "DNS", tr("网络服务"), tr("IPv6 检测"), "NAS IP"} {
+	for _, name := range []string{tr("网络链路"), tr("隧道地址"), tr("网络接口"), tr("最近握手"), "DNS", tr("网络服务"), tr("IPv6 检测"), "NAS IP"} {
 		label := widget.NewLabel(name)
 		label.Importance = widget.LowImportance
 		value := widget.NewLabel("—")
@@ -150,7 +153,7 @@ func newClientView(backend daemonClient) *clientView {
 
 	v.mainScroll = container.NewVScroll(container.New(layout.NewCustomPaddedLayout(12, 12, 16, 16), container.NewVBox(
 		v.identity, v.status, container.New(layout.NewFormLayout(), rows...),
-		container.NewGridWithColumns(2, v.primary, retry), widget.NewLabel(tr("诊断详情")), diagnosticScroll,
+		container.NewGridWithColumns(3, v.primary, retry, newTouchButton(tr("设置"), v.openSettings)), widget.NewLabel(tr("诊断详情")), diagnosticScroll,
 		container.NewGridWithColumns(3, copyReport, logs, refresh), fixedGap(32),
 	)))
 	v.mainPanel = quietScrollView(v.mainScroll, v.mainScroll)
@@ -413,6 +416,7 @@ func (v *clientView) prepareMenu() {
 	v.admin = add(tr("管理后台"), theme.ComputerIcon(), v.openAdmin)
 
 	add(tr("官网 · 捐赠"), theme.HelpIcon(), func() { v.openWebsite() })
+	add(tr("设置"), theme.SettingsIcon(), v.openSettings)
 	add(tr("导出诊断与日志"), theme.DownloadIcon(), v.exportSupport)
 	if platform, ok := v.backend.(interface{ NetworkDebugAvailable() bool }); ok && platform.NetworkDebugAvailable() {
 		add(tr("应用内网络调试"), theme.ComputerIcon(), v.networkDebug)
@@ -666,7 +670,7 @@ func (v *clientView) applyStatus(status model.ClientStatus) {
 	if path == "" {
 		path = "—"
 	}
-	v.setLabel(v.values[tr("连接路径")], path)
+	v.setLabel(v.values[tr("网络链路")], path)
 	iface := status.Interface
 	if iface == "" {
 		iface = "—"
@@ -875,4 +879,32 @@ func (v *clientView) setLabel(label *widget.Label, text string) {
 	if label == v.identity || label == v.diagnosticBody {
 		v.layoutDirty = true
 	}
+}
+
+// Settings is local application content, independent of NAS administrator rights.
+func (v *clientView) openSettings() {
+	if v.drawer != nil {
+		v.drawer.Hide()
+	}
+	v.execute(func(ctx context.Context) error {
+		var result struct {
+			URL string `json:"url"`
+		}
+		if err := v.backend.Call(ctx, client.MethodSettingsURL, nil, &result); err != nil {
+			// General remains available without VPN permission or a running extension.
+			v.settingsInfoOnce.Do(func() { v.settingsInfoURL, v.settingsInfoError = client.NewSettingsInfoPage(v.ctx) })
+			if v.settingsInfoError != nil {
+				return v.settingsInfoError
+			}
+			result.URL = v.settingsInfoURL
+		}
+		parsed, err := url.Parse(result.URL)
+		if err != nil || parsed.Scheme != "http" || parsed.Hostname() != "127.0.0.1" || parsed.Port() == "" || parsed.User != nil || parsed.Path != "/app/fncpn/settings" {
+			return fmt.Errorf("%s", tr("无效的设置页面地址"))
+		}
+		if platform, ok := v.backend.(interface{ OpenAdmin(string) error }); ok {
+			return platform.OpenAdmin(result.URL)
+		}
+		return fyne.CurrentApp().OpenURL(parsed)
+	})
 }

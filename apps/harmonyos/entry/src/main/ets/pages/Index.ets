@@ -267,10 +267,30 @@ struct Index {
       if (!this.challenge) { this.password = password; this.accessCode = accessCode; }
     } finally { this.busy = false; }
   }
+  private settingsNavigation(request: WebResourceRequest): boolean {
+    if (!this.adminURL.includes('/app/fncpn/settings')) { return false; }
+    const target = request.getRequestUrl();
+    const origin = this.adminURL.split('/app/fncpn/settings')[0];
+    if (target.startsWith(origin + '/app/fncpn/settings')) { return false; }
+    if (request.isRequestGesture() && (target.startsWith('https://github.com/rectcircle/fn-connect-private-network') || target.startsWith('https://fncpn.rectcircle.cn/'))) {
+      this.openBrowser(target).catch((error: Error) => { this.message = error.message; });
+    }
+    return true;
+  }
   private closeAdmin(): void {
     this.getUIContext().animateTo({ duration: 220, curve: Curve.EaseOut }, () => { this.adminURL = ''; });
   }
   private cancelAdmin(): void { this.adminGeneration++; this.adminLoading = false; this.busy = false; }
+  private async openSettings(): Promise<void> {
+    if (this.busy) { return; }
+    this.closeMenu(); this.busy = true;
+    try {
+      const result = await this.client.call<Admin>('settings-url');
+      if (!/^http:\/\/127\.0\.0\.1:\d+\/app\/fncpn\/settings\?fncpn_proxy=[a-f0-9]{64}$/.test(result.url)) { throw new Error(tr('无效的设置页面地址')); }
+      this.adminURL = result.url;
+    } catch (error) { this.message = (error as Error).message || String(error); }
+    finally { this.busy = false; }
+  }
   private async openAdmin(): Promise<void> {
     if (this.busy) { return; }
     const generation = ++this.adminGeneration;
@@ -530,6 +550,7 @@ struct Index {
       this.menuItem('重新登录', $r('app.media.menu_login'), () => { this.enterLogin(false); })
       this.menuItem('更换 NAS', $r('app.media.menu_storage'), () => { this.enterLogin(true); })
       this.menuItem('管理后台', $r('app.media.menu_computer'), () => { if (!this.busy) { this.openAdmin(); } })
+      this.menuItem('设置', $r('app.media.menu_computer'), () => { this.openSettings(); })
       this.menuItem('官网 · 捐赠', $r('app.media.menu_help'), () => { this.closeMenu(); this.openBrowser('https://fncpn.rectcircle.cn/#donate').catch((error: Error) => { this.message = (error as Error).message || String(error); }); })
       this.menuItem('导出诊断与日志', $r('app.media.menu_download'), () => { this.exportReport(); })
       if (this.showDebugUI) { this.menuItem('应用内网络调试', $r('app.media.menu_computer'), () => { this.closeMenu(); this.probeTarget = this.nasAddress !== '—' ? 'http://' + this.nasAddress + '/' : ''; this.probeResult = ''; this.networkDebug = true; }) }
@@ -543,7 +564,7 @@ struct Index {
                 Text(this.identity).fontSize(this.tv ? 24 : 16).fontWeight(FontWeight.Bold).width('100%')
                 Text(this.stateName()).fontSize(this.tv ? 32 : 20).fontWeight(FontWeight.Bold).fontColor(this.healthy() ? (this.dnsDegraded ? $r('app.color.danger') : $r('app.color.success')) : $r('app.color.foreground')).width('100%')
                 Column() {
-                  StatusRow({ label: tr('连接路径'), value: this.path, tv: this.tv }); StatusRow({ label: tr('隧道地址'), value: this.clientAddress, tv: this.tv }); StatusRow({ label: tr('网络接口'), value: this.network, tv: this.tv });
+                  StatusRow({ label: tr('网络链路'), value: this.path, tv: this.tv }); StatusRow({ label: tr('隧道地址'), value: this.clientAddress, tv: this.tv }); StatusRow({ label: tr('网络接口'), value: this.network, tv: this.tv });
                   StatusRow({ label: tr('最近握手'), value: this.handshake, tv: this.tv });
                   Row() {
                     Text('DNS').fontColor($r('app.color.secondary')).width('36%')
@@ -562,6 +583,7 @@ struct Index {
                   Button(this.localWaiting ? tr('继续远程连接') : this.connected() ? tr('断开连接') : tr('连接')).type(ButtonType.Normal).height(this.controlHeight()).focusBox({ margin: LengthMetrics.vp(3), strokeWidth: LengthMetrics.vp(2), strokeColor: ColorMetrics.resourceColor($r('app.color.primary')) }).borderRadius(BUTTON_RADIUS).backgroundColor($r('app.color.primary')).fontColor($r('app.color.on_primary')).layoutWeight(1).defaultFocus(this.tv).enabled(!this.busy && !vpnUnavailable(this.uiDebug))
                     .onClick(() => { this.command(this.localWaiting ? 'continue-remote' : this.connected() ? 'disconnect' : 'connect'); })
                   Column() { this.secondaryAction('重新检测', undefined, () => { this.command('retry'); }) }.layoutWeight(1)
+                  Column() { this.secondaryAction('设置', undefined, () => { this.openSettings(); }) }.layoutWeight(1)
                 }
     }.width('100%')
   }
@@ -595,7 +617,7 @@ struct Index {
             })
             .transition(TransitionEffect.move(TransitionEdge.END).combine(TransitionEffect.OPACITY))
         } else if (this.adminURL) {
-          Web({ src: this.adminURL, controller: this.adminController }).layoutWeight(1).javaScriptAccess(true).fileAccess(false).domStorageAccess(true).transition(TransitionEffect.move(TransitionEdge.END).combine(TransitionEffect.OPACITY))
+          Web({ src: this.adminURL, controller: this.adminController }).layoutWeight(1).javaScriptAccess(true).fileAccess(false).domStorageAccess(true).multiWindowAccess(false).onOverrideUrlLoading((request: WebResourceRequest) => { return this.settingsNavigation(request); }).transition(TransitionEffect.move(TransitionEdge.END).combine(TransitionEffect.OPACITY))
         } else if (this.logsOpen) {
           Column({ space: 8 }) {
             Select(this.logOptions).value(this.logFile).enabled(this.logOptions.length > 0).onSelect((_, value: string) => { this.readLog(value); })

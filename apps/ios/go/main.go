@@ -19,12 +19,12 @@ import (
 	"time"
 	"unsafe"
 
+	"github.com/rectcircle/fn-connect-private-network/apps/ios/bridge/logs"
 	"github.com/rectcircle/fn-connect-private-network/internal/client"
 	"github.com/rectcircle/fn-connect-private-network/internal/clienthost"
 	"github.com/rectcircle/fn-connect-private-network/internal/ipc"
 	"github.com/rectcircle/fn-connect-private-network/internal/logging"
 	"github.com/rectcircle/fn-connect-private-network/internal/model"
-	"github.com/rectcircle/fn-connect-private-network/apps/ios/bridge/logs"
 	"github.com/rectcircle/fn-connect-private-network/internal/platform/ios"
 )
 
@@ -148,7 +148,7 @@ func fncpn_start(directory *C.char) *C.char {
 	engine.Logger = privilegedLogger
 	network := iosvpn.NewNetwork()
 	store := client.NewConfigStore(filepath.Join(C.GoString(directory), "client.json"), iosvpn.Secrets{System: sys})
-	manager, err := client.NewManager(client.ManagerOptions{Store: store, Logger: logger, DNSHTTPClient: &http.Client{Transport: &http.Transport{DialContext: engine.DialPrivate}, Timeout: 3 * time.Second}, Discoverer: client.DiscoveryClient{}, Remote: func(id string, cookies []client.Cookie, onCookies func([]client.Cookie) error) (client.RemoteService, error) {
+	manager, err := client.NewManager(client.ManagerOptions{Store: store, Logger: logger, SpeedTestDialContext: engine.DialPrivate, DNSHTTPClient: &http.Client{Transport: &http.Transport{DialContext: engine.DialPrivate}, Timeout: 3 * time.Second}, Discoverer: client.DiscoveryClient{}, Remote: func(id string, cookies []client.Cookie, onCookies func([]client.Cookie) error) (client.RemoteService, error) {
 		u, e := client.DefaultRemoteURL(id)
 		if e != nil {
 			return nil, e

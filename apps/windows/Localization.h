@@ -47,7 +47,6 @@ inline std::wstring L(std::wstring_view source) {
         {L"登录并连接", L"Sign in and connect"},
         {L"返回连接详情", L"Back to connection details"},
         {L"在浏览器中打开 NAS 管理页面", L"Open NAS administration in your browser"},
-        {L"连接路径", L"Connection path"},
         {L"隧道地址", L"Tunnel address"},
         {L"网络接口", L"Network interface"},
         {L"最近握手", L"Last handshake"},
@@ -285,6 +284,8 @@ inline std::wstring L(std::wstring_view source) {
         {L"请输入 6 位 OTP", L"Enter a 6-digit OTP"},
         {L"上一步", L"Back"},
         {L"服务不可用。请检查网络连接、NAS 上的 FN Connect 是否已启用，以及 FN Connect ID 是否正确。", L"Service unavailable. Check your network connection, whether FN Connect is enabled on the NAS, and whether the FN Connect ID is correct."},
+        {L"网络链路", L"Network link"},
+        {L"设置", L"Settings"},
     };
     const auto found = catalog.find(source);
     return std::wstring(found == catalog.end() ? source : found->second);
@@ -331,7 +332,6 @@ inline const wchar_t* L(const char* source) {
         {"登录并连接", {L"Sign in and connect", L"登录并连接"}},
         {"返回连接详情", {L"Back to connection details", L"返回连接详情"}},
         {"在浏览器中打开 NAS 管理页面", {L"Open NAS administration in your browser", L"在浏览器中打开 NAS 管理页面"}},
-        {"连接路径", {L"Connection path", L"连接路径"}},
         {"隧道地址", {L"Tunnel address", L"隧道地址"}},
         {"网络接口", {L"Network interface", L"网络接口"}},
         {"最近握手", {L"Last handshake", L"最近握手"}},
@@ -569,6 +569,8 @@ inline const wchar_t* L(const char* source) {
         {"请输入 6 位 OTP", {L"Enter a 6-digit OTP", L"请输入 6 位 OTP"}},
         {"上一步", {L"Back", L"上一步"}},
         {"服务不可用。请检查网络连接、NAS 上的 FN Connect 是否已启用，以及 FN Connect ID 是否正确。", {L"Service unavailable. Check your network connection, whether FN Connect is enabled on the NAS, and whether the FN Connect ID is correct.", L"服务不可用。请检查网络连接、NAS 上的 FN Connect 是否已启用，以及 FN Connect ID 是否正确。"}},
+        {"网络链路", {L"Network link", L"网络链路"}},
+        {"设置", {L"Settings", L"设置"}},
     };
     const auto found = catalog.find(source);
     if (found == catalog.end()) return L"";

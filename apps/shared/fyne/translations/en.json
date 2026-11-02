@@ -88,7 +88,6 @@
   "返回": "Back",
   "连接": "Connect",
   "连接异常": "Connection error",
-  "连接路径": "Connection path",
   "退出": "Quit",
   "重新检测": "Recheck",
   "重新登录": "Sign in again",
@@ -97,5 +96,9 @@
   "需要登录": "Sign-in required",
   "验证码": "Verification code",
   "服务不可用。请检查网络连接、NAS 上的 FN Connect 是否已启用，以及 FN Connect ID 是否正确。": "Service unavailable. Check your network connection, whether FN Connect is enabled on the NAS, and whether the FN Connect ID is correct.",
-  "网络服务": "Network service"
+  "网络服务": "Network service",
+  "网络链路": "Network link",
+  "设置": "Settings",
+  "无效的设置页面地址": "Invalid settings page address",
+  "正在打开设置…": "Opening settings…"
 }

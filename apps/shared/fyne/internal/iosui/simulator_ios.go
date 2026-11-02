@@ -109,8 +109,8 @@ func simulatorHost() (*clienthost.Host, *iosvpn.Engine, error) {
 	network := iosvpn.NewNetwork()
 	store := client.NewConfigStore(filepath.Join(directory, "client.json"), iosvpn.Secrets{System: simulatorSystem{}})
 	manager, err := client.NewManager(client.ManagerOptions{Store: store, Logger: logger,
-		DNSHTTPClient: &http.Client{Transport: &http.Transport{DialContext: engine.DialPrivate}, Timeout: 3 * time.Second},
-		Discoverer:    client.DiscoveryClient{}, Remote: func(id string, cookies []client.Cookie, onCookies func([]client.Cookie) error) (client.RemoteService, error) {
+		SpeedTestDialContext: engine.DialPrivate, DNSHTTPClient: &http.Client{Transport: &http.Transport{DialContext: engine.DialPrivate}, Timeout: 3 * time.Second},
+		Discoverer: client.DiscoveryClient{}, Remote: func(id string, cookies []client.Cookie, onCookies func([]client.Cookie) error) (client.RemoteService, error) {
 			u, err := client.DefaultRemoteURL(id)
 			if err != nil {
 				return nil, err
@@ -205,6 +205,10 @@ func NetworkProbe(ctx context.Context, target string) (string, error) {
 
 func simulatorLogDirectory() (string, error) { return simulatorDirectory() }
 func simulatorBrowserAllowed(target string) error {
+	// Settings is served by this local app host, not by the private NAS tunnel.
+	if u, err := url.Parse(target); err == nil && u.Scheme == "http" && u.Hostname() == "127.0.0.1" && u.Path == "/app/fncpn/settings" {
+		return nil
+	}
 	u, err := url.Parse(target)
 	if err != nil {
 		return err
