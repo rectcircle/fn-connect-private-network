@@ -224,3 +224,54 @@ func TestOfflineSettingsPageEditsSavedNASWithoutStartingAConnection(t *testing.T
 		t.Fatal(result, err)
 	}
 }
+
+func TestSavedSettingsCanStartTestWithoutPriorConnection(t *testing.T) {
+	store := configuredManagerStore(t)
+	runs := 0
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	address, err := NewSavedSettingsPageWithTest(ctx, store, func(ctx context.Context, input SpeedTestRequest, report func(SpeedTestStatus) error) error {
+		runs++
+		if input.Link != "ipv6" {
+			t.Errorf("wrong selected link: %s", input.Link)
+		}
+		return report(SpeedTestStatus{Stage: "complete", Results: []SpeedTestResult{{Link: input.Link}}})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	u, _ := url.Parse(address)
+	call := func(path, body string) *http.Response {
+		t.Helper()
+		method := "GET"
+		if body != "" {
+			method = "POST"
+		}
+		request, _ := http.NewRequestWithContext(ctx, method, "http://"+u.Host+settingsPath+path, strings.NewReader(body))
+		request.Header.Set("Authorization", "Bearer "+u.Query().Get("fncpn_proxy"))
+		response, err := http.DefaultClient.Do(request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return response
+	}
+	response := call("/api/state", "")
+	var state struct {
+		InfoOnly bool         `json:"infoOnly"`
+		Settings LinkSettings `json:"settings"`
+	}
+	err = json.NewDecoder(response.Body).Decode(&state)
+	response.Body.Close()
+	if err != nil || state.InfoOnly || state.Settings.FNID != "home-nas" || runs != 0 {
+		t.Fatalf("opening settings should enable testing without starting VPN: %+v runs=%d err=%v", state, runs, err)
+	}
+	response = call("/api/test", `{"link":"ipv6"}`)
+	defer response.Body.Close()
+	var result SpeedTestStatus
+	if err := json.NewDecoder(response.Body).Decode(&result); err != nil {
+		t.Fatal(err)
+	}
+	if runs != 1 || result.Stage != "complete" {
+		t.Fatalf("disconnected test not delegated: %+v runs=%d", result, runs)
+	}
+}

@@ -101,6 +101,7 @@ $('confirm-cancel').onclick=()=>$('confirm').close();
 $('confirm-start').onclick=async()=>{
  $('confirm').close();const previous=controller;if(previous)previous.abort();const current=new AbortController();controller=current;
  $('cancel').hidden=false;$('start').textContent=L('重新测试');notice();historyValues=[];historyStage='';renderTest({active:true,stage:'preparing',results:[]});
+ requestAnimationFrame(()=>window.scrollTo({top:document.documentElement.scrollHeight,behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'instant':'smooth'}));
  try{
   const response=await request('test',{link:selection.length===2?'all':selection[0]},current.signal), reader=response.body.getReader(),decoder=new TextDecoder();let pending='';let ended=false;
   while(true){const chunk=await reader.read();if(controller!==current){await reader.cancel();return;}pending+=decoder.decode(chunk.value||new Uint8Array(),{stream:!chunk.done});let newline;while((newline=pending.indexOf('\n'))!==-1){const line=pending.slice(0,newline);pending=pending.slice(newline+1);if(line.trim()){const event=JSON.parse(line);renderTest(event);if(!event.active)ended=true;}}if(chunk.done)break;}

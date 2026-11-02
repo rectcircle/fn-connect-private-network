@@ -518,5 +518,5 @@
   "返回设置": "Back to Settings",
   "关于": "About",
   "拖动调整优先级": "Drag to change priority",
-  "未连接时可调整已保存 NAS 的链路偏好；网络测试需先在主窗口连接 NAS。": "You can change saved NAS link preferences while disconnected. Connect to the NAS in the main window before testing."
+  "网络服务暂不可用，可调整已保存 NAS 的链路偏好。": "Network service unavailable. You can change saved NAS link preferences."
 }

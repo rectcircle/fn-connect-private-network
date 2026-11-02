@@ -53,6 +53,7 @@ func (system) Call(method string, params, result any) error {
 var state struct {
 	sync.Mutex
 	host         *clienthost.Host
+	manager      *client.Manager
 	network      *androidvpn.Network
 	notifyCancel context.CancelFunc
 	log          *logging.RotatingWriter
@@ -124,6 +125,7 @@ func fncpnStart(directory *C.char) *C.char {
 		return C.CString(err.Error())
 	}
 	state.host, state.network = host, network
+	state.manager = manager
 	state.engine = engine
 	state.log = writer
 	keepLog = true
@@ -154,6 +156,7 @@ func fncpnStop(revoked C.int) {
 	writer := state.log
 	state.log = nil
 	state.host = nil
+	state.manager = nil
 	state.network = nil
 	state.Unlock()
 	if cancel != nil {
@@ -341,5 +344,22 @@ func SavedSettingsPage(ctx context.Context) (string, error) {
 	if err := (system{}).Call("settings.directory", nil, &directory); err != nil {
 		return "", err
 	}
-	return client.NewSavedSettingsPage(ctx, client.NewConfigStore(filepath.Join(directory, "client.json"), nil))
+	return client.NewSavedSettingsPageWithTest(ctx, client.NewConfigStore(filepath.Join(directory, "client.json"), nil), func(ctx context.Context, input client.SpeedTestRequest, report func(client.SpeedTestStatus) error) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if err := report(client.SpeedTestStatus{Active: true, Stage: "preparing"}); err != nil {
+			return err
+		}
+		if err := (system{}).Call("service.ensure", nil, nil); err != nil {
+			return err
+		}
+		state.Lock()
+		manager, stopping := state.manager, state.stopping
+		state.Unlock()
+		if stopping || manager == nil {
+			return errors.New("Android VPN service is unavailable")
+		}
+		return manager.RunSpeedTest(ctx, input, report)
+	})
 }

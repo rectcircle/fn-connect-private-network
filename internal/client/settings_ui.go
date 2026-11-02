@@ -173,7 +173,13 @@ func NewSettingsInfoPage(ctx context.Context) (string, error) {
 	return NewSavedSettingsPage(ctx, nil)
 }
 func NewSavedSettingsPage(ctx context.Context, store *ConfigStore) (string, error) {
-	ui, err := startSettingsUI(settingsInfoBackend{store: store})
+	return NewSavedSettingsPageWithTest(ctx, store, nil)
+}
+
+// NewSavedSettingsPageWithTest keeps preferences available before the platform
+// runtime exists, and starts that runtime only when the user requests a test.
+func NewSavedSettingsPageWithTest(ctx context.Context, store *ConfigStore, run func(context.Context, SpeedTestRequest, func(SpeedTestStatus) error) error) (string, error) {
+	ui, err := startSettingsUI(settingsInfoBackend{store: store, run: run})
 	if err != nil {
 		return "", err
 	}
@@ -187,7 +193,10 @@ type settingsBackend interface {
 	RunSpeedTest(context.Context, SpeedTestRequest, func(SpeedTestStatus) error) error
 	Status() model.ClientStatus
 }
-type settingsInfoBackend struct{ store *ConfigStore }
+type settingsInfoBackend struct {
+	store *ConfigStore
+	run   func(context.Context, SpeedTestRequest, func(SpeedTestStatus) error) error
+}
 
 func (settingsInfoBackend) Status() model.ClientStatus {
 	return model.ClientStatus{State: model.ClientUnconfigured}
@@ -204,7 +213,10 @@ func (b settingsInfoBackend) SetLinkSettings(ctx context.Context, input LinkSett
 	}
 	return LinkSettings{}, errors.New("连接服务未启动，请先在主窗口连接 NAS，再重新打开设置。")
 }
-func (settingsInfoBackend) RunSpeedTest(context.Context, SpeedTestRequest, func(SpeedTestStatus) error) error {
+func (b settingsInfoBackend) RunSpeedTest(ctx context.Context, input SpeedTestRequest, report func(SpeedTestStatus) error) error {
+	if b.run != nil {
+		return b.run(ctx, input, report)
+	}
 	return errors.New("连接服务未启动，请先在主窗口连接 NAS，再重新打开设置。")
 }
 func (ui *settingsUI) url() string {
@@ -226,8 +238,8 @@ func startSettingsUI(backend settingsBackend) (*settingsUI, error) {
 }
 
 func isSettingsInfoOnly(backend settingsBackend) bool {
-	_, ok := backend.(settingsInfoBackend)
-	return ok
+	saved, ok := backend.(settingsInfoBackend)
+	return ok && saved.run == nil
 }
 
 func (ui *settingsUI) cookieName() string {
