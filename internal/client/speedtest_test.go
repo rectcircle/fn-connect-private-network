@@ -2,6 +2,8 @@ package client
 
 import (
 	"context"
+	"encoding/base64"
+	"errors"
 	"io"
 	"net/http"
 	"net/netip"
@@ -143,4 +145,36 @@ func TestSpeedTestDoesNotRejectIPv6WhenInterfaceClassificationIsFalse(t *testing
 			t.Fatal("IPv6 test bypassed ordinary destination route/handshake path")
 		}
 	})
+}
+
+func TestSpeedTunnelVerificationRetriesTransientFailureOnly(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		failure error
+		want    int
+	}{
+		{"timeout", context.DeadlineExceeded, 3},
+		{"invalid-proof", model.NewError(model.ErrorProtocol, "invalid identity", false), 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				attempts := 0
+				probe := SystemLocalProbe{HTTPClient: &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) { attempts++; return nil, tc.failure })}}
+				cfg := model.PrivateAPIConfiguration{Key: base64.RawURLEncoding.EncodeToString(make([]byte, 32)), Endpoints: []string{"192.168.1.2:54790"}}
+				ok, err := verifySpeedTunnel(t.Context(), probe, cfg, "device")
+				if ok || err == nil || attempts != tc.want {
+					t.Fatalf("ok=%v err=%v attempts=%d", ok, err, attempts)
+				}
+				if tc.want == 3 && !strings.Contains(err.Error(), "deadline exceeded") {
+					t.Fatal("underlying timeout lost", err)
+				}
+				ctx, cancel := context.WithCancel(t.Context())
+				cancel()
+				_, err = verifySpeedTunnel(ctx, probe, cfg, "device")
+				if !errors.Is(err, context.Canceled) {
+					t.Fatal(err)
+				}
+			})
+		})
+	}
 }

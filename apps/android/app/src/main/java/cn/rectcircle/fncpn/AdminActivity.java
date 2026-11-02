@@ -26,6 +26,8 @@ public final class AdminActivity extends Activity {
         AppChrome.theme(this);super.onCreate(state);
         entry=getIntent().getStringExtra("url");origin=entry==null?null:Uri.parse(entry);
         if(origin==null || !"http".equals(origin.getScheme()) || !"127.0.0.1".equals(origin.getHost()) || origin.getPort()<=0 || origin.getUserInfo()!=null){finish();return;}
+        if(isSettings())entry=origin.buildUpon().appendQueryParameter("nativeBack","1").build().toString();
+        if(Build.VERSION.SDK_INT>=33)getOnBackInvokedDispatcher().registerOnBackInvokedCallback(android.window.OnBackInvokedDispatcher.PRIORITY_DEFAULT,this::onBackPressed);
         frame=new FrameLayout(this);
         loading=new LinearLayout(this);loading.setOrientation(LinearLayout.VERTICAL);loading.setGravity(android.view.Gravity.CENTER);loading.setBackgroundColor(AppChrome.background(this));
         progress=new ProgressBar(this);loading.addView(progress);

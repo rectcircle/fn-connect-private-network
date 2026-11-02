@@ -2025,15 +2025,15 @@ private final class LinkSettingsController: NSWindowController, NSWindowDelegate
         let name = row == 0 ? "local" : links[row - 1]["link"] as? String ?? ""
         let enabled = row == 0 || links[row - 1]["enabled"] as? Bool == true
         let suffix = row == 0 ? L(" · 始终优先") : currentPath == name ? L(" · 当前使用") : !enabled ? L(" · 已禁用") : ""
-        let text = label((row == 0 ? "" : "⠿  ") + linkName(name) + suffix)
+        let text = label("⠿  " + linkName(name) + suffix)
         text.textColor = row == 0 ? .tertiaryLabelColor : enabled ? .labelColor : .secondaryLabelColor
         text.translatesAutoresizingMaskIntoConstraints = false; cell.addSubview(text)
         NSLayoutConstraint.activate([text.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 6), text.centerYAnchor.constraint(equalTo: cell.centerYAnchor)])
-        if row > 0 {
-            let toggle = SettingsSwitch(); toggle.state = enabled ? .on : .off; toggle.target = self; toggle.action = #selector(toggleLink(_:)); toggle.tag = row - 1; toggle.isEnabled = !saving && !fnID.isEmpty
+        do {
+            let toggle = SettingsSwitch(); toggle.state = enabled ? .on : .off; toggle.target = self; toggle.action = #selector(toggleLink(_:)); toggle.tag = row - 1; toggle.isEnabled = row > 0 && !saving && !fnID.isEmpty
             toggle.setAccessibilityLabel(L("启用 {0}", linkName(name))); toggle.translatesAutoresizingMaskIntoConstraints = false; cell.addSubview(toggle)
             NSLayoutConstraint.activate([toggle.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -6), toggle.centerYAnchor.constraint(equalTo: cell.centerYAnchor), text.trailingAnchor.constraint(lessThanOrEqualTo: toggle.leadingAnchor, constant: -8)])
-        } else { text.trailingAnchor.constraint(lessThanOrEqualTo: cell.trailingAnchor).isActive = true }
+        }
         return cell
     }
     private func linkName(_ key: String) -> String { key == "local" ? L("局域网") : key == "ipv6" ? L("IPv6 直连") : key == "fn-connect" ? L("FN Connect 中继") : L("未连接") }

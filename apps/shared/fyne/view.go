@@ -49,6 +49,7 @@ type clientView struct {
 	content                                   fyne.CanvasObject
 	window                                    fyne.Window
 	actions                                   []*touchButton
+	operations                                int
 	authorization                             authorizationFlow
 	watchCancel                               context.CancelFunc
 	status, message, identity, diagnosticBody *widget.Label
@@ -397,6 +398,9 @@ func (v *clientView) prepareMenu() {
 		return &button.touchButton
 	}
 	login := func(change bool) {
+		if v.operations > 0 {
+			return
+		}
 		restoreMenu := menuWasExpanded
 		v.execute(func(ctx context.Context) error {
 			if err := v.authorization.cancel(ctx, v.backend); err != nil {
@@ -487,7 +491,7 @@ func (v *clientView) execute(operation func(context.Context) error) {
 	for _, button := range v.actions {
 		button.Disable()
 	}
-	v.navigation.Disable()
+	v.operations++
 	v.syncBackGesture()
 	v.message.Hide()
 	go func() {
@@ -501,8 +505,11 @@ func (v *clientView) execute(operation func(context.Context) error) {
 			if v.ctx.Err() != nil {
 				return
 			}
-			for _, button := range v.actions {
-				button.Enable()
+			v.operations--
+			if v.operations == 0 {
+				for _, button := range v.actions {
+					button.Enable()
+				}
 			}
 			v.navigation.Enable()
 			v.syncBackGesture()
@@ -520,6 +527,9 @@ func (v *clientView) execute(operation func(context.Context) error) {
 	}()
 }
 func (v *clientView) command(method string) {
+	if v.operations > 0 {
+		return
+	}
 	v.execute(func(ctx context.Context) error {
 		if err := v.backend.Call(ctx, method, nil, nil); err != nil {
 			return err

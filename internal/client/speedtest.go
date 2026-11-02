@@ -330,7 +330,7 @@ func (m *speedMeasurement) measureLink(ctx context.Context, cfg LocalConfig, ind
 	// Verify the existing HMAC-bound NAS identity through this exact transport before trusting measurements.
 	pc.Endpoints = []string{target}
 	probe := SystemLocalProbe{HTTPClient: h.client}
-	ok, err := probe.Reachable(ctx, pc, cfg.DeviceID, NetworkSnapshot{})
+	ok, err := verifySpeedTunnel(ctx, probe, pc, cfg.DeviceID)
 	if err != nil {
 		return err
 	}
@@ -352,6 +352,36 @@ func (m *speedMeasurement) measureLink(ctx context.Context, cfg LocalConfig, ind
 	m.updateSpeed(func(s *SpeedTestStatus) { s.Results[index].CompletedAt = time.Now().UTC() })
 	return nil
 }
+
+// Allow the newly installed route to settle, without changing the selected link.
+// Invalid identity/version responses are definitive and must never be retried.
+func verifySpeedTunnel(ctx context.Context, probe SystemLocalProbe, pc model.PrivateAPIConfiguration, deviceID string) (bool, error) {
+	var failure error
+	for attempt := 0; attempt < 3; attempt++ {
+		if attempt > 0 {
+			select {
+			case <-ctx.Done():
+				return false, ctx.Err()
+			case <-time.After(300 * time.Millisecond):
+			}
+		}
+		check, cancel := context.WithTimeout(ctx, 3*time.Second)
+		ok, err := probe.Reachable(check, pc, deviceID, NetworkSnapshot{})
+		cancel()
+		if ok {
+			return true, nil
+		}
+		if ctx.Err() != nil {
+			return false, ctx.Err()
+		}
+		if err == nil || isAdmissionFailure(err) || !model.AsError(err).Retryable || model.AsError(err).Code == model.ErrorProtocol {
+			return false, err
+		}
+		failure = err
+	}
+	return false, fmt.Errorf("NAS tunnel verification failed: %s", model.ErrorDetail(failure))
+}
+
 func (m *speedMeasurement) checkSpeedPath(ctx context.Context, fingerprint string) error {
 	if err := ctx.Err(); err != nil {
 		return err

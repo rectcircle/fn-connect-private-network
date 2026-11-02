@@ -67,7 +67,7 @@ func TestAdminLoadingPreservesReauthenticationPrompt(t *testing.T) {
 		select {
 		case work := <-driver.jobs:
 			work()
-			if !v.navigation.Disabled() {
+			if v.operations == 0 {
 				if len(v.window.Canvas().Overlays().List()) != 1 {
 					t.Fatal("reauthentication dialog disappeared with loading overlay")
 				}
@@ -75,6 +75,42 @@ func TestAdminLoadingPreservesReauthenticationPrompt(t *testing.T) {
 			}
 		case <-deadline.C:
 			t.Fatal("admin request did not complete")
+		}
+	}
+}
+
+func TestConnectionWorkKeepsMenuAvailable(t *testing.T) {
+	a := test.NewApp()
+	defer a.Quit()
+	v := newClientView(adminExpiredBackend{})
+	defer v.cancel()
+	v.window = a.NewWindow("test")
+	v.window.SetContent(v.content)
+	v.prepareMenu()
+	v.statusReceived = true
+	v.editing = false
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	driver := &queuedAdminDriver{Driver: a.Driver(), jobs: make(chan func(), 256), done: ctx.Done()}
+	fyne.SetCurrentApp(&queuedAdminApp{App: a, driver: driver})
+	release := make(chan struct{})
+	v.execute(func(context.Context) error { <-release; return nil })
+	if v.navigation.Disabled() || !v.primary.Disabled() {
+		t.Fatal("connection should disable commands but keep navigation usable")
+	}
+	v.navigate()
+	if !v.drawer.visible {
+		t.Fatal("menu did not open while connecting")
+	}
+	close(release)
+	deadline := time.NewTimer(time.Second)
+	defer deadline.Stop()
+	for v.operations > 0 {
+		select {
+		case job := <-driver.jobs:
+			job()
+		case <-deadline.C:
+			t.Fatal("operation did not finish")
 		}
 	}
 }

@@ -34,7 +34,7 @@ function page(name,push=true){
  if(name!=='links'){controller?.abort();animatePacket('');setChoices(false);$('confirm').close();}
  if(push)history.pushState({settingsPage:name},'',base+'#'+name);
  $('settings-menu').hidden=name!=='menu';$('general').hidden=name!=='general';$('links').hidden=name!=='links';
- $('settings-back').hidden=!mobile||name==='menu';
+ $('settings-back').hidden=!mobile||params.get('nativeBack')==='1'||name==='menu';
  $('general-tab').classList.toggle('selected',name==='general');$('links-tab').classList.toggle('selected',name==='links');
  window.scrollTo(0,0);
 }
@@ -57,7 +57,7 @@ function renderPreferences(){
   grip.className='grip';grip.tabIndex=0;grip.setAttribute('role','button');grip.setAttribute('aria-label',L('拖动调整优先级')+' '+linkName(link.link));
   grip.onkeydown=e=>{if((e.key==='Enter'||e.key===' ')&&!saving&&state.settings.fnId){e.preventDefault();save([...state.settings.links].reverse());}};
   grip.onpointerdown=e=>{if(e.pointerType!=='touch'||saving||!state.settings.fnId)return;dragging=true;row.classList.add('dragging');grip.setPointerCapture(e.pointerId);};
-  grip.onpointerup=e=>{if(e.pointerType!=='touch'||!dragging)return;dragging=false;row.classList.remove('dragging');const target=document.elementFromPoint(e.clientX,e.clientY)?.closest('.link-row');if(target&&target.dataset.index!==String(index))save([...state.settings.links].reverse());};
+  grip.onpointerup=e=>{if(e.pointerType!=='touch'||!dragging)return;dragging=false;row.classList.remove('dragging');const target=document.elementFromPoint(e.clientX,e.clientY)?.closest('.link-row');if(target&&target.dataset.index!==undefined&&target.dataset.index!==String(index))save([...state.settings.links].reverse());};
   grip.onpointercancel=()=>{dragging=false;row.classList.remove('dragging');};
   const name=document.createElement('label');name.htmlFor='preference-'+link.link;name.className='name';name.textContent=linkName(link.link);
   const move=document.createElement('button');move.textContent=index===0?'↓':'↑';move.title=L(index===0?'下移':'上移');move.setAttribute('aria-label',move.title+' '+linkName(link.link));move.disabled=saving||!state.settings.fnId;move.onclick=()=>save([...state.settings.links].reverse());
