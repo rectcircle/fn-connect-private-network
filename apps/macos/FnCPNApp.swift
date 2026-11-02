@@ -988,7 +988,11 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDel
         // Avoid AppKit's automatic Settings action image in the otherwise text-only status menu.
         let settingsItem = menu.addItem(withTitle: L("设置…"), action: #selector(showPreferencesFromStatusMenu), keyEquivalent: "")
         settingsItem.image = nil
-        if #available(macOS 27.0, *) { settingsItem.preferredImageVisibility = .hidden }
+        // Use the public setter dynamically so builds with older SDKs still
+        // compile; the property itself is available only on newer AppKit.
+        if settingsItem.responds(to: NSSelectorFromString("setPreferredImageVisibility:")) {
+            settingsItem.setValue(NSNumber(value: 2), forKey: "preferredImageVisibility") // hidden
+        }
         menu.addItem(withTitle: L("退出"), action: #selector(quit), keyEquivalent: "q")
         menu.autoenablesItems = false
         for entry in menu.items { entry.target = self }
