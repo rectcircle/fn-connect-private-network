@@ -149,20 +149,6 @@ public final class FnVpnService extends VpnService {
             String tlsName=Build.VERSION.SDK_INT>=28?p.getPrivateDnsServerName():null;
             return new JSONObject().put("servers",servers).put("tlsName",tlsName==null?"":tlsName);
         }
-        case "network.vpn.bind": {
-            int fd=input.getInt("fd");String source=input.getString("source");
-            if(fd<0 || revoked || stopping)throw new Exception("VPN is unavailable");
-            for(Network candidate:connectivity.getAllNetworks()){
-                NetworkCapabilities caps=connectivity.getNetworkCapabilities(candidate);
-                LinkProperties links=connectivity.getLinkProperties(candidate);
-                if(caps==null || !caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN) || links==null)continue;
-                for(LinkAddress address:links.getLinkAddresses())if(address.getAddress().getHostAddress().equals(source)){
-                    try(ParcelFileDescriptor duplicate=ParcelFileDescriptor.fromFd(fd)){candidate.bindSocket(duplicate.getFileDescriptor());}
-                    return JSONObject.NULL;
-                }
-            }
-            throw new Exception("Selected VPN network is not ready");
-        }
         case "network.protect": {
             int fd=input.getInt("fd");if(fd<0 || !protect(fd))throw new Exception("Cannot protect VPN transport socket");
             try(ParcelFileDescriptor duplicate=ParcelFileDescriptor.fromFd(fd)){network().bindSocket(duplicate.getFileDescriptor());}

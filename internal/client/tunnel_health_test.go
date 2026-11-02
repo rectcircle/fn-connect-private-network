@@ -9,6 +9,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"testing/synctest"
@@ -223,4 +224,37 @@ func TestTunnelHealthProbeTimeoutRemainsBounded(t *testing.T) {
 			t.Fatalf("probe budget = %v, want %v", elapsed, want)
 		}
 	})
+}
+
+func TestTunnelTransportUsesAssignedSourceForExistingAndFreshConnections(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNoContent) }))
+	defer server.Close()
+	transport, err := tunnelHTTPTransport("127.0.0.1/32")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer transport.CloseIdleConnections()
+	client := &http.Client{Transport: transport, Timeout: time.Second}
+	// An existing healthy connection must not prevent new requests during testing,
+	// including a new socket after a route/tunnel has been replaced.
+	for _, fresh := range []bool{false, false, true} {
+		if fresh {
+			transport.CloseIdleConnections()
+		}
+		response, err := client.Get(server.URL)
+		if err != nil {
+			t.Fatal(err)
+		}
+		response.Body.Close()
+	}
+	// A reachable physical destination must not mask a missing VPN source.
+	missing, err := tunnelHTTPTransport("192.0.2.250/32")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer missing.CloseIdleConnections()
+	if response, err := (&http.Client{Transport: missing, Timeout: time.Second}).Get(server.URL); err == nil {
+		response.Body.Close()
+		t.Fatal("unassigned VPN source silently bypassed")
+	}
 }

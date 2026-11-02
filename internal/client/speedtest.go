@@ -312,11 +312,12 @@ func (m *speedMeasurement) measureLink(ctx context.Context, cfg LocalConfig, ind
 	if target == "" {
 		return errors.New("NAS IP is not routed through the selected tunnel (check overlapping LAN subnets)")
 	}
-	source, err := netip.ParsePrefix(cfg.Configuration.ClientAddress)
+	transport, err := tunnelHTTPTransport(cfg.Configuration.ClientAddress)
 	if err != nil {
 		return err
 	}
-	transport := &http.Transport{Proxy: nil, DisableCompression: true, MaxConnsPerHost: 4, DialContext: (&net.Dialer{LocalAddr: &net.TCPAddr{IP: net.IP(source.Addr().AsSlice())}, Timeout: 3 * time.Second}).DialContext}
+	transport.DisableCompression = true
+	transport.MaxConnsPerHost = 4
 	// Only platforms that explicitly need a userspace dialer override the
 	// source-bound system route; normal HarmonyOS VPNs use the latter too.
 	if m.speedTestDialContext != nil {

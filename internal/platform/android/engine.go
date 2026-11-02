@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"net"
 	"net/netip"
 	"os"
 	"strconv"
@@ -349,27 +348,4 @@ func (e *Engine) RemoveDNS(ctx context.Context, p model.DNSPlan) error {
 		return errors.Join(err, e.rollbackLocked(ctx, e.plan))
 	}
 	return nil
-}
-
-// DialPrivate explicitly selects the installed VPN, never the physical uplink.
-// Android may retain a physical-network socket mark while a VPN is replaced.
-func (e *Engine) DialPrivate(ctx context.Context, network, target string) (net.Conn, error) {
-	e.mu.Lock()
-	if e.plan == nil {
-		e.mu.Unlock()
-		return nil, errors.New("VPN is not connected")
-	}
-	address, err := netip.ParsePrefix(e.plan.ClientAddress)
-	e.mu.Unlock()
-	if err != nil {
-		return nil, err
-	}
-	dialer := net.Dialer{Timeout: 3 * time.Second, LocalAddr: &net.TCPAddr{IP: net.IP(address.Addr().AsSlice())}, Control: func(_, _ string, raw syscall.RawConn) error {
-		var failure error
-		err := raw.Control(func(fd uintptr) {
-			failure = e.System.Call("network.vpn.bind", map[string]any{"fd": int(fd), "source": address.Addr().String()}, nil)
-		})
-		return errors.Join(err, failure)
-	}}
-	return dialer.DialContext(ctx, network, target)
 }

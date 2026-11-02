@@ -30,13 +30,28 @@ $('choices-done').onclick=()=>{setChoices(false);$('selector').focus();};
 $('choose-ipv6').onchange=selectionChanged;$('choose-relay').onchange=selectionChanged;
 document.addEventListener('click',e=>{if(!e.target.closest('.select-wrap'))setChoices(false);});
 document.addEventListener('keydown',e=>{if(e.key==='Escape')setChoices(false);});
+let currentPage,finishPageTransition;
 function page(name,push=true){
+ finishPageTransition?.();
+ const previous=currentPage,old=previous&&$(previous==='menu'?'settings-menu':previous);
+ const rect=old?.getBoundingClientRect();
+ currentPage=name;
  if(name!=='links'){controller?.abort();animatePacket('');setChoices(false);$('confirm').close();}
  if(push)history.pushState({settingsPage:name},'',base+'#'+name);
  $('settings-menu').hidden=name!=='menu';$('general').hidden=name!=='general';$('links').hidden=name!=='links';
  $('settings-back').hidden=!mobile||params.get('nativeBack')==='1'||name==='menu';
  $('general-tab').classList.toggle('selected',name==='general');$('links-tab').classList.toggle('selected',name==='links');
  window.scrollTo(0,0);
+ if(mobile&&previous&&previous!==name&&!matchMedia('(prefers-reduced-motion: reduce)').matches){
+  const next=$(name==='menu'?'settings-menu':name),back=name==='menu';
+  old.hidden=false;old.inert=true;
+  Object.assign(old.style,{position:'fixed',top:rect.top+'px',left:rect.left+'px',width:rect.width+'px',zIndex:'8',pointerEvents:'none'});
+  const options={duration:280,easing:'cubic-bezier(.22,.75,.25,1)',fill:'both'};
+  const incoming=next.animate([{transform:`translateX(${back?'-':''}100vw)`},{transform:'translateX(0)'}],options);
+  const outgoing=old.animate([{transform:'translateX(0)'},{transform:`translateX(${back?'':'-'}100vw)`}],options);
+  const finish=()=>{if(finishPageTransition!==finish)return;finishPageTransition=undefined;incoming.cancel();outgoing.cancel();old.hidden=true;old.inert=false;old.removeAttribute('style');};
+  finishPageTransition=finish;incoming.onfinish=finish;
+ }
 }
 function applyLayout(next){
  if(layoutApplied)return;layoutApplied=true;
@@ -94,14 +109,22 @@ function renderTest(value){
   $('result-rows').replaceChildren();for(const row of rows){const tr=document.createElement('tr');for(const text of [linkName(row.link),...measurements(row)]){const td=document.createElement('td');td.textContent=text;tr.append(td);}$('result-rows').append(tr);}
   notice([value.error,value.restoreError,...rows.map(row=>row.error?linkName(row.link)+': '+L(row.error):'')].filter(Boolean).join('\n'));
  }
+ followTestBottom();
 }
+let testScrollFrame=0;
+function followTestBottom(){
+ if(testScrollFrame)return;
+ testScrollFrame=requestAnimationFrame(()=>{testScrollFrame=0;if(currentPage==='links')window.scrollTo({top:document.documentElement.scrollHeight,behavior:'instant'});});
+}
+const testSizeObserver=new ResizeObserver(()=>{if(controller)followTestBottom();});
+for(const id of ['live','results'])testSizeObserver.observe($(id));
 $('dismiss').onclick=()=>notice();
 $('start').onclick=()=>{selection=selectionChanged();if(!selection.length)return;setChoices(false);$('confirm').showModal();};
 $('confirm-cancel').onclick=()=>$('confirm').close();
 $('confirm-start').onclick=async()=>{
  $('confirm').close();const previous=controller;if(previous)previous.abort();const current=new AbortController();controller=current;
  $('cancel').hidden=false;$('start').textContent=L('重新测试');notice();historyValues=[];historyStage='';renderTest({active:true,stage:'preparing',results:[]});
- requestAnimationFrame(()=>window.scrollTo({top:document.documentElement.scrollHeight,behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'instant':'smooth'}));
+
  try{
   const response=await request('test',{link:selection.length===2?'all':selection[0]},current.signal), reader=response.body.getReader(),decoder=new TextDecoder();let pending='';let ended=false;
   while(true){const chunk=await reader.read();if(controller!==current){await reader.cancel();return;}pending+=decoder.decode(chunk.value||new Uint8Array(),{stream:!chunk.done});let newline;while((newline=pending.indexOf('\n'))!==-1){const line=pending.slice(0,newline);pending=pending.slice(newline+1);if(line.trim()){const event=JSON.parse(line);renderTest(event);if(!event.active)ended=true;}}if(chunk.done)break;}
@@ -123,26 +146,30 @@ setInterval(()=>{if(!document.hidden){nativeSend('ready');if(!controller)refresh
 
 function animatePacket(stage){
  if(stage===packetStage)return;
- packetStage=stage;cancelAnimationFrame(packetFrame);$('packet').setAttribute('visibility','hidden');
+ packetStage=stage;cancelAnimationFrame(packetFrame);
+ const packets=[...$('packet-layer').querySelectorAll('circle')];
+ packets.forEach(packet=>packet.setAttribute('visibility','hidden'));
  if(!stage||matchMedia('(prefers-reduced-motion: reduce)').matches)return;
  packetStarted=performance.now();
  const ease=t=>t*t*(3-2*t);
  function tick(now){
   if(!packetStage)return;
-  const cycle=((now-packetStarted)%2000)/2000;
-  let down=stage==='download',progress=ease(((now-packetStarted)%1400)/1400),visible=true;
-  if(stage==='latency'){down=cycle>=.35;visible=cycle<.7;progress=ease(down?(cycle-.35)/.35:cycle/.35);}
+  const seconds=(now-packetStarted)/1000,cycle=seconds%1;
+  const latency=stage==='latency',down=latency?cycle>=.25:stage==='download';
   const topology=$('topology').getBoundingClientRect();
-  const lines=[...$('topology').querySelectorAll(down?'.down':'.up')].filter(line=>line.getBoundingClientRect().width>0);
+  const lines=[...$('topology').querySelectorAll(down?'.down':'.up')].map(line=>line.getBoundingClientRect()).filter(rect=>rect.width>0);
   if(lines.length){
-   const first=lines[0].getBoundingClientRect(),last=lines.at(-1).getBoundingClientRect();
-   const left=first.left-topology.left,right=last.right-topology.left;
-   const x=down?right-(right-left)*progress:left+(right-left)*progress;
-   const y=first.top-topology.top+first.height/2;
-   // The one packet passes behind the relay device between the two wires.
-   visible=visible&&lines.some(line=>{const r=line.getBoundingClientRect();return x>=r.left-topology.left&&x<=r.right-topology.left;});
+   const first=lines[0],last=lines.at(-1),left=first.left-topology.left,right=last.right-topology.left;
    $('packet-layer').setAttribute('viewBox',`0 0 ${topology.width} ${topology.height}`);
-   $('packet').setAttribute('cx',x);$('packet').setAttribute('cy',y);$('packet').setAttribute('visibility',visible?'visible':'hidden');
+   packets.forEach((packet,index)=>{
+    // Match macOS: three evenly spaced packets, 0.65 traversals per second.
+    // Latency keeps one accelerated ping/pong, 250 ms per direction and a pause.
+    const progress=latency?ease(down?(cycle-.25)/.25:cycle/.25):(seconds*.65+index/3)%1;
+    const x=down?right-(right-left)*progress:left+(right-left)*progress;
+    const visible=(!latency||index===0&&cycle<.5)&&lines.some(rect=>x>=rect.left-topology.left&&x<=rect.right-topology.left);
+    packet.setAttribute('cx',x);packet.setAttribute('cy',first.top-topology.top+first.height/2);
+    packet.setAttribute('visibility',visible?'visible':'hidden');
+   });
   }
   packetFrame=requestAnimationFrame(tick);
  }

@@ -112,7 +112,7 @@ func fncpnStart(directory *C.char) *C.char {
 			return client.NewRemoteClient(url, cookies, nil, onCookies)
 		},
 		Privileged: engine, Bridge: &client.RelayBridge{Logger: logger}, Probe: network, Monitor: network, DeviceName: deviceName,
-		IPv6RouteChecker: network.HasIPv6Route, SpeedTestDialContext: engine.DialPrivate,
+		IPv6RouteChecker: network.HasIPv6Route,
 	})
 	if err != nil {
 		return C.CString(err.Error())

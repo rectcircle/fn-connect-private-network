@@ -49,13 +49,9 @@ func (m *Manager) tunnelHealthError(ctx context.Context, config *LocalConfig) er
 	}
 	client := m.dnsHTTPClient // iOS supplies its provider-owned tunnel transport.
 	if client == nil {
-		address, err := netip.ParsePrefix(config.Configuration.ClientAddress)
+		transport, err := tunnelHTTPTransport(config.Configuration.ClientAddress)
 		if err != nil {
 			return err
-		}
-		transport := &http.Transport{
-			// Binding the VPN source prevents a successful physical-LAN bypass.
-			DialContext: (&net.Dialer{LocalAddr: &net.TCPAddr{IP: net.IP(address.Addr().AsSlice())}, Timeout: tunnelHealthProbeTimeout}).DialContext,
 		}
 		defer transport.CloseIdleConnections()
 		client = &http.Client{Transport: transport}
@@ -86,4 +82,15 @@ func (m *Manager) tunnelHealthError(ctx context.Context, config *LocalConfig) er
 		failure = errors.New("NAS tunnel probe failed")
 	}
 	return model.WithOperation(model.NormalizeError(failure, model.ErrorUnavailable, "NAS tunnel probe failed", true), "tunnel_probe")
+}
+
+// Use the installed VPN routes for both health checks and speed measurements.
+// Binding the assigned source prevents a successful physical-LAN bypass;
+// no platform network enumeration or protected physical socket is required.
+func tunnelHTTPTransport(clientAddress string) (*http.Transport, error) {
+	address, err := netip.ParsePrefix(clientAddress)
+	if err != nil {
+		return nil, err
+	}
+	return &http.Transport{DialContext: (&net.Dialer{LocalAddr: &net.TCPAddr{IP: net.IP(address.Addr().AsSlice())}, Timeout: tunnelHealthProbeTimeout}).DialContext}, nil
 }
