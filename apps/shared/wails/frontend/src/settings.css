@@ -6,3 +6,9 @@
 #native-settings .about-brand{display:flex;align-items:center;gap:14px}#native-settings .about-brand strong{font-size:24px;font-weight:650}#native-settings #settings-version{color:var(--muted)}#native-settings #settings-commit{font:13px ui-monospace,monospace;color:var(--muted)}
 
 #native-settings input[role=switch]{appearance:none;flex:none;width:40px;height:24px;border:0;border-radius:12px;background:var(--muted);position:relative;cursor:pointer;transition:background .15s}#native-settings input[role=switch]:checked{background:var(--accent)}#native-settings input[role=switch]:before{content:'';position:absolute;width:18px;height:18px;top:3px;left:3px;border-radius:50%;background:white;transition:transform .15s}#native-settings input[role=switch]:checked:before{transform:translateX(16px)}#native-settings input[role=switch]:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+
+/* Match the desktop about panel without replacing the copy glyph on feedback. */
+#native-settings #settings-copy-commit{display:flex;align-items:center;justify-content:center;padding:5px;border:0;background:transparent;color:var(--muted);flex:none}
+#native-settings .about a{text-decoration:none;width:fit-content}
+#native-settings .about a:after{content:" ↗"}
+#native-settings .about a:hover{text-decoration:underline}

@@ -12,6 +12,7 @@ const api=window.go.main.App;
 const english = !navigator.language.toLowerCase().startsWith('zh');
 const L = text => english ? (translations[text] || text) : text;
 document.documentElement.lang = english ? 'en' : 'zh-CN';
+$('copy-commit').setAttribute('aria-label',L('复制 Commit'));
 root.querySelector('aside').setAttribute('aria-label',L('设置'));
 root.querySelector('.help').setAttribute('aria-label',L('说明'));
 root.querySelectorAll('[data-i18n]').forEach(node=>{ node.textContent=L(node.textContent); });
@@ -114,7 +115,7 @@ function measurements(result){return ['latencyMs','downloadMbps','uploadMbps'].m
 function renderTest(value){
  last=value;$('live').hidden=!value.active;$('phase').textContent=(value.link?linkName(value.link)+' · ':'')+L(phases[value.stage]||value.stage||'准备测试');
  const relay=value.link==='fn-connect';$('relay').hidden=!relay;$('relay-segment').hidden=!relay;
- $('topology').className=value.active&&['upload','download','latency'].includes(value.stage)?value.stage:'';animatePacket($('topology').className);
+ $('topology').className=value.active&&['upload','download','latency'].includes(value.stage)?value.stage:'';animatePacket(!root.hidden&&currentPage==='links'?$('topology').className:'');
  $('metric').textContent=value.stage==='latency'?(value.rttMs||0).toFixed(1)+' ms':value.stage==='upload-warmup'?L('预热中…'):value.stage==='upload-waiting'?L('等待接收…'):value.stage==='upload-confirming'?L('等待确认…'):['upload','upload-complete','download'].includes(value.stage)?(value.mbps||0).toFixed(1)+' Mbps':'';
  timeline.update(value);$('graph').querySelector('polyline').setAttribute('points',timeline.points());$('graph').hidden=!value.active||!timeline.samples.length;
  const rows=value.results||[];
@@ -129,7 +130,7 @@ function renderTest(value){
 let testScrollFrame=0;
 function followTestBottom(){
  if(testScrollFrame)return;
- testScrollFrame=requestAnimationFrame(()=>{testScrollFrame=0;if(currentPage==='links')root.scrollTo({top:root.scrollHeight,behavior:'instant'});});
+ testScrollFrame=requestAnimationFrame(()=>{testScrollFrame=0;if(!root.hidden&&currentPage==='links')root.scrollTo({top:root.scrollHeight,behavior:'instant'});});
 }
 const testSizeObserver=new ResizeObserver(()=>{if(controller)followTestBottom();});
 for(const id of ['live','results'])testSizeObserver.observe($(id));
@@ -144,13 +145,13 @@ $('confirm-start').onclick=async()=>{
   const response=await request('test',{link:selection.length===2?'all':selection[0]},current.signal), reader=response.body.getReader(),decoder=new TextDecoder();let pending='';let ended=false;
   while(true){const chunk=await reader.read();if(controller!==current){await reader.cancel();return;}pending+=decoder.decode(chunk.value||new Uint8Array(),{stream:!chunk.done});let newline;while((newline=pending.indexOf('\n'))!==-1){const line=pending.slice(0,newline);pending=pending.slice(newline+1);if(line.trim()){const event=JSON.parse(line);renderTest(event);if(!event.active)ended=true;}}if(chunk.done)break;}
   if(!ended)throw new Error(L('测试连接已中断，请重试'));
- }catch(e){if(controller===current)renderTest({...last,active:false,stage:e.name==='AbortError'?'canceled':'failed',error:e.name==='AbortError'?'':e.message});}
+ }catch(e){if(controller===current)renderTest({...last,active:false,stage:current.signal.aborted?'canceled':'failed',error:current.signal.aborted?'':e.message});}
  finally{if(controller===current){controller=undefined;$('cancel').hidden=true;selectionChanged();}}
 };
 $('cancel').onclick=()=>controller?.abort();
 window.addEventListener('pagehide',()=>{controller?.abort();animatePacket('');});
 // Only local settings containers provide this narrow launch-at-login bridge.
-$('copy-commit').onclick=async()=>{try{await api.Copy(state?.commit||'');$('copy-commit').textContent=L('已复制 Commit');setTimeout(()=>{$('copy-commit').textContent=L('复制');},2000);}catch(error){notice(error.message||String(error));}};
+$('copy-commit').onclick=async()=>{try{await api.Copy(state?.commit||'');$('copy-commit').setAttribute('aria-label',L('已复制 Commit'));$('copy-commit').title=L('已复制 Commit');setTimeout(()=>{$('copy-commit').setAttribute('aria-label',L('复制 Commit'));$('copy-commit').title=L('复制 Commit');},2000);}catch(error){notice(error.message||String(error));}};
 root.querySelectorAll('a[href]').forEach(anchor=>anchor.addEventListener('click',async event=>{event.preventDefault();try{await api.OpenExternal(anchor.href);}catch(error){notice(error.message||String(error));}}));
 $('auto-start').onchange=async()=>{const error=await api.SetAutoStart($('auto-start').checked);if(error)notice(error);};
 document.getElementById('settings-close').onclick=()=>{controller?.abort();animatePacket('');root.hidden=true;if(previousWindowSize)WindowSetSize(previousWindowSize.w,previousWindowSize.h);};
