@@ -19,6 +19,73 @@ LRESULT TestSendMessage(HWND window,UINT message,WPARAM parameter,LPARAM extra) 
 void Check(bool condition, const char* label) {
     if (!condition) throw std::runtime_error(label);
 }
+void CheckSettingsLayout() {
+    ShowWindow(g_window,SW_SHOWNORMAL);
+    OpenNativeSettings();
+    Check(IsWindow(g_nativeSettings), "native settings window created");
+    auto holder=reinterpret_cast<std::shared_ptr<NativeSettingsState>*>(GetWindowLongPtrW(g_nativeSettings,GWLP_USERDATA));
+    auto state=*holder;
+    auto bounds=[&](HWND control){RECT r{};GetWindowRect(control,&r);MapWindowPoints(nullptr,g_nativeSettings,reinterpret_cast<POINT*>(&r),2);return r;};
+    auto textFits=[&](HWND control){auto r=bounds(control);auto dc=GetDC(control);auto font=SelectObject(dc,reinterpret_cast<HFONT>(SendMessageW(control,WM_GETFONT,0,0)));TEXTMETRICW metrics{};GetTextMetricsW(dc,&metrics);SelectObject(dc,font);ReleaseDC(control,dc);Check(r.bottom-r.top>=metrics.tmHeight,"settings text fits its DPI-scaled row");};
+    for(int width:{960,1180}){
+        SetWindowPos(g_nativeSettings,nullptr,0,0,SettingsScale(g_nativeSettings,width),SettingsScale(g_nativeSettings,720),SWP_NOMOVE|SWP_NOZORDER);
+        SettingsPage(state,false);
+        Check(!state->linkPage,"settings opens on general page");
+        textFits(state->pageTitle);textFits(state->brand);textFits(state->buildLabel);
+        Check(bounds(state->brand).bottom<bounds(state->buildLabel).top,"brand and version do not overlap");
+        Check(bounds(state->buildLabel).bottom<bounds(GetDlgItem(g_nativeSettings,8112)).top,"commit and copy button do not overlap");
+        SettingsPage(state,true);
+        textFits(state->policyTitle);textFits(state->testTitle);textFits(state->selector);
+        Check(bounds(state->policyTitle).bottom<bounds(state->list).top,"policy title is clear of rows");
+        Check(bounds(state->list).bottom<bounds(GetDlgItem(g_nativeSettings,kSettingsReset)).top,"rows are clear of reset button");
+        auto selector=bounds(state->selector),start=bounds(state->start);
+        Check(selector.top==start.top&&selector.right<start.left,"selector and action share a stable row");
+        Check(!IsWindowEnabled(state->linkSwitches[0]),"LAN switch is fixed on and disabled");
+        Check(bounds(state->list).right<=bounds(state->linkSwitches[1]).left,"list must not cover the switch column");
+        {
+            std::thread delivery([state]{std::lock_guard lock(state->mutex);state->pendingStatus=LR"({"active":true,"stage":"latency","link":"ipv6","rttMs":19.8,"results":[]})";});delivery.join();
+            SendMessageW(g_nativeSettings,kSettingsUpdate,state->instanceId,0);
+            Check(GetText(state->notice).find(NativeLinkName(L"ipv6"))!=std::wstring::npos,"live status identifies the link being tested");
+            Check(!IsWindowVisible(state->notice),"live caption uses parent buffered painting instead of independently erased static control");
+            InvalidateRect(g_nativeSettings,nullptr,FALSE);UpdateWindow(g_nativeSettings);
+            Check(state->pendingStatus.empty()&&JsonString(state->status,L"stage")==L"latency","UI thread consumes the worker snapshot");
+            SendMessageW(g_nativeSettings,kSettingsUpdate,state->instanceId+1,0);
+            Check(JsonString(state->status,L"stage")==L"latency","stale window tokens are ignored");
+            auto numeric=JsonObject::Parse(LR"({"rttMs":null,"mbps":"invalid"})");
+            Check(SettingsNumber(numeric,L"rttMs",7)==7&&SettingsNumber(numeric,L"mbps",8)==8,"malformed numeric fields do not escape into painting");
+            state->active=false;SettingsLayout(state);
+        }
+        Check((GetWindowLongW(GetDlgItem(g_nativeSettings,kSettingsGeneral),GWL_STYLE)&BS_TYPEMASK)==BS_OWNERDRAW,"sidebar uses styled navigation");
+        Check(GetParent(state->choices[0])==state->choicesWindow,"multi-select has an independent popup");
+        Check(IsWindow(state->choicesWindow),"multi-select popup handle is valid");
+        SettingsShowChoices(state,true);
+        Check(IsWindowVisible(state->choicesWindow),"multi-select popup opens");
+        SetActiveWindow(state->choicesWindow);
+        SendMessageW(state->choices[0],BM_CLICK,0,0);
+        Check(IsWindowVisible(state->choicesWindow),"choosing a link keeps multi-select open");
+        SettingsShowChoices(state,false);
+        auto sidebar=bounds(GetDlgItem(g_nativeSettings,kSettingsLinks));
+        state->active=true;SettingsLayout(state,true);
+        Check(state->scroll>0,"test follows document bottom");
+        auto after=bounds(GetDlgItem(g_nativeSettings,kSettingsLinks));
+        Check(sidebar.top==after.top&&sidebar.bottom==after.bottom,"sidebar stays fixed while content scrolls");
+        SCROLLINFO scroll{sizeof(scroll),SIF_ALL};GetScrollInfo(g_nativeSettings,SB_VERT,&scroll);
+        Check(scroll.nPos==scroll.nMax-static_cast<int>(scroll.nPage)+1,"test bottom remains reachable");
+        ValidateRect(g_nativeSettings,nullptr);
+        SendMessageW(g_nativeSettings,WM_VSCROLL,SB_LINEUP,0);
+        RECT dirty{};
+        Check(GetUpdateRect(g_nativeSettings,&dirty,FALSE),"scroll invalidates parent document painting");
+        RECT viewport{};GetClientRect(g_nativeSettings,&viewport);
+        Check(EqualRect(&dirty,&viewport),"scroll repaints full viewport instead of exposed fragments");
+        Check(state->laidOutScroll==state->scroll&&!state->layingOut,"scroll layout commits offset and exits guard");
+        state->layingOut=true;int committed=state->laidOutScroll;
+        SettingsLayout(state);
+        Check(state->laidOutScroll==committed,"nested layout does not move children");state->layingOut=false;
+        state->active=false;SettingsPage(state,false);
+    }
+    SendMessageW(g_nativeSettings,WM_CLOSE,0,0);
+    Check(!g_nativeSettings,"settings close releases the window");
+}
 struct LifetimeProbe { int* destroyed; ~LifetimeProbe(){++*destroyed;} };
 
 void CheckPipeRoundTrip() {
@@ -136,6 +203,28 @@ int main(int argc, char** argv) {
         Check(JsonInt(numeric,L"large",7)==7 && JsonInt(numeric,L"fraction",7)==7, "numeric conversion is bounded and integral");
         KillTimer(window, kRefreshTimer);
         if (argc > 1) {
+            if(std::string(argv[1]).starts_with("--preview-settings")){
+                ShowWindow(window,SW_SHOWNORMAL);OpenNativeSettings();
+                auto state=*reinterpret_cast<std::shared_ptr<NativeSettingsState>*>(GetWindowLongPtrW(g_nativeSettings,GWLP_USERDATA));
+                state->preferences=JsonObject::Parse(LR"({"fnId":"demo-nas","links":[{"link":"ipv6","enabled":true},{"link":"fn-connect","enabled":true}]})");
+                state->commit=L"a8a05a6a7face7309b845a83c196b9c84e936c8c";
+                state->buildInfo=std::wstring(L("版本"))+L" 1.2.0\nCommit "+state->commit;SetWindowTextW(state->buildLabel,state->buildInfo.c_str());
+                SettingsRows(state);SettingsPage(state,std::string(argv[1])!="--preview-settings-general");
+                if(std::string(argv[1])=="--preview-settings-upload"){
+                    state->active=true;state->status=JsonObject::Parse(LR"({"active":true,"stage":"upload","link":"fn-connect","mbps":3.8,"results":[{"link":"ipv6","outcome":"success","latencyMs":119.3,"downloadMbps":21,"uploadMbps":74.2},{"link":"fn-connect","outcome":"running","latencyMs":123.4,"downloadMbps":3.8}]})");
+                    SetWindowTextW(state->notice,L("正在测试上传"));for(int i=0;i<24;i++)state->samples.push_back({i*250.0,i?3.8+(i%3)*.2:0});
+                }
+                if(std::string(argv[1])=="--preview-settings-results"){
+                    state->status=JsonObject::Parse(LR"({"stage":"completed","results":[{"link":"ipv6","outcome":"unavailable","message":"No IPv6 route is available on the current network."},{"link":"fn-connect","outcome":"success","latencyMs":123.4,"downloadMbps":3.8,"uploadMbps":4.2}]})");
+                }
+                EnableWindow(GetDlgItem(g_nativeSettings,kSettingsAuto),FALSE);EnableWindow(state->start,FALSE);
+                SettingsLayout(state,state->active||std::string(argv[1])=="--preview-settings-results");
+                MSG message{};while(IsWindow(g_nativeSettings)&&GetMessageW(&message,nullptr,0,0)>0){
+                    if(IsWindowVisible(state->choicesWindow)&&IsDialogMessageW(state->choicesWindow,&message))continue;
+                    if(!IsDialogMessageW(g_nativeSettings,&message)){TranslateMessage(&message);DispatchMessageW(&message);}
+                }
+                DestroyWindow(window);JoinWorkers();return 0;
+            }
             g_configured = false; g_viewLogin = true; g_busy = false; Layout(window);
             if (std::string(argv[1]) == "--preview-details") {
                 auto* demo = new RefreshResult{};
@@ -287,6 +376,7 @@ int main(int argc, char** argv) {
         RECT checkbox{},client{}; GetWindowRect(g_autostart,&checkbox); MapWindowPoints(nullptr,window,reinterpret_cast<POINT*>(&checkbox),2);
         GetClientRect(window,&client);
         Check(checkbox.bottom <= client.bottom, "adaptive layout keeps autostart visible");
+        CheckSettingsLayout();
         SendMessageW(window, WM_CLOSE, 0, 0);
         Check(IsWindow(window) && !IsWindowVisible(window), "close keeps tray lifecycle");
         Check(SendMessageW(window, WM_QUERYENDSESSION, 0, ENDSESSION_CLOSEAPP) == TRUE, "installer shutdown accepted");

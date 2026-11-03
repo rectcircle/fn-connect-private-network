@@ -305,5 +305,22 @@
   "已复制 Commit": "Commit copied",
   "开始网络链路测试？": "Start network link test?",
   "无法打开链接，请检查浏览器设置。": "Could not open the link. Check your browser settings.",
-  "版本": "Version"
+  "版本": "Version",
+  "延迟": "Latency",
+  "下载": "Download",
+  "上传": "Upload",
+  "关于": "About",
+  "准备测试": "Preparing test",
+  "检查链路条件": "Checking link availability",
+  "正在验证 NAS": "Verifying NAS",
+  "正在预热上传": "Warming up upload",
+  "等待 NAS 完成确认": "Waiting for NAS confirmation",
+  "上传完成": "Upload complete",
+  "当前 NAS": "Current NAS",
+  "请先登录 NAS": "Sign in to a NAS first",
+  "启动": "Startup",
+  "关于 FnCPN": "About FnCPN",
+  "复制 Commit": "Copy Commit",
+  "GitHub 项目": "GitHub Project",
+  "设置页面更新失败，请关闭后重试。": "Settings could not be updated. Close this window and try again."
 }

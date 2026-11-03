@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 	"unsafe"
 
 	"github.com/rectcircle/fn-connect-private-network/internal/model"
@@ -67,6 +68,46 @@ func (ipHelperNetworkOps) GetMTU(index uint32, family uint16) (uint32, error) {
 
 func (ipHelperNetworkOps) CreateAddress(index uint32, prefix netip.Prefix) error {
 	return createAddress(index, prefix)
+}
+
+func (ipHelperNetworkOps) WaitAddress(ctx context.Context, index uint32, prefix netip.Prefix) error {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	return waitPreferredAddress(ctx, 50*time.Millisecond, func() (uint32, error) {
+		row := addressRow(index, prefix)
+		if err := windows.GetUnicastIpAddressEntry(&row); err != nil {
+			return 0, err
+		}
+		return row.DadState, nil
+	})
+}
+func waitPreferredAddress(ctx context.Context, interval time.Duration, read func() (uint32, error)) error {
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		state, err := read()
+		if err != nil && !errors.Is(err, windows.ERROR_NOT_FOUND) {
+			return err
+		}
+		if err == nil {
+			switch state {
+			case windows.IpDadStatePreferred:
+				return nil
+			case windows.IpDadStateDuplicate:
+				return errors.New("Wintun address conflict detected by Windows")
+			case windows.IpDadStateDeprecated:
+				return errors.New("Wintun address is deprecated")
+			}
+		}
+		timer := time.NewTimer(interval)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		case <-timer.C:
+		}
+	}
 }
 
 func (ipHelperNetworkOps) CreateRoute(index uint32, prefix netip.Prefix) error {
@@ -264,6 +305,15 @@ func (n *NetworkConfigurator) applyPrepared(
 		return rollback(fmt.Errorf("add Wintun address: %w", err))
 	}
 	addressApplied = true
+	// A successful CreateUnicastIpAddressEntry does not mean the source is
+	// usable yet: Windows DAD can leave it tentative after a fast handshake.
+	if ready, ok := ops.(interface {
+		WaitAddress(context.Context, uint32, netip.Prefix) error
+	}); ok {
+		if err := ready.WaitAddress(ctx, state.InterfaceIndex, address); err != nil {
+			return rollback(fmt.Errorf("wait for Wintun address: %w", err))
+		}
+	}
 	for _, route := range routes {
 		if err := ctx.Err(); err != nil {
 			return rollback(err)

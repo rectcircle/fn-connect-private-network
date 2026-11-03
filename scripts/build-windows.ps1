@@ -594,14 +594,19 @@ foreach ($architecture in $architectures) {
     $null = New-Item -ItemType Directory -Force -Path $uiOutput
     $nativeBuild = Join-Path $projectRoot ".dev/windows-ui-$architecture"
     $cmakeArch = if ($architecture -eq 'arm64') { 'ARM64' } else { 'x64' }
-    Invoke-Checked 'cmake' @('--fresh', '-S', $nativeUiSource, '-B', $nativeBuild, '-G', 'Visual Studio 17 2022', '-A', $cmakeArch, "-DWEBVIEW2_SDK_ROOT=$nativeUiSdkRoot")
-    Invoke-Checked 'cmake' @('--build', $nativeBuild, '--config', 'Release')
+    Invoke-Checked 'cmake' @('--fresh', '-S', $nativeUiSource, '-B', $nativeBuild, '-G', 'Visual Studio 17 2022', '-A', $cmakeArch, "-DWEBVIEW2_SDK_ROOT=$nativeUiSdkRoot", "-DFNCPN_UI_REVISION=$sourceRevision")
+    Invoke-Checked 'cmake' @('--build', $nativeBuild, '--config', 'Release', '--clean-first')
     $hostArch = [Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString().ToLowerInvariant()
     if ($architecture -eq $hostArch -or ($hostArch -eq 'arm64' -and $architecture -eq 'x64')) {
         Invoke-Checked 'ctest' @('--test-dir', $nativeBuild, '-C', 'Release', '--output-on-failure')
     }
     Copy-Item -LiteralPath (Join-Path $nativeBuild 'Release/FnCPN.UI.exe') -Destination (Join-Path $uiOutput 'FnCPN.UI.exe')
     $publishedExecutable = Join-Path $uiOutput 'FnCPN.UI.exe'
+    # --fresh resets CMake configuration, not MSBuild objects. Rebuild all UI
+    # objects and verify its own embedded revision rather than the daemon's.
+    if ((Get-Item -LiteralPath $publishedExecutable).VersionInfo.Comments -ne "Source: $sourceRevision") {
+        throw 'Native UI source revision does not match this package build'
+    }
     if ((Get-Item -LiteralPath $publishedExecutable).VersionInfo.ProductVersion -ne $version) {
         throw "Native UI version resource does not match product version $version"
     }
@@ -763,6 +768,7 @@ foreach ($architecture in $architectures) {
         installerLanguages = @('en-US', 'zh-CN')
         installerHelperBytes = (Get-Item -LiteralPath $installerHelper).Length; goDebugInfo = $false
         uiTechnology = 'Win32'; uiRuntime = 'static MSVC'; webViewRuntime = 'shared Evergreen'
+        uiSourceRevision = $sourceRevision; uiSha256 = (Get-FileHash -LiteralPath $publishedExecutable -Algorithm SHA256).Hash
         builtAtUtc = [DateTime]::UtcNow.ToString('o'); signed = $false
         managedPaths = @((Split-Path -Leaf $msi), 'payload')
         artifacts = @([ordered]@{ path = (Split-Path -Leaf $msi); sha256 = (Get-FileHash -LiteralPath $msi -Algorithm SHA256).Hash })

@@ -13,6 +13,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -543,5 +544,28 @@ func TestAddressRowUsesIPv4SockaddrLayoutAndAddressOrigins(t *testing.T) {
 	}
 	if row.InterfaceIndex != 17 || row.PrefixOrigin != windows.IpPrefixOriginManual || row.SuffixOrigin != windows.NlsoManual || row.OnLinkPrefixLength != 32 || row.SkipAsSource != 0 || row.ValidLifetime < row.PreferredLifetime {
 		t.Fatalf("invalid address settings: %+v", row)
+	}
+}
+
+func TestWaitPreferredAddress(t *testing.T) {
+	reads := 0
+	err := waitPreferredAddress(t.Context(), time.Nanosecond, func() (uint32, error) {
+		reads++
+		if reads < 3 {
+			return windows.IpDadStateTentative, nil
+		}
+		return windows.IpDadStatePreferred, nil
+	})
+	if err != nil || reads != 3 {
+		t.Fatalf("tentative address was not awaited: reads=%d err=%v", reads, err)
+	}
+	err = waitPreferredAddress(t.Context(), time.Nanosecond, func() (uint32, error) { return windows.IpDadStateDuplicate, nil })
+	if err == nil {
+		t.Fatal("duplicate address accepted")
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	err = waitPreferredAddress(ctx, time.Hour, func() (uint32, error) { cancel(); return windows.IpDadStateTentative, nil })
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("address readiness did not cancel: %v", err)
 	}
 }

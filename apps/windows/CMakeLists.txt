@@ -21,6 +21,7 @@ if(NOT EXISTS "${WEBVIEW2_LOADER_LIB}")
   message(FATAL_ERROR "WebView2 loader library is missing for ${WEBVIEW2_ARCH}: ${WEBVIEW2_LOADER_LIB}")
 endif()
 
+set(FNCPN_UI_REVISION "unknown" CACHE STRING "Source revision recorded in the native UI resource")
 add_executable(FnCPN WIN32 main.cpp)
 configure_file("${CMAKE_CURRENT_SOURCE_DIR}/FnCPN.rc.in" "${CMAKE_CURRENT_BINARY_DIR}/FnCPN.rc" @ONLY)
 target_sources(FnCPN PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/FnCPN.rc")

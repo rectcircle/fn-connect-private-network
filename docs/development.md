@@ -1172,3 +1172,5 @@ python3 -m http.server 4174 --bind 127.0.0.1 --directory website
 设置页与主窗口使用对应平台框架；测速统一经 daemon Service 流式接口，内嵌 Host.Stream 与本地 IPC 语义一致。沙箱系统桥的单响应限制由通用、带凭据的 loopback IPC 适配处理，无独立设置网页。内部 IPC 当前为 6，需成套替换本地组件。
 
 链路偏好控件统一为开关（开启/关闭），不用勾选框；各端保留框架原生风格。局域网行与远程链路布局一致，始终开启且不可操作；关闭远程链路保留优先级位置。帮助文案统一采用“启用/禁用”语义，测速链路多选仍使用勾选框。
+
+Windows 安装包构建强制清理并重编译原生 UI，避免 CMake `--fresh` 仍复用 MSBuild 对象。UI 的 EXE 版本资源独立记录源码 revision；打包时与本次源指纹核对，清单同时记录 UI revision 和 SHA256，不能用 daemon 的 commit 代替 UI 产物追溯。

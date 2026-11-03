@@ -2159,6 +2159,11 @@ int WINAPI wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE, _In_ PWSTR, _In
     }
     MSG message{};
     while (GetMessageW(&message, nullptr, 0, 0) > 0) {
+        if(g_nativeSettings){
+            auto holder=reinterpret_cast<std::shared_ptr<NativeSettingsState>*>(GetWindowLongPtrW(g_nativeSettings,GWLP_USERDATA));
+            if(holder&&IsWindowVisible((*holder)->choicesWindow)&&(message.hwnd==(*holder)->choicesWindow||IsChild((*holder)->choicesWindow,message.hwnd))&&IsDialogMessageW((*holder)->choicesWindow,&message))continue;
+            if((message.hwnd==g_nativeSettings||IsChild(g_nativeSettings,message.hwnd))&&IsDialogMessageW(g_nativeSettings,&message))continue;
+        }
         if (IsDialogMessageW(window, &message)) continue;
         TranslateMessage(&message);
         DispatchMessageW(&message);

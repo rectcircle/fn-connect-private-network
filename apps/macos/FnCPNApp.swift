@@ -2404,8 +2404,8 @@ private final class HoverHelpButton: SettingsButton {
         let area = NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect], owner: self, userInfo: nil)
         addTrackingArea(area); tracking = area; super.updateTrackingAreas()
     }
-    override func mouseEntered(with event: NSEvent) { showExplanation() }
-    override func mouseExited(with event: NSEvent) { popover?.close() }
+    override func mouseEntered(with event: NSEvent) { super.mouseEntered(with: event); showExplanation() }
+    override func mouseExited(with event: NSEvent) { super.mouseExited(with: event); popover?.close() }
     override func viewDidMoveToWindow() { super.viewDidMoveToWindow(); if window == nil { popover?.close() } }
     override func accessibilityPerformPress() -> Bool { showExplanation(); return true }
     private func showExplanation() {
@@ -2423,12 +2423,34 @@ private final class HoverHelpButton: SettingsButton {
 // Native controls use an arrow by default; settings exposes clickable regions
 // consistently, including popover choices and the navigation rows.
 private class SettingsButton: NSButton {
+    private var handTracking: NSTrackingArea?
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let handTracking { removeTrackingArea(handTracking) }
+        let area = NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .cursorUpdate, .activeInActiveApp, .inVisibleRect], owner: self, userInfo: nil)
+        addTrackingArea(area); handTracking = area
+    }
+    override func cursorUpdate(with event: NSEvent) { (isEnabled ? NSCursor.pointingHand : NSCursor.arrow).set() }
+    override func mouseEntered(with event: NSEvent) { super.mouseEntered(with: event); cursorUpdate(with: event) }
+    override func mouseExited(with event: NSEvent) { super.mouseExited(with: event); NSCursor.arrow.set() }
+
     override func resetCursorRects() {
         super.resetCursorRects()
         if isEnabled { addCursorRect(bounds, cursor: .pointingHand) }
     }
 }
 private final class SettingsSwitch: NSSwitch {
+    private var handTracking: NSTrackingArea?
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let handTracking { removeTrackingArea(handTracking) }
+        let area = NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .cursorUpdate, .activeInActiveApp, .inVisibleRect], owner: self, userInfo: nil)
+        addTrackingArea(area); handTracking = area
+    }
+    override func cursorUpdate(with event: NSEvent) { (isEnabled ? NSCursor.pointingHand : NSCursor.arrow).set() }
+    override func mouseEntered(with event: NSEvent) { super.mouseEntered(with: event); cursorUpdate(with: event) }
+    override func mouseExited(with event: NSEvent) { super.mouseExited(with: event); NSCursor.arrow.set() }
+
     override func resetCursorRects() {
         super.resetCursorRects()
         if isEnabled { addCursorRect(bounds, cursor: .pointingHand) }
@@ -2436,6 +2458,19 @@ private final class SettingsSwitch: NSSwitch {
 }
 private final class SettingsTableView: NSTableView {
     var allRowsClickable = false
+    private var handTracking: NSTrackingArea?
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let handTracking { removeTrackingArea(handTracking) }
+        let area = NSTrackingArea(rect: .zero, options: [.mouseMoved, .cursorUpdate, .activeInActiveApp, .inVisibleRect], owner: self, userInfo: nil)
+        addTrackingArea(area); handTracking = area
+    }
+    override func cursorUpdate(with event: NSEvent) {
+        let row = row(at: convert(event.locationInWindow, from: nil))
+        (row >= 0 && (allRowsClickable || row > 0) ? NSCursor.pointingHand : NSCursor.arrow).set()
+    }
+    override func mouseMoved(with event: NSEvent) { cursorUpdate(with: event) }
+
     override func resetCursorRects() {
         super.resetCursorRects()
         for row in 0..<numberOfRows where allRowsClickable || row > 0 {
