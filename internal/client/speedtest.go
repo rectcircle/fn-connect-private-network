@@ -580,6 +580,14 @@ func (m *speedMeasurement) measureLatency(ctx context.Context, h *speedHTTP, pat
 	endpoint := strings.Replace(h.base, "http://", "ws://", 1) + path + "/latency"
 	connection, response, err := websocket.Dial(ctx, endpoint, &websocket.DialOptions{HTTPClient: h.client, HTTPHeader: h.headers(http.MethodGet, path+"/latency"), CompressionMode: websocket.CompressionDisabled})
 	if err != nil {
+		if response != nil && response.StatusCode != http.StatusSwitchingProtocols {
+			if response.Body != nil {
+				defer response.Body.Close()
+			}
+			// Keep the server's bounded, structured rejection (for example an
+			// expired timestamp) instead of losing it in the WS upgrade error.
+			return fmt.Errorf("延迟测试连接失败：%w", HTTPResponseError(response, "speedtest.latency", err))
+		}
 		if response != nil && response.Body != nil {
 			response.Body.Close()
 		}

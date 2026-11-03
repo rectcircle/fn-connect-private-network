@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"net"
 	"net/url"
+	"os"
+	"os/exec"
 	"strconv"
 	"strings"
 	"sync"
@@ -23,6 +25,7 @@ type Reply struct {
 	Error  *model.Error   `json:"error,omitempty"`
 }
 type App struct {
+	settingsWindow     bool
 	ctx                context.Context
 	speedCancel        context.CancelFunc
 	cancel             context.CancelFunc
@@ -50,6 +53,10 @@ func (a *App) startup(ctx context.Context) {
 	a.startupContext, a.startupCancel = context.WithCancel(a.ctx)
 	a.startupDone = make(chan struct{})
 	desktopApp = a
+	if a.settingsWindow {
+		close(a.startupDone)
+		return
+	}
 	nativeInit()
 	// Package smoke tests never start services or request privileges.
 	if a.smokeResult != "" {
@@ -68,7 +75,7 @@ func (a *App) startup(ctx context.Context) {
 	}()
 }
 func (a *App) ready(context.Context) {
-	if a.smokeResult != "" {
+	if a.smokeResult != "" || a.settingsWindow {
 		return
 	}
 	for _, arg := range platformArguments() {
@@ -102,7 +109,9 @@ func (a *App) shutdown(context.Context) {
 		a.stopPlatformDaemon()
 	}
 
-	nativeDispose()
+	if !a.settingsWindow {
+		nativeDispose()
+	}
 }
 func (a *App) startDaemon() error {
 	if uiPlatform() == "linux" {
@@ -182,13 +191,25 @@ func (a *App) Info() map[string]any {
 	a.mu.Lock()
 	startupError := a.startupError
 	a.mu.Unlock()
-	return map[string]any{"startupError": startupError, "version": version.Current, "commit": version.Revision, "autoStart": nativeAutoStart(), "language": nativeLanguage(), "symbols": nativeSymbols(), "platform": uiPlatform()}
+	return map[string]any{"startupError": startupError, "version": version.Current, "commit": version.Revision, "autoStart": nativeAutoStart(), "language": nativeLanguage(), "symbols": nativeSymbols(), "platform": uiPlatform(), "settingsWindow": a.settingsWindow}
 }
 func (a *App) SetAutoStart(enabled bool) string { return nativeSetAutoStart(enabled) }
 func (a *App) UpdateTray(state, title, action string, needsLogin, busy bool) {
 	nativeTray(state, title, action, needsLogin, busy)
 }
 func (a *App) OpenSettings() Reply {
+	if uiPlatform() == "linux" && !a.settingsWindow {
+		executable, err := os.Executable()
+		if err != nil {
+			return Reply{Error: model.PublicError(err)}
+		}
+		command := exec.CommandContext(a.ctx, executable, "--settings")
+		if err = command.Start(); err != nil {
+			return Reply{Error: model.PublicError(err)}
+		}
+		go func() { _ = command.Wait() }()
+		return Reply{Result: map[string]any{}}
+	}
 	runtime.EventsEmit(a.ctx, "open-settings")
 	runtime.WindowShow(a.ctx)
 	return Reply{Result: map[string]any{}}

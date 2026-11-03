@@ -219,3 +219,14 @@ func TestSpeedPathCancelsBlockedIOAfterRelayReconnect(t *testing.T) {
 		}
 	})
 }
+
+func TestLatencyPreservesServerAuthorizationFailure(t *testing.T) {
+	measurement := &speedMeasurement{report: func(SpeedTestStatus) error { return nil }}
+	h := &speedHTTP{base: "http://nas", client: &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusUnauthorized, Header: http.Header{"Content-Type": {"application/json"}}, Body: io.NopCloser(strings.NewReader(`{"error":{"code":"AUTH_REQUIRED","message":"expired speed test authorization","retryable":false}}`)), Request: r}, nil
+	})}}
+	err := measurement.measureLatency(t.Context(), h, model.SpeedTestPath, 0)
+	if err == nil || !strings.Contains(err.Error(), "expired speed test authorization") {
+		t.Fatalf("lost server rejection: %v", err)
+	}
+}

@@ -1,5 +1,6 @@
 // Framework-free fallback for Linux. macOS replaces these with native SF Symbols.
 const paths={
+ gearshape:'<path d="m9 2-.7 3-2 .9-2.8-.9-2 3.5 2.2 2.1v2.3l-2.2 2.1 2 3.5 2.8-.9 2 .9.7 3h4l.7-3 2-.9 2.8.9 2-3.5-2.2-2.1v-2.3l2.2-2.1-2-3.5-2.8.9-2-.9L13 2z"/><circle cx="11" cy="11" r="3"/>',
  'stop.fill':'<rect x="5" y="5" width="14" height="14" rx="2" fill="black" stroke="none"/>',
  'bolt.fill':'<path d="M14 2 5 14h6l-1 8 9-13h-6z" fill="black" stroke="none"/>',
  'person.badge.key':'<circle cx="9" cy="7" r="4"/><path d="M2 22v-3a7 7 0 0 1 13-3M18 15v7m-2-2h4"/><circle cx="18" cy="12" r="3"/>',

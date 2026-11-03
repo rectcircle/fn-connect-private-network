@@ -12,3 +12,25 @@
 #native-settings .about a{text-decoration:none;width:fit-content}
 #native-settings .about a:after{content:" ↗"}
 #native-settings .about a:hover{text-decoration:underline}
+
+/* Settings must not inherit the main window's compact form metrics. */
+#native-settings button{height:auto;min-height:34px;line-height:1.35;box-shadow:none;appearance:none}
+#native-settings input[type=checkbox]{padding:0;min-height:0;margin:0;flex:none}
+#native-settings input[role=switch]{width:40px;height:24px;padding:0;min-height:24px;box-sizing:border-box;vertical-align:middle}
+#native-settings input[role=switch]:before{top:50%;transform:translateY(-50%)}
+#native-settings input[role=switch]:checked:before{transform:translate(16px,-50%)}
+#native-settings .grip{display:flex;align-items:center;justify-content:center;width:24px;height:32px;flex:none;padding:0;line-height:1}
+#native-settings nav button{justify-content:flex-start;background:transparent;border:0;box-shadow:none;border-radius:8px;min-height:40px}
+#native-settings nav button:not(.selected){color:var(--text);font-weight:400}
+#native-settings nav button:hover{background:var(--line)}
+#native-settings nav button.selected{background:var(--selected)}
+#native-settings main{margin:0;align-self:start}
+#native-settings dialog{min-height:0;height:fit-content;max-height:calc(100vh - 48px);margin:auto;inset:0}
+#native-settings #settings-choices.above{top:auto;bottom:calc(100% + 8px)}
+#native-settings .help [role=tooltip]{margin:0}
+html[data-settings-window],html[data-settings-window] body{margin:0;padding:0;min-height:100%;background:#f5f5f7}
+html[data-settings-window] #native-settings{inset:0}
+html[data-settings-window] #native-settings aside{height:100vh}
+
+#native-settings .grip svg{display:block}
+#native-settings #settings-start{background:var(--accent);color:white;border-color:transparent}
