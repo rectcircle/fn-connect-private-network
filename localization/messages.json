@@ -531,6 +531,7 @@
   "测试完成": "Test completed",
   "连接服务尚未就绪": "Connection service is not ready",
   "打开或关闭开关可启用或禁用对应链路；拖动远程链路可调整优先级。连接时按从上到下的顺序尝试已启用的链路。局域网始终优先，且不可关闭或调整顺序。": "Turn switches on or off to enable or disable links. Drag remote links to change priority. Enabled links are tried from top to bottom. The local network is always first and cannot be turned off or reordered.",
+  "复制 Commit": "Copy commit",
   "已复制 Commit": "Commit copied",
   "无法打开链接，请检查浏览器设置。": "Could not open the link. Check your browser settings.",
   "中转": "Relay"
