@@ -4,11 +4,15 @@ import {main} from '../models';
 
 export function Call(arg1:string,arg2:Record<string, any>):Promise<main.Reply>;
 
+export function CancelSpeedTest():Promise<void>;
+
 export function Copy(arg1:string):Promise<void>;
 
 export function Info():Promise<Record<string, any>>;
 
 export function OpenAdmin():Promise<main.Reply>;
+
+export function OpenExternal(arg1:string):Promise<void>;
 
 export function OpenLogs():Promise<void>;
 
@@ -21,5 +25,7 @@ export function Quit():Promise<void>;
 export function Ready():Promise<void>;
 
 export function SetAutoStart(arg1:boolean):Promise<string>;
+
+export function StreamSpeedTest(arg1:string):Promise<main.Reply>;
 
 export function UpdateTray(arg1:string,arg2:string,arg3:string,arg4:boolean,arg5:boolean):Promise<void>;

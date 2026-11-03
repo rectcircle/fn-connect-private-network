@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"strings"
 	"time"
 
@@ -77,6 +78,7 @@ func runLinkCommand(ctx context.Context, args []string, env Environment) error {
 		}
 		rpc.Timeout = 5 * time.Minute
 		var status client.SpeedTestStatus
+		text := speedTestText{out: env.Stdout, printed: make(map[string]bool)}
 		err := rpc.Stream(ctx, client.MethodSpeedTest, client.SpeedTestRequest{Link: target}, func(payload json.RawMessage) (bool, error) {
 			if err := json.Unmarshal(payload, &status); err != nil {
 				return false, err
@@ -86,17 +88,25 @@ func runLinkCommand(ctx context.Context, args []string, env Environment) error {
 					return false, err
 				}
 			} else {
-				fmt.Fprintf(env.Stdout, "\r%-12s %-12s %8.2f Mbps %7.2f ms", status.Link, status.Stage, status.Mbps, status.RTTMS)
+				if err := text.update(status); err != nil {
+					return false, err
+				}
 			}
 			return !status.Active, nil
 		})
+		if !*asJSON {
+			if clearErr := text.clear(); err == nil {
+				err = clearErr
+			}
+		}
 		if err != nil {
 			return err
 		}
 
 		if !*asJSON {
-			fmt.Fprintln(env.Stdout)
-			_ = output(status)
+			if err := text.summary(status); err != nil {
+				return err
+			}
 		}
 		if status.Error != "" || status.RestoreError != "" || status.Stage == "canceled" {
 			return model.NewError(model.ErrorUnavailable, "speed test did not complete successfully; inspect results", false)
@@ -175,4 +185,100 @@ func runLinkCommand(ctx context.Context, args []string, env Environment) error {
 		fmt.Fprintf(env.Stdout, "%d. %s (%s)\n", i+2, l.Link, enabled)
 	}
 	return nil
+}
+
+// Carriage return moves the cursor but does not erase a longer previous frame.
+// Space padding also works on terminals without ANSI escape support.
+func writeSpeedTestProgress(out io.Writer, previousWidth *int, status client.SpeedTestStatus) error {
+	line := fmt.Sprintf("%-12s %s", status.Link, status.Stage)
+	switch status.Stage {
+	case "latency":
+		line += fmt.Sprintf("  %.2f ms", status.RTTMS)
+	case "download", "upload":
+		line += fmt.Sprintf("  %.2f Mbps", status.Mbps)
+	}
+	padding := max(0, *previousWidth-len(line))
+	_, err := fmt.Fprintf(out, "\r%s%s", line, strings.Repeat(" ", padding))
+	if err == nil {
+		*previousWidth = len(line)
+	}
+	return err
+}
+
+type speedTestText struct {
+	out     io.Writer
+	width   int
+	printed map[string]bool
+}
+
+func (p *speedTestText) clear() error {
+	if p.width == 0 {
+		return nil
+	}
+	_, err := fmt.Fprintf(p.out, "\r%s\r", strings.Repeat(" ", p.width))
+	if err == nil {
+		p.width = 0
+	}
+	return err
+}
+func speedTestMetric(value *float64, unit string, limited bool) string {
+	if value == nil {
+		return "—"
+	}
+	text := fmt.Sprintf("%.2f %s", *value, unit)
+	if limited {
+		text += " (limited)"
+	}
+	return text
+}
+func (p *speedTestText) update(status client.SpeedTestStatus) error {
+	for _, result := range status.Results {
+		switch result.Outcome {
+		case "success", "unavailable", "failed", "canceled":
+		default:
+			continue
+		}
+		if p.printed[result.Link] {
+			continue
+		}
+		if err := p.clear(); err != nil {
+			return err
+		}
+		detail := result.Error
+		if detail == "" {
+			detail = result.Message
+		}
+		if detail != "" {
+			detail = " | " + strings.Join(strings.Fields(detail), " ")
+		}
+		_, err := fmt.Fprintf(p.out, "%s [%s] | latency %s | download %s | upload %s%s\n", result.Link, result.Outcome,
+			speedTestMetric(result.LatencyMS, "ms", false), speedTestMetric(result.DownloadMbps, "Mbps", result.DownloadLimited), speedTestMetric(result.UploadMbps, "Mbps", result.UploadLimited), detail)
+		if err != nil {
+			return err
+		}
+		p.printed[result.Link] = true
+	}
+	if status.Active {
+		return writeSpeedTestProgress(p.out, &p.width, status)
+	}
+	return nil
+}
+func (p *speedTestText) summary(status client.SpeedTestStatus) error {
+	counts := make(map[string]int)
+	for _, result := range status.Results {
+		counts[result.Outcome]++
+	}
+	_, err := fmt.Fprintf(p.out, "Test %s: %d succeeded, %d unavailable, %d failed, %d canceled.\n", status.Stage, counts["success"], counts["unavailable"], counts["failed"], counts["canceled"])
+	if err != nil {
+		return err
+	}
+	if status.Error != "" {
+		if _, err = fmt.Fprintln(p.out, "Error:", strings.Join(strings.Fields(status.Error), " ")); err != nil {
+			return err
+		}
+	}
+	if status.RestoreError != "" {
+		_, err = fmt.Fprintln(p.out, "Restore error:", strings.Join(strings.Fields(status.RestoreError), " "))
+	}
+	return err
 }

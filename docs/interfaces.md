@@ -322,6 +322,7 @@ Android/iOS/iPadOS Fyne、HarmonyOS ArkUI。移动端首页为“网络链路 / 
 偏好、链路发现、建联、验证、测量、错误分类、取消与恢复由 Go daemon 负责。
 UI 仅提交选择并呈现 `SpeedTestStatus`。CLI `link speedtest --link ipv6|fn-connect` 与 `--all --json`
 使用同一 `Service.HandleStream`；本地组件 IPC 6 成套安装，远程协议和持久化 schema 不变。
+CLI 默认使用纯文本：每个链路完成后立即输出一行结果，整轮结束后输出文本汇总；显式 `--json` 才输出 NDJSON 进度。
 
 `SpeedTestResult.outcome` 为 pending/running/success/unavailable/failed/canceled；
 `reason` 为稳定原因码，`message` 用于展示。no_local_ipv6/no_server_ipv6/server_disabled

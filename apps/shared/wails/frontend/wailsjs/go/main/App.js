@@ -6,6 +6,10 @@ export function Call(arg1, arg2) {
   return window['go']['main']['App']['Call'](arg1, arg2);
 }
 
+export function CancelSpeedTest() {
+  return window['go']['main']['App']['CancelSpeedTest']();
+}
+
 export function Copy(arg1) {
   return window['go']['main']['App']['Copy'](arg1);
 }
@@ -16,6 +20,10 @@ export function Info() {
 
 export function OpenAdmin() {
   return window['go']['main']['App']['OpenAdmin']();
+}
+
+export function OpenExternal(arg1) {
+  return window['go']['main']['App']['OpenExternal'](arg1);
 }
 
 export function OpenLogs() {
@@ -40,6 +48,10 @@ export function Ready() {
 
 export function SetAutoStart(arg1) {
   return window['go']['main']['App']['SetAutoStart'](arg1);
+}
+
+export function StreamSpeedTest(arg1) {
+  return window['go']['main']['App']['StreamSpeedTest'](arg1);
 }
 
 export function UpdateTray(arg1, arg2, arg3, arg4, arg5) {
