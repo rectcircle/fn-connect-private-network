@@ -72,7 +72,7 @@ int main(int argc, char** argv) {
             Check(!ParseAuthorizationUri(value, fnId, request), "invalid activation");
         g_adminUrl = L"http://127.0.0.1:12345/app/fncpn?fncpn_proxy=" + std::wstring(64, L'a');
         Check(IsValidProxyUrl(g_adminUrl), "proxy bootstrap");
-        Check(IsValidProxyUrl(L"http://127.0.0.1:12345/app/fncpn/settings?fncpn_proxy="+std::wstring(64,L'a')), "local settings bootstrap");
+        Check(!IsValidProxyUrl(L"http://127.0.0.1:12345/app/fncpn/settings?fncpn_proxy="+std::wstring(64,L'a')), "settings no longer use administration WebView");
         Check(!IsValidProxyUrl(L"http://127.0.0.1:12345/app/fncpn/settings-evil?fncpn_proxy="+std::wstring(64,L'a')), "settings path must be exact");
         Check(IsAllowedAdminUrl(g_adminUrl), "bootstrap query stays inside WebView");
         Check(SanitizeExternalLink(L"http://127.0.0.1:12345/app/fncpn").empty(), "local management URL never opens externally");

@@ -2,6 +2,10 @@ package clienthost
 
 import (
 	"context"
+	"encoding/json"
+	"github.com/rectcircle/fn-connect-private-network/internal/ipc"
+	"net/http"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -114,3 +118,48 @@ func TestSystemStopCancelsCallsAndRejectsNewWork(t *testing.T) {
 }
 
 var _ Runtime = (*client.Manager)(nil)
+
+func (r *testRuntime) RunSpeedTest(ctx context.Context, _ client.SpeedTestRequest, report func(client.SpeedTestStatus) error) error {
+	if err := report(client.SpeedTestStatus{Active: true, Stage: "upload"}); err != nil {
+		return err
+	}
+	<-ctx.Done()
+	return ctx.Err()
+}
+
+func TestNativeStreamCancellationPreservesHost(t *testing.T) {
+	h, _ := newTestHost(t)
+	var endpoint ipc.NativeEndpoint
+	if err := h.Call(t.Context(), "native-transport", nil, &endpoint); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	err := ipc.StreamNative(ctx, endpoint, client.MethodSpeedTest, client.SpeedTestRequest{Link: "ipv6"}, func(raw json.RawMessage) (bool, error) {
+		var status client.SpeedTestStatus
+		if err := json.Unmarshal(raw, &status); err != nil {
+			return false, err
+		}
+		if !status.Active {
+			t.Fatal("missing active frame")
+		}
+		cancel()
+		return false, nil
+	})
+	if err == nil {
+		t.Fatal("expected cancellation")
+	}
+	if err := h.Call(t.Context(), client.MethodStatus, nil, nil); err != nil {
+		t.Fatal("stream canceled system host", err)
+	}
+	request, _ := http.NewRequest(http.MethodPost, endpoint.URL, strings.NewReader(`{}`))
+	request.Header.Set("Authorization", "Bearer "+endpoint.Token)
+	request.Header.Set("Origin", "http://external.example")
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusForbidden {
+		t.Fatal("accepted browser origin")
+	}
+}

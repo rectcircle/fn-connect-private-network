@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net"
 	"net/url"
@@ -23,6 +24,7 @@ type Reply struct {
 }
 type App struct {
 	ctx                context.Context
+	speedCancel        context.CancelFunc
 	cancel             context.CancelFunc
 	client             ipc.Client
 	mu                 sync.Mutex
@@ -114,7 +116,7 @@ func (a *App) startDaemon() error {
 	return a.startPlatformDaemon()
 }
 
-var allowedMethods = map[string]bool{"settings-url": true, "diagnose": true, "status": true, "connect": true, "disconnect": true, "retry": true, "continue-remote": true, "authorization-begin": true, "authorization-cancel": true, "authorize-native": true, "detect-access-code": true}
+var allowedMethods = map[string]bool{"link-settings": true, "set-link-settings": true, "build-info": true, "diagnose": true, "status": true, "connect": true, "disconnect": true, "retry": true, "continue-remote": true, "authorization-begin": true, "authorization-cancel": true, "authorize-native": true, "detect-access-code": true}
 
 func (a *App) Call(method string, params map[string]any) Reply {
 	a.mu.Lock()
@@ -180,28 +182,51 @@ func (a *App) Info() map[string]any {
 	a.mu.Lock()
 	startupError := a.startupError
 	a.mu.Unlock()
-	return map[string]any{"startupError": startupError, "version": version.Current, "autoStart": nativeAutoStart(), "language": nativeLanguage(), "symbols": nativeSymbols(), "platform": uiPlatform()}
+	return map[string]any{"startupError": startupError, "version": version.Current, "commit": version.Revision, "autoStart": nativeAutoStart(), "language": nativeLanguage(), "symbols": nativeSymbols(), "platform": uiPlatform()}
 }
 func (a *App) SetAutoStart(enabled bool) string { return nativeSetAutoStart(enabled) }
 func (a *App) UpdateTray(state, title, action string, needsLogin, busy bool) {
 	nativeTray(state, title, action, needsLogin, busy)
 }
 func (a *App) OpenSettings() Reply {
-	var result map[string]any
-	if err := a.client.Call(a.ctx, "settings-url", nil, &result); err != nil {
-		return Reply{Error: model.PublicError(err)}
-	}
-	address, _ := result["url"].(string)
-	if err := validateAdminURL(address); err != nil {
-		return Reply{Error: model.NewError(model.ErrorProtocol, err.Error(), false)}
-	}
-	u, _ := url.Parse(address)
-	if u.Path != "/app/fncpn/settings" {
-		return Reply{Error: model.NewError(model.ErrorProtocol, "invalid settings URL", false)}
-	}
-	nativeAdmin(address)
+	runtime.EventsEmit(a.ctx, "open-settings")
+	runtime.WindowShow(a.ctx)
 	return Reply{Result: map[string]any{}}
 }
+func (a *App) StreamSpeedTest(link string) Reply {
+	a.mu.Lock()
+	if a.speedCancel != nil {
+		a.mu.Unlock()
+		return Reply{Error: model.NewError(model.ErrorConflict, "speed test already running", false)}
+	}
+	ctx, cancel := context.WithCancel(a.ctx)
+	a.speedCancel = cancel
+	a.mu.Unlock()
+	defer func() { cancel(); a.mu.Lock(); a.speedCancel = nil; a.mu.Unlock() }()
+	rpc := a.client
+	rpc.Timeout = 6 * time.Minute
+	err := rpc.Stream(ctx, "speedtest", map[string]string{"link": link}, func(payload json.RawMessage) (bool, error) {
+		var status map[string]any
+		if err := json.Unmarshal(payload, &status); err != nil {
+			return false, err
+		}
+		runtime.EventsEmit(a.ctx, "speedtest", status)
+		active, _ := status["active"].(bool)
+		return !active, nil
+	})
+	if err != nil {
+		return Reply{Error: model.PublicError(err)}
+	}
+	return Reply{Result: map[string]any{}}
+}
+func (a *App) CancelSpeedTest() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.speedCancel != nil {
+		a.speedCancel()
+	}
+}
+
 func (a *App) OpenAdmin() Reply {
 	var result map[string]any
 	if err := a.client.Call(a.ctx, "admin-proxy", nil, &result); err != nil {
@@ -238,6 +263,15 @@ func (a *App) OpenNAS(address string) error {
 	return nil
 }
 func (a *App) OpenLogs() error { return uiOpenLogs() }
+
+func (a *App) OpenExternal(address string) error {
+	switch address {
+	case "https://github.com/rectcircle/fn-connect-private-network", "https://github.com/rectcircle/fn-connect-private-network/releases", "https://fncpn.rectcircle.cn/", "https://fncpn.rectcircle.cn/#donate":
+		return uiOpenExternal(address)
+	default:
+		return fmt.Errorf("unsupported external link")
+	}
+}
 
 func (a *App) Copy(text string) error { return runtime.ClipboardSetText(a.ctx, text) }
 func (a *App) Quit() {

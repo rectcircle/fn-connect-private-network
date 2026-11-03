@@ -511,6 +511,8 @@ HAP 内包含第三方声明与固定社区 Go LICENSE。夸克镜像沿用公�
 当前工作流接入不等于 Linux 完整 HAP 构建或线上发布已通过。运行前先完成 Nix 等既有门槛，
 再按干净 commit 构建草稿。公开和夸克上传仍由既有人工发布入口触发。
 
+鸿蒙设置页使用原生 ArkUI：链路偏好通过现有本地命令读写，服务未启动时仍可编辑已保存 NAS 的配置；测速确认后按需启动服务，通过单个可取消的本地 HTTP 进度流接收 Go 测量结果。设置页不使用 WebView，不增加远程协议或测速任务状态。
+
 ### 模拟器与独立能力探针
 
 首次安装镜像前查看并明确接受厂商许可；脚本不默认接受。
@@ -1166,3 +1168,7 @@ python3 -m http.server 4174 --bind 127.0.0.1 --directory website
 - 本地预览通过不等于生产部署成功；推送后应确认 Netlify 部署与生产页面内容。本文不记录或推断当前 Cloudflare 配置。
 
 参考：[Netlify 配置](https://docs.netlify.com/build/configure-builds/file-based-configuration/)、[外部 DNS](https://docs.netlify.com/manage/domains/configure-domains/configure-external-dns/)、[HTTPS](https://docs.netlify.com/manage/domains/secure-domains-with-https/https-ssl/)、[Cloudflare Full (strict)](https://developers.cloudflare.com/ssl/origin-configuration/ssl-modes/full-strict/)。
+
+设置页与主窗口使用对应平台框架；测速统一经 daemon Service 流式接口，内嵌 Host.Stream 与本地 IPC 语义一致。沙箱系统桥的单响应限制由通用、带凭据的 loopback IPC 适配处理，无独立设置网页。内部 IPC 当前为 6，需成套替换本地组件。
+
+链路偏好控件统一为开关（开启/关闭），不用勾选框；各端保留框架原生风格。局域网行与远程链路布局一致，始终开启且不可操作；关闭远程链路保留优先级位置。帮助文案统一采用“启用/禁用”语义，测速链路多选仍使用勾选框。

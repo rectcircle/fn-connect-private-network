@@ -206,9 +206,7 @@ func NetworkProbe(ctx context.Context, target string) (string, error) {
 func simulatorLogDirectory() (string, error) { return simulatorDirectory() }
 func simulatorBrowserAllowed(target string) error {
 	// Settings is served by this local app host, not by the private NAS tunnel.
-	if u, err := url.Parse(target); err == nil && u.Scheme == "http" && u.Hostname() == "127.0.0.1" && u.Path == "/app/fncpn/settings" {
-		return nil
-	}
+
 	u, err := url.Parse(target)
 	if err != nil {
 		return err
@@ -230,10 +228,10 @@ func simulatorBrowserAllowed(target string) error {
 	return nil
 }
 
-func simulatorCallSettingsPage(ctx context.Context) (string, error) {
-	directory, err := simulatorDirectory()
+func simulatorStream(ctx context.Context, method string, params any, receive func(json.RawMessage) (bool, error)) error {
+	host, _, err := simulatorHost()
 	if err != nil {
-		return "", err
+		return err
 	}
-	return client.NewSavedSettingsPage(ctx, client.NewConfigStore(filepath.Join(directory, "client.json"), nil))
+	return host.Stream(ctx, method, params, receive)
 }

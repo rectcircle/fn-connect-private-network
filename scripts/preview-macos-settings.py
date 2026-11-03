@@ -8,6 +8,7 @@ import tempfile
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 parser = argparse.ArgumentParser()
+parser.add_argument('--scenes', default='', help='Comma-separated fixture names; empty renders all')
 parser.add_argument('--output', type=pathlib.Path, default=ROOT / 'dist/settings-preview')
 args = parser.parse_args()
 args.output.mkdir(parents=True, exist_ok=True)
@@ -28,7 +29,7 @@ fixture = r'''
         sidebar.selectRowIndexes(IndexSet(integer: isGeneral ? 0 : 1), byExtendingSelection: false)
         displayPage(isGeneral ? 0 : 1)
         if name.contains("upload") || name.contains("latency") {
-            render(["active":true,"stage":name.contains("latency") ? "latency" : name.contains("confirming") ? "upload-confirming" : name.contains("waiting") ? "upload-waiting" : "upload","link":"fn-connect","mbps":86.4,"rttMs":34.2,"sequence":1,"echoSent":1,"echoReceived":1,"progress":0.45,"results":[["link":"fn-connect","latencyMs":34.2,"downloadMbps":123.2]]])
+            render(["active":true,"stage":name.contains("latency") ? "latency" : name.contains("confirming") ? "upload-confirming" : name.contains("waiting") ? "upload-waiting" : "upload","link":"fn-connect","mbps":86.4,"rttMs":34.2,"sequence":1,"sampleElapsedMs":3600,"targetSampleMs":8000,"echoSent":1,"echoReceived":1,"progress":0.45,"results":[["link":"fn-connect","latencyMs":34.2,"downloadMbps":123.2]]])
         } else if name.contains("complete") {
             render(["active":false,"stage":"completed","results":[["link":"ipv6","latencyMs":18.1,"downloadMbps":235.1,"uploadMbps":86.4],["link":"fn-connect","latencyMs":34.2,"downloadMbps":123.2,"uploadMbps":86.4]]])
         } else if name.contains("error") {
@@ -65,6 +66,10 @@ fixture = r'''
             window!.endSheet(window!.attachedSheet!, returnCode: NSApplication.ModalResponse.alertSecondButtonReturn)
             RunLoop.current.run(until: Date().addingTimeInterval(0.1))
             precondition(cancellation == nil, "canceled confirmation started test")
+        }
+        if active {
+            followTestBottom(); RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+            precondition(pageDocument.bounds.height <= scroll.contentView.bounds.height || abs(scroll.contentView.bounds.maxY - pageDocument.bounds.maxY) < 1, "active test did not follow document bottom")
         }
         let root = window!.contentView!
         root.layoutSubtreeIfNeeded()
@@ -104,6 +109,7 @@ source += r'''
   precondition(NSApp.activationPolicy() == .regular, "minimized window lost Dock")
   windows[1].close(); precondition(NSApp.activationPolicy() == .accessory, "Dock remained after last close")
   for (name,width,dark) in [("general",840.0,false),("links-idle",840.0,false),("links-upload",780.0,false),("links-latency",840.0,false),("links-complete",840.0,false),("links-error",780.0,false),("links-error-expanded",780.0,false),("links-upload-dark",840.0,true),("links-upload-confirming",780.0,false),("links-upload-waiting",780.0,false)] {
+   if CommandLine.arguments.count > 2 && !CommandLine.arguments[2].isEmpty && !CommandLine.arguments[2].split(separator: ",").contains(Substring(name)) { continue }
    let settings = LinkSettingsController()
    settings.renderPreview(name,directory:directory,width:width,dark:dark)
   }
@@ -125,5 +131,5 @@ with tempfile.TemporaryDirectory(prefix='fncpn-settings-preview-') as temporary:
     subprocess.run(['swiftc', '-parse-as-library', str(path / 'Preview.swift'), '-o', str(binary),
                     '-framework', 'AppKit', '-framework', 'ServiceManagement', '-framework', 'UserNotifications',
                     '-framework', 'WebKit'], check=True)
-    subprocess.run([str(binary), str(args.output.resolve())], check=True)
+    subprocess.run([str(binary), str(args.output.resolve()), args.scenes], check=True)
 print(args.output.resolve())

@@ -55,9 +55,6 @@ type hostState struct {
 
 var state hostState
 var lifecycle sync.Mutex
-var settingsInfoOnce sync.Once
-var settingsInfoURL string
-var settingsInfoError error
 
 func start(directory string, applicationOnly bool) error {
 	lifecycle.Lock()
@@ -278,13 +275,15 @@ func call(raw []byte) ([]byte, error) {
 	if r.Version != 1 || !filepath.IsAbs(r.Directory) {
 		return nil, errors.New("invalid local request")
 	}
+	if r.Method == "build-info" {
+		result, e := localSettingsCommand(context.Background(), r.Directory, r.Method, r.Params)
+		return reply(result, e), nil
+	}
 	connection, err := net.DialTimeout("unix", filepath.Join(r.Directory, "control.sock"), time.Second)
 	if err != nil {
-		if r.Method == "settings-url" {
-			settingsInfoOnce.Do(func() {
-				settingsInfoURL, settingsInfoError = client.NewSavedSettingsPage(context.Background(), client.NewConfigStore(filepath.Join(r.Directory, "client.json"), nil))
-			})
-			return reply(map[string]string{"url": settingsInfoURL}, settingsInfoError), nil
+		if r.Method == client.MethodLinkSettings || r.Method == client.MethodSetLinkSettings {
+			result, e := localSettingsCommand(context.Background(), r.Directory, r.Method, r.Params)
+			return reply(result, e), nil
 		}
 		if r.Method == "export-support" {
 			archive, e := exportSupport(r.Directory, []byte("{}"))

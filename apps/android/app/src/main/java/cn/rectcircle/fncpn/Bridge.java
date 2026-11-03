@@ -128,8 +128,11 @@ public final class Bridge {
             } else if (method.equals("ui.browser")) {
                 MainActivity owner=activity.get();if(owner==null)throw new Exception("Open FnCPN first");
                 String url=params.getString("url");
-                if(!"https://fncpn.rectcircle.cn/#donate".equals(url))throw new Exception("Unsupported website");
-                main.post(()->owner.startActivity(new Intent(Intent.ACTION_VIEW,android.net.Uri.parse(url))));result=JSONObject.NULL;
+                if(!java.util.Arrays.asList("https://fncpn.rectcircle.cn/#donate", "https://fncpn.rectcircle.cn/", "https://fncpn.rectcircle.cn", "https://github.com/rectcircle/fn-connect-private-network", "https://github.com/rectcircle/fn-connect-private-network/releases").contains(url))throw new Exception("Unsupported website");
+                main.post(()->{
+                    try{owner.startActivity(new Intent(Intent.ACTION_VIEW,android.net.Uri.parse(url)));}
+                    catch(android.content.ActivityNotFoundException | SecurityException unavailable){feedback(owner.getString(R.string.browser_missing));SupportLog.event(application,"browser_missing",unavailable);}
+                });result=JSONObject.NULL;
             } else if (method.equals("ui.exit")) {
                 MainActivity owner=activity.get();if(owner==null)throw new Exception("Open FnCPN first");
                 if(!exiting) {

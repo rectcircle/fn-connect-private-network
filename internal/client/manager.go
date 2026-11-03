@@ -225,8 +225,6 @@ type Manager struct {
 	adminActivityNext       time.Time
 	adminActivityGeneration uint64
 	adminProxy              *AdminProxy
-	settingsUI              *settingsUI
-	settingsClosed          bool
 	coordinatorMu           sync.Mutex
 	coordinator             *connectionCoordinator
 	// The following connection evidence is owned by operation.
@@ -922,7 +920,6 @@ func (m *Manager) ClosePaused(ctx context.Context) error {
 }
 
 func (m *Manager) close(ctx context.Context, pause bool) error {
-	m.closeSettingsUI()
 	if m.control != nil {
 		m.control.deactivate()
 	}
@@ -2430,7 +2427,7 @@ func (m *Manager) connectWithOptionalConfiguration(
 
 	if !linkEnabled(links, "fn-connect") || relayAttempted {
 		if forced == "ipv6" {
-			return m.fail(model.NewError(model.ErrorUnavailable, directFailureMessage(direct.Reason), true))
+			return m.fail(&directPathError{reason: direct.Reason, cause: model.NewError(model.ErrorUnavailable, directFailureMessage(direct.Reason), true)})
 		}
 		return m.fail(model.NewError(model.ErrorUnavailable, "没有可用的已启用远程链路", true))
 	}

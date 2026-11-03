@@ -177,9 +177,8 @@ HarmonyOS 已接入发布资产汇总、公开与夸克镜像校验；构建工�
 
 ### 1.2.0 其他客户端设置对齐（2026-11-01）
 
-- 共享本地页面覆盖桌面侧栏、手机设置列表、持久多选、确认取消不发起请求、优先级保存及结果表；
-  `node scripts/preview-shared-settings.mjs` 使用 Chrome 的真实桌面/390px 手机视口验证生产资源，fixture 不接触已安装服务。
-- 本地接口测试覆盖随机 loopback 引导、Host/Origin/凭据拒绝、越界配置、未启动 VPN 的通用页，以及流式进度和关闭页面取消请求。
+- 设置改为各端主窗口框架，移除独立设置网页及旧预览脚本。
+- 统一内嵌流式 IPC 测试覆盖取消不停止 Host、带凭据的 loopback IPC 与 Origin 拒绝；测速覆盖结构化 IPv6 不可用、接收计数及 relay 会话断开后重连仍取消旧测量。
 - 通过根 module 测试及 client/clienthost/IPC 竞态检查，共享 Fyne 的 `-tags ci` 测试及竞态检查、Wails Go/前端测试和构建；
   已构建 Android arm64-v8a/x86_64 本地验证包、HarmonyOS 未签名设备 HAP 及 iOS 模拟器 App，iOS 真机目标未签名编译通过。
 - Windows 原生及 Linux GTK/WebKit 容器仍需在对应系统编译并验收；移动设备的真实 NAS 双链路、
@@ -191,3 +190,8 @@ HarmonyOS 已接入发布资产汇总、公开与夸克镜像校验；构建工�
 - 移动端默认设置列表、关于/网络链路返回导航、隐藏行内上下箭头、单 packet 中继动画及图标/方向线中心对齐由真实 390px 浏览器预览验证；桌面保留默认通用侧栏。
 - 回归覆盖：无连接服务时经本地 HTTP 保存已授权 NAS 的偏好、iOS 共享偏好迁移保留身份及旧副本、未知 schema 不覆盖，以及 IPv6 接口分类为假但目标路由可用时仍进入真实握手。
 - iOS 离线共享编辑需要 App 与扩展的 App Group 匹配；未获授权时保留原有连接能力。真机签名与真实 NAS 行为仍需实机验收。
+
+### 设置与测速展示跨端对齐（2026-11-03）
+
+- macOS AppKit、HarmonyOS ArkUI、Linux Wails 和共享 Fyne 采用 daemon 采样时间绘图，移除传输百分比填充；结束后仅保留结果。补齐开关说明、就近提示、Commit 复制和浏览器外链。
+- macOS 原生 App、HarmonyOS 应用内隧道 UI 测试包与 iOS 模拟器 App 已在本机编译；Wails 前端构建及自动化检查通过。Windows 原生源码已同步，Windows/MSVC 和 Linux GTK 的本机编译及设备实际联网仍待对应环境验收，不把其他系统上的检查作为替代。

@@ -311,29 +311,42 @@ IP 增加临时 /32 隧道路由，绑定 WireGuard 源地址，结束后恢复�
 已完成单项实时呈现，整轮结束后才展示结果表；失败仅属于本轮结果，新测试和关闭提示不会被历史错误反复覆盖。
 
 
-### 跨客户端设置容器
+### 各端设置与统一测速入口
 
-Windows、Linux/Wails、Android/iOS/Fyne 和 HarmonyOS 复用客户端内嵌的本地设置页面，macOS 原生页面保持 AppKit。
-本地 IPC 新增 `settings-url`，仅返回该客户端 Manager 持有的 `127.0.0.1` 随机端口页面及随机引导凭据。
-页面默认通用；手机窄屏使用顶部页签。局域网固定且不可配置，远程链路支持拖动、触屏拖动、上下移动和开关。
+设置页与主窗口使用相同框架：macOS AppKit、Windows Win32、Linux Wails、
+Android/iOS/iPadOS Fyne、HarmonyOS ArkUI。移动端首页为“网络链路 / 关于”，系统返回与原生导航一致；
+桌面默认通用。设置不使用独立网页或嵌套 WebView，NAS 管理页面不受此变更影响。
 
-本地页面位于 `/app/fncpn/settings`，静态资源完全内嵌；Host、Origin 与访问凭据均校验，无 CORS。
-引导凭据从地址中移除，API 使用 Bearer 头；HttpOnly/SameSite cookie 仅支持页面刷新，不授权写接口。
-本地 `GET /api/state` 读取版本、commit、偏好与状态，`POST /api/preferences` 保存当前 NAS 偏好，
-`POST /api/test` 在单个请求内以 NDJSON 输出已有 `RunSpeedTest` 的进度与最终结果；路径均相对于设置页。
-测试取消或关闭 WebView 取消请求上下文，恢复仍由现有核心流程负责。没有测速任务 ID、轮询状态或全局占用锁。
-这里的随机 loopback 端口只负责本机 UI，不是 NAS 测速服务；真正测速仍访问 NAS IP 的现有私网 API。
+所有平台的链路偏好统一使用开关：左侧拖动手柄、中间名称、右侧开关。开启/关闭分别表示启用/禁用；关闭保留原优先级位置。局域网行布局一致、整体淡化，开关始终开启且不可操作，也不可拖动。连接按从上到下的顺序尝试已启用的链路。测速链路选择仍使用多选勾选框，不与启用开关混用。
 
-Windows/WebView2 和 Linux/WebKit 仅对本地设置页提供自启状态及开关的窄接口，不向远程管理页面注入客户端业务能力。
-移动端以“网络链路 / 关于”列表作为设置首页，不显示通用页或自启选项。VPN 服务未运行时仍可修改已保存 NAS 的开关和优先级；只有网络测试要求连接服务在线，打开设置不会请求 VPN 授权。
-iOS 的测速使用平台私网拨号接口；HarmonyOS 应用内隧道使用 netstack，系统 VPN 与桌面继续使用绑定隧道地址的系统路由。
-这些是配套本地组件变化，不增加远程服务端要求，继续遵守唯一的产品 MINOR 准入规则。
+偏好、链路发现、建联、验证、测量、错误分类、取消与恢复由 Go daemon 负责。
+UI 仅提交选择并呈现 `SpeedTestStatus`。CLI `link speedtest --link ipv6|fn-connect` 与 `--all --json`
+使用同一 `Service.HandleStream`；本地组件 IPC 6 成套安装，远程协议和持久化 schema 不变。
 
+`SpeedTestResult.outcome` 为 pending/running/success/unavailable/failed/canceled；
+`reason` 为稳定原因码，`message` 用于展示。no_local_ipv6/no_server_ipv6/server_disabled
+是 unavailable，不设置 error；实际握手或测量故障为 failed。整体 outcome 单独描述结果，
+`stage=completed` 仅表示流程（包括恢复）已结束。单项完成立即更新结果。
 
-移动端数据包动画仅有一个 packet 元素，沿整条路径依次通过中继两侧的方向线；设备图标使用固定高度行，文字换行不影响图标和方向线对齐。
-IPv6 测速不再将接口 `HasPublicIPv6` 分类作为准入条件，直接复用正常建联的 NAS 地址发现、目标路由检测与握手，不回退其他链路。
+内嵌 daemon 提供与 socket IPC 等价的 `Host.Stream`，Android 直接调用。
+HarmonyOS/iOS 的单响应系统消息桥通过 `native-transport` 获得随机 loopback 地址与 256 位 Bearer 凭据，
+以 `/ipc` POST 发送标准 IPC Request，接收标准 Response NDJSON。它只是通用 IPC 传输适配，
+无设置专用 API、页面、Cookie、CORS、任务注册、状态查询或轮询；拒绝 Origin、代理和跳转。
+凭据仅经已有本地系统桥返回，随 Host 生命周期失效。关闭流取消请求，恢复使用 daemon 的独立预算。
+
+测速本体仍访问 NAS IP 上现有私网 API：WebSocket Ping/Pong 延迟不包含建联，
+下载普通 HTTP，上传普通 HTTP 加同请求 SSE 接收计数。四分钟总预算与 HTTP 超时由核心控制。
+测速期间观察网络健康和 relay 会话 epoch，短暂断开后重连也会终止旧请求，报告 relay_interrupted。
+移动端动画只插值视觉，不推算测速结果；上传/下载多个点沿整条路径通过中继。
+IPv6 直接复用正常发现、目标路由检测与握手，不以本机公网地址分类排除，也不回退其他链路。
 
 iOS 的离线链路偏好使用主 App 和扩展共同授权的 `group.<主 App bundle ID>` App Group；只共享
 `links.json`（独立 schema 1）与 `current-nas.json`（独立 schema 1），不迁移或共享身份、密钥、Cookie 或连接意图。
 首次启用时复制并保留原 `.links` 文件；共享配置用文件锁及原子写入协调 UI/扩展，未知 schema 拒绝覆盖。
 既有签名未包含 App Group 时保留原 provider-local 偏好及连接能力，离线共享编辑需要重新配置匹配的签名授权。
+
+测速状态的 `sampleElapsedMs` 表示扣除预热后的实际采样时间（上传直接来自 NAS 接收统计），
+`targetSampleMs` 表示目标采样窗口。两者不表示传输完成百分比；上传只有收到 NAS 的有效
+complete 响应才产生最终上传结果。既有 `progress` 保留采样预算比例语义，不能用于断言完成。
+各端设置折线按 daemon 采样时间绘制，超过窗口后滚动；下方仅显示中性时间轴基线。
+这些是向本地状态增加字段，不新增 server 接口或远程版本要求。

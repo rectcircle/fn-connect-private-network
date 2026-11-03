@@ -31,7 +31,10 @@ func (chromeLayout) Layout(objects []fyne.CanvasObject, size fyne.Size) {
 	iconX := float32(52)
 	objects[1].Move(fyne.NewPos(iconX, 14))
 	objects[1].Resize(fyne.NewSize(28, 28))
-	x := iconX + 38
+	x := iconX
+	if objects[1].Visible() {
+		x += 38
+	}
 	for _, object := range objects[2:] {
 		width := object.MinSize().Width
 		object.Move(fyne.NewPos(x, (56-object.MinSize().Height)/2))
@@ -41,6 +44,8 @@ func (chromeLayout) Layout(objects []fyne.CanvasObject, size fyne.Size) {
 }
 
 type clientView struct {
+	headerTitle                               *widget.Label
+	headerIcon, headerVersion                 fyne.CanvasObject
 	readMu                                    sync.Mutex
 	backend                                   daemonClient
 	background                                func()
@@ -81,9 +86,7 @@ type clientView struct {
 	diagnosticText                            string
 	editing                                   bool
 	drawer                                    *navigationDrawer
-	settingsInfoOnce                          sync.Once
-	settingsInfoURL                           string
-	settingsInfoError                         error
+	settings                                  *nativeSettings
 }
 
 func newClientView(backend daemonClient) *clientView {
@@ -168,7 +171,10 @@ func newClientView(backend daemonClient) *clientView {
 	title := widget.NewLabelWithStyle("FnCPN", fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
 	versionLabel := widget.NewLabel(version.Current)
 	versionLabel.Importance = widget.LowImportance
-	header := container.New(chromeLayout{}, v.navigation, icon, container.NewThemeOverride(title, textSizeTheme{theme.Current(), 18}), container.NewThemeOverride(versionLabel, textSizeTheme{theme.Current(), 13}))
+	v.headerTitle = title
+	v.headerIcon = icon
+	v.headerVersion = container.NewThemeOverride(versionLabel, textSizeTheme{theme.Current(), 13})
+	header := container.New(chromeLayout{}, v.navigation, icon, container.NewThemeOverride(title, textSizeTheme{theme.Current(), 18}), v.headerVersion)
 	v.mainPanel = container.NewStack(newThemeSurface(theme.ColorNameBackground), v.mainPanel)
 	v.accountPanel = container.NewStack(newThemeSurface(theme.ColorNameBackground), v.accountPanel)
 	v.pages = &pageLayout{progress: 1}
@@ -187,9 +193,11 @@ func newClientView(backend daemonClient) *clientView {
 			messages = notice
 		}
 	}
-	v.content = container.New(appFrameLayout{}, header, widget.NewSeparator(), container.NewBorder(messages, nil, nil, nil, container.NewStack(v.body, v.loading)))
+	v.settings = newNativeSettings(v)
+	pages := container.NewStack(v.body, v.loading, v.settings.panel)
+	v.content = container.New(appFrameLayout{}, header, widget.NewSeparator(), container.NewBorder(messages, nil, nil, nil, pages))
 	if platform, ok := v.backend.(interface{ NativeNavigation() bool }); ok && platform.NativeNavigation() {
-		v.content = container.NewBorder(messages, nil, nil, nil, container.NewStack(v.body, v.loading))
+		v.content = container.NewBorder(messages, nil, nil, nil, pages)
 	}
 	edge := &drawerEdge{view: v}
 	edge.ExtendBaseWidget(edge)
@@ -344,6 +352,10 @@ func (v *clientView) showLogin(change bool) {
 	}
 }
 func (v *clientView) navigate() {
+	if v.settings != nil && v.settings.panel.Visible() {
+		v.settings.back()
+		return
+	}
 	if !v.statusReceived {
 		v.back()
 		return
@@ -889,40 +901,4 @@ func (v *clientView) setLabel(label *widget.Label, text string) {
 	if label == v.identity || label == v.diagnosticBody {
 		v.layoutDirty = true
 	}
-}
-
-// Settings is local application content, independent of NAS administrator rights.
-func (v *clientView) openSettings() {
-	if v.drawer != nil {
-		v.drawer.Hide()
-	}
-	v.execute(func(ctx context.Context) error {
-		var result struct {
-			URL string `json:"url"`
-		}
-		if err := v.backend.Call(ctx, client.MethodSettingsURL, nil, &result); err != nil {
-			// General remains available without VPN permission or a running extension.
-			v.settingsInfoOnce.Do(func() {
-				if platform, ok := v.backend.(interface {
-					SavedSettingsPage(context.Context) (string, error)
-				}); ok {
-					v.settingsInfoURL, v.settingsInfoError = platform.SavedSettingsPage(v.ctx)
-				} else {
-					v.settingsInfoURL, v.settingsInfoError = client.NewSettingsInfoPage(v.ctx)
-				}
-			})
-			if v.settingsInfoError != nil {
-				return v.settingsInfoError
-			}
-			result.URL = v.settingsInfoURL
-		}
-		parsed, err := url.Parse(result.URL)
-		if err != nil || parsed.Scheme != "http" || parsed.Hostname() != "127.0.0.1" || parsed.Port() == "" || parsed.User != nil || parsed.Path != "/app/fncpn/settings" {
-			return fmt.Errorf("%s", tr("无效的设置页面地址"))
-		}
-		if platform, ok := v.backend.(interface{ OpenAdmin(string) error }); ok {
-			return platform.OpenAdmin(result.URL)
-		}
-		return fyne.CurrentApp().OpenURL(parsed)
-	})
 }

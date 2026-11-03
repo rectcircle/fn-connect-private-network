@@ -102,7 +102,7 @@ func DecodeParams[T any](request Request) (T, error) {
 }
 
 // ProtocolVersion belongs only to the local, atomically installed components.
-const ProtocolVersion = 5
+const ProtocolVersion = 6
 
 func validateProtocolVersion(value int) error {
 	if value != ProtocolVersion {

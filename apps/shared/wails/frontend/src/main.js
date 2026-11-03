@@ -1,3 +1,4 @@
+import {openNativeSettings} from './settings.js';
 import './style.css';
 import {fallbackSymbols} from './icons.js';
 import translations from './en.json';
@@ -16,14 +17,14 @@ const connected=()=>presentation(diagnostics.status,L);
 function render() {
  const status=diagnostics.status||{}, p=connected(),setup=editing||!diagnostics.fnId;
  const pane=setup?(challenge?'otp':accessRequired?'access':'login'):'details';
- if(pane!==currentPane){currentPane=pane;WindowGetSize().then(size=>WindowSetSize(Math.max(size.w,494),setup?(challenge?418:accessRequired?594:548):668));}
+ if(pane!==currentPane&&document.getElementById('native-settings').hidden){currentPane=pane;WindowGetSize().then(size=>WindowSetSize(Math.max(size.w,494),setup?(challenge?418:accessRequired?594:548):668));}
  $('login-form').noValidate=!!status.localNetworkWaiting;
  show('login',setup);show('details',!setup);show('change',!setup);show('admin',!setup&&diagnostics.administrator===true);
  document.querySelectorAll('.credentials').forEach(row=>{row.hidden=challenge;row.querySelector('input').required=!challenge;});
  show('access-row',accessRequired&&!challenge);$('access').required=accessRequired&&!challenge;
  show('otp-row',challenge);$('otp').required=challenge;
  show('back',challenge);show('return',!!diagnostics.fnId&&!challenge);show('spinner',busy||status.localNetworkWaiting);
- document.querySelectorAll('button,input').forEach(el=>{el.disabled=busy;});$('quit').disabled=false;
+ document.querySelector('body>main').querySelectorAll('button,input').forEach(el=>{el.disabled=busy;});$('quit').disabled=false;
  if(status.localNetworkWaiting){$('primary').disabled=false;$('login-form').querySelector('button[type=submit]').disabled=false;}
  set('submit-login',L(status.localNetworkWaiting?'继续远程连接':'登录并连接'));
  const title=status.localNetworkWaiting?L('正在等待局域网访问权限'):p.title;
@@ -77,7 +78,7 @@ $('fnid').addEventListener('blur',async()=>{
  const generation=++probeGeneration,fnId=normalizeFNID(value('fnid'));if(!fnId||busy)return;
  try{const reply=await call('detect-access-code',{fnId});if(generation===probeGeneration&&normalizeFNID(value('fnid'))===fnId){accessRequired=reply.required===true;render();}}catch{/* Credential-free probe is optional; login reports actionable errors. */}
 });
-$('settings').onclick=()=>perform(async()=>{const reply=await OpenSettings();if(reply.error)throw reply.error;});
+$('settings').onclick=openNativeSettings;
 $('primary').onclick=primary;$('retry').onclick=()=>perform(()=>call('retry'));
 $('change').onclick=()=>login(true);$('relogin').onclick=()=>login();
 $('back').onclick=()=>{challenge=false;$('otp').value='';$('trust').checked=false;set('login-error','');render();$('password').focus();};

@@ -2,6 +2,7 @@ package main
 
 import (
 	"fyne.io/fyne/v2"
+	"fyne.io/fyne/v2/theme"
 	"time"
 )
 
@@ -68,6 +69,10 @@ func (v *clientView) settlePage(login bool) {
 	v.pages.position(v.body.Objects, v.body.Size())
 }
 func (v *clientView) back() {
+	if v.settings != nil && v.settings.panel.Visible() {
+		v.settings.back()
+		return
+	}
 	if !v.statusReceived {
 		if v.background != nil {
 			go v.background()
@@ -111,14 +116,37 @@ func (v *clientView) returnFromLogin() {
 }
 
 func (v *clientView) syncBackGesture() {
+	if v.headerTitle != nil {
+		title := "FnCPN"
+		settingsOpen := v.settings != nil && v.settings.panel.Visible()
+		if settingsOpen {
+			switch v.settings.page {
+			case "links":
+				title = tr("网络链路")
+			case "about":
+				title = tr("关于")
+			default:
+				title = tr("设置")
+			}
+			v.headerIcon.Hide()
+			v.headerVersion.Hide()
+		} else {
+			v.headerIcon.Show()
+			v.headerVersion.Show()
+		}
+		v.headerTitle.SetText(title)
+	}
+	if v.settings != nil && v.settings.panel.Visible() {
+		v.navigation.SetIcon(theme.NavigateBackIcon())
+	}
 	if platform, ok := v.backend.(interface{ SetRailAdmin(bool) }); ok {
 		platform.SetRailAdmin(v.admin != nil && !v.admin.Disabled())
 	}
 	if platform, ok := v.backend.(interface{ SetNavigationState(bool, bool) }); ok {
-		platform.SetNavigationState(v.editing && (v.loginFromMenu || !v.requiresLogin()), v.statusReceived && !v.navigation.Disabled())
+		platform.SetNavigationState((v.settings != nil && v.settings.panel.Visible()) || v.editing && (v.loginFromMenu || !v.requiresLogin()), v.statusReceived && !v.navigation.Disabled())
 	}
 	if platform, ok := v.backend.(interface{ SetBackGestureEnabled(bool) }); ok {
-		platform.SetBackGestureEnabled(v.statusReceived && v.editing && (v.loginFromMenu || !v.requiresLogin()) && !v.navigation.Disabled())
+		platform.SetBackGestureEnabled((v.settings != nil && v.settings.panel.Visible()) || v.statusReceived && v.editing && (v.loginFromMenu || !v.requiresLogin()) && !v.navigation.Disabled())
 	}
 }
 

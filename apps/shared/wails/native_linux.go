@@ -16,7 +16,6 @@ void fn_admin(char*);
 */
 import "C"
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -121,19 +120,4 @@ func nativeNotifyRoot() {
 	_ = exec.Command("notify-send", "FnCPN", fmt.Sprint("Privileged service unavailable. Run fncpn-linux-setup.")).Start()
 }
 
-//export fnGoSettings
-func fnGoSettings(value *C.char) *C.char {
-	action := C.GoString(value)
-	var failure string
-	switch action {
-	case "fncpn-settings:ready":
-	case "fncpn-settings:enable":
-		failure = nativeSetAutoStart(true)
-	case "fncpn-settings:disable":
-		failure = nativeSetAutoStart(false)
-	default:
-		return nil
-	}
-	raw, _ := json.Marshal(map[string]any{"type": "fncpn-settings", "autoStart": nativeAutoStart(), "error": failure})
-	return C.CString(string(raw))
-}
+func uiOpenExternal(address string) error { return exec.Command("xdg-open", address).Run() }

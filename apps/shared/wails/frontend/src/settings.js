@@ -1,27 +1,46 @@
-const $ = id => document.getElementById(id);
-const translations = await fetch(new URL('settings/en.json',location.href)).then(r=>r.json());
+import {ThroughputTimeline} from './throughput.js';
+const root=document.getElementById('native-settings');
+const $ = id => document.getElementById('settings-'+id);
+import translations from './en.json';
+import appIcon from './assets/appicon.png';
+import template from './settings.html?raw';
+import './settings.css';
+import {EventsOn,WindowGetSize,WindowSetSize} from '../wailsjs/runtime/runtime';
+root.innerHTML=template;
+$('about-icon').src=appIcon;
+const api=window.go.main.App;
 const english = !navigator.language.toLowerCase().startsWith('zh');
 const L = text => english ? (translations[text] || text) : text;
 document.documentElement.lang = english ? 'en' : 'zh-CN';
-document.querySelector('aside').setAttribute('aria-label',L('设置'));
-document.querySelector('.help').setAttribute('aria-label',L('说明'));
-document.querySelectorAll('[data-i18n]').forEach(node=>{ node.textContent=L(node.textContent); });
-const params = new URLSearchParams(location.search), token=params.get('fncpn_proxy')||sessionStorage.getItem('fncpn-settings-token');
-if(token)sessionStorage.setItem('fncpn-settings-token',token);
-history.replaceState(null,'',location.pathname);
-const base=location.pathname;
+root.querySelector('aside').setAttribute('aria-label',L('设置'));
+root.querySelector('.help').setAttribute('aria-label',L('说明'));
+root.querySelectorAll('[data-i18n]').forEach(node=>{ node.textContent=L(node.textContent); });
+const params=new URLSearchParams(),base='';
+let previousWindowSize;
 let packetStage='',packetFrame=0,packetStarted=0;
-let layoutApplied=false,mobile=document.documentElement.dataset.layout==='mobile', dragging=false, state, saving=false, controller, last={}, historyValues=[], historyStage='', selection=[];
+let layoutApplied=false,mobile=document.documentElement.dataset.layout==='mobile', dragging=false, state, saving=false, controller, last={}, timeline=new ThroughputTimeline(), selection=[];
 const linkName = key => L(key==='ipv6'?'IPv6 直连':key==='fn-connect'?'FN Connect 中继':'局域网');
 function notice(text=''){ $('notice').textContent=text;$('notice').hidden=!text;$('dismiss').hidden=!text; }
-async function request(path, body, signal){
- const response=await fetch(base+'/api/'+path,{method:body?'POST':'GET',headers:{'Authorization':'Bearer '+token,...(body?{'Content-Type':'application/json'}:{})},body:body?JSON.stringify(body):undefined,signal});
- if(!response.ok){ let text;try{text=(await response.json()).error;}catch{} throw new Error(text||L('请求失败')); }return response;
+async function rpc(method,params={}){const reply=await api.Call(method,params);if(reply.error)throw new Error(reply.error.message);return reply.result;}
+async function request(path,body,signal){
+ if(path==='preferences')return {json:()=>rpc('set-link-settings',body)};
+ if(path==='state'){const [settings,status,info]=await Promise.all([rpc('link-settings'),rpc('status'),api.Info()]);return {json:async()=>({settings,status,...info})};}
+ if(path==='test'){
+  const encoder=new TextEncoder();let unsubscribe;
+  const stream=new ReadableStream({start(output){
+   unsubscribe=EventsOn('speedtest',event=>output.enqueue(encoder.encode(JSON.stringify(event)+'\n')));
+   signal.addEventListener('abort',()=>api.CancelSpeedTest(),{once:true});
+   api.StreamSpeedTest(body.link).then(reply=>{unsubscribe();if(reply.error)output.error(new Error(reply.error.message));else output.close();}).catch(error=>{unsubscribe();output.error(error)});
+  },cancel(){unsubscribe?.();api.CancelSpeedTest();}});
+  return {body:stream};
+ }
+ throw new Error('Unsupported settings operation');
 }
+
 function selectionChanged(){
  const links=[$('choose-ipv6').checked?'ipv6':'',$('choose-relay').checked?'fn-connect':''].filter(Boolean);
  $('selector').textContent=links.length===2?L('IPv6 与 FN Connect'):links.length?linkName(links[0]):L('选择测试链路');
- $('start').disabled=!links.length||!state?.settings.fnId||!!state?.infoOnly;
+ $('start').disabled=!!controller||!links.length||!state?.settings.fnId||!!state?.infoOnly;
  return links;
 }
 function setChoices(open){$('choices').hidden=!open;$('selector').setAttribute('aria-expanded',String(open));}
@@ -37,11 +56,11 @@ function page(name,push=true){
  const rect=old?.getBoundingClientRect();
  currentPage=name;
  if(name!=='links'){controller?.abort();animatePacket('');setChoices(false);$('confirm').close();}
- if(push)history.pushState({settingsPage:name},'',base+'#'+name);
+ 
  $('settings-menu').hidden=name!=='menu';$('general').hidden=name!=='general';$('links').hidden=name!=='links';
  $('settings-back').hidden=!mobile||params.get('nativeBack')==='1'||name==='menu';
  $('general-tab').classList.toggle('selected',name==='general');$('links-tab').classList.toggle('selected',name==='links');
- window.scrollTo(0,0);
+ root.scrollTo(0,0);
  if(mobile&&previous&&previous!==name&&!matchMedia('(prefers-reduced-motion: reduce)').matches){
   const next=$(name==='menu'?'settings-menu':name),back=name==='menu';
   old.hidden=false;old.inert=true;
@@ -57,7 +76,7 @@ function applyLayout(next){
  if(layoutApplied)return;layoutApplied=true;
  mobile=next;if(mobile)$('startup').hidden=true;document.documentElement.dataset.layout=mobile?'mobile':'desktop';
  $('general-title').textContent=L(mobile?'关于':'通用');$('about-heading').hidden=mobile;
- history.replaceState({settingsPage:mobile?'menu':'general'},'',base);page(mobile?'menu':'general',false);
+ page(mobile?'menu':'general',false);
 }
 $('general-tab').onclick=()=>page('general');$('links-tab').onclick=()=>page('links');
 $('mobile-links').onclick=()=>page('links');$('mobile-about').onclick=()=>page('general');
@@ -76,7 +95,7 @@ function renderPreferences(){
   grip.onpointercancel=()=>{dragging=false;row.classList.remove('dragging');};
   const name=document.createElement('label');name.htmlFor='preference-'+link.link;name.className='name';name.textContent=linkName(link.link);
   const move=document.createElement('button');move.textContent=index===0?'↓':'↑';move.title=L(index===0?'下移':'上移');move.setAttribute('aria-label',move.title+' '+linkName(link.link));move.disabled=saving||!state.settings.fnId;move.onclick=()=>save([...state.settings.links].reverse());
-  const check=document.createElement('input');check.type='checkbox';check.id='preference-'+link.link;check.checked=link.enabled;check.disabled=saving||!state.settings.fnId;check.setAttribute('aria-label',linkName(link.link));check.onchange=()=>save(state.settings.links.map(entry=>({...entry,enabled:entry.link===link.link?check.checked:entry.enabled})));
+  const check=document.createElement('input');check.type='checkbox';check.setAttribute('role','switch');check.id='preference-'+link.link;check.checked=link.enabled;check.disabled=saving||!state.settings.fnId;check.setAttribute('aria-label',linkName(link.link));check.onchange=()=>save(state.settings.links.map(entry=>({...entry,enabled:entry.link===link.link?check.checked:entry.enabled})));
   row.append(grip,name,move,check);row.ondragstart=e=>{dragging=true;e.dataTransfer.setData('text/plain',String(index));row.classList.add('dragging');};row.ondragend=()=>{dragging=false;row.classList.remove('dragging');};row.ondragover=e=>e.preventDefault();row.ondrop=e=>{e.preventDefault();dragging=false;if(!saving&&e.dataTransfer.getData('text/plain')===String(1-index))save([...state.settings.links].reverse());};
   $('priorities').append(row);
  }
@@ -97,16 +116,12 @@ function renderTest(value){
  const relay=value.link==='fn-connect';$('relay').hidden=!relay;$('relay-segment').hidden=!relay;
  $('topology').className=value.active&&['upload','download','latency'].includes(value.stage)?value.stage:'';animatePacket($('topology').className);
  $('metric').textContent=value.stage==='latency'?(value.rttMs||0).toFixed(1)+' ms':value.stage==='upload-warmup'?L('预热中…'):value.stage==='upload-waiting'?L('等待接收…'):value.stage==='upload-confirming'?L('等待确认…'):['upload','upload-complete','download'].includes(value.stage)?(value.mbps||0).toFixed(1)+' Mbps':'';
- const family=(value.stage||'').startsWith('upload')?'upload':value.stage;
- if(historyStage!==family){historyValues=[];historyStage=family;}
- if(['download','upload'].includes(value.stage)){historyValues.push(Math.max(0,value.mbps||0));historyValues=historyValues.slice(-60);}
- const max=Math.max(1,...historyValues);$('graph').querySelector('polyline').setAttribute('points',historyValues.map((v,i)=>`${i*600/59},${60-v/max*55}`).join(' '));$('graph').toggleAttribute('hidden',!historyValues.length);
- $('progress').value=value.progress||0;
+ timeline.update(value);$('graph').querySelector('polyline').setAttribute('points',timeline.points());$('graph').hidden=!value.active||!timeline.samples.length;
  const rows=value.results||[];
- $('partial').textContent=rows.map(row=>linkName(row.link)+' · '+measurements(row).map((v,i)=>v==='—'?'':L(['延迟','下载','上传'][i])+' '+v).filter(Boolean).join('  ')+(row.error?' · '+L(row.error):'')).join('\n');
+ $('partial').textContent=rows.map(row=>linkName(row.link)+' · '+measurements(row).map((v,i)=>v==='—'?'':L(['延迟','下载','上传'][i])+' '+v).filter(Boolean).join('  ')+((row.message||row.error)?' · '+L(row.message||row.error):'')).join('\n');
  $('results').hidden=!!value.active||!rows.length;
  if(!value.active){
-  $('result-rows').replaceChildren();for(const row of rows){const tr=document.createElement('tr');for(const text of [linkName(row.link),...measurements(row)]){const td=document.createElement('td');td.textContent=text;tr.append(td);}$('result-rows').append(tr);}
+  $('result-rows').replaceChildren();for(const row of rows){const tr=document.createElement('tr');for(const text of [linkName(row.link),...measurements(row)]){const td=document.createElement('td');td.textContent=text;tr.append(td);}$('result-rows').append(tr);if(row.outcome==='unavailable'){const detail=document.createElement('tr'),cell=document.createElement('td');cell.colSpan=4;cell.className='secondary';cell.textContent=L(row.message||row.reason||'不可用');detail.append(cell);$('result-rows').append(detail);}}
   notice([value.error,value.restoreError,...rows.map(row=>row.error?linkName(row.link)+': '+L(row.error):'')].filter(Boolean).join('\n'));
  }
  followTestBottom();
@@ -114,7 +129,7 @@ function renderTest(value){
 let testScrollFrame=0;
 function followTestBottom(){
  if(testScrollFrame)return;
- testScrollFrame=requestAnimationFrame(()=>{testScrollFrame=0;if(currentPage==='links')window.scrollTo({top:document.documentElement.scrollHeight,behavior:'instant'});});
+ testScrollFrame=requestAnimationFrame(()=>{testScrollFrame=0;if(currentPage==='links')root.scrollTo({top:root.scrollHeight,behavior:'instant'});});
 }
 const testSizeObserver=new ResizeObserver(()=>{if(controller)followTestBottom();});
 for(const id of ['live','results'])testSizeObserver.observe($(id));
@@ -123,27 +138,24 @@ $('start').onclick=()=>{selection=selectionChanged();if(!selection.length)return
 $('confirm-cancel').onclick=()=>$('confirm').close();
 $('confirm-start').onclick=async()=>{
  $('confirm').close();const previous=controller;if(previous)previous.abort();const current=new AbortController();controller=current;
- $('cancel').hidden=false;$('start').textContent=L('重新测试');notice();historyValues=[];historyStage='';renderTest({active:true,stage:'preparing',results:[]});
+ $('cancel').hidden=false;$('start').disabled=true;$('start').textContent=L('重新测试');notice();timeline.reset();renderTest({active:true,stage:'preparing',results:[]});
 
  try{
   const response=await request('test',{link:selection.length===2?'all':selection[0]},current.signal), reader=response.body.getReader(),decoder=new TextDecoder();let pending='';let ended=false;
   while(true){const chunk=await reader.read();if(controller!==current){await reader.cancel();return;}pending+=decoder.decode(chunk.value||new Uint8Array(),{stream:!chunk.done});let newline;while((newline=pending.indexOf('\n'))!==-1){const line=pending.slice(0,newline);pending=pending.slice(newline+1);if(line.trim()){const event=JSON.parse(line);renderTest(event);if(!event.active)ended=true;}}if(chunk.done)break;}
   if(!ended)throw new Error(L('测试连接已中断，请重试'));
  }catch(e){if(controller===current)renderTest({...last,active:false,stage:e.name==='AbortError'?'canceled':'failed',error:e.name==='AbortError'?'':e.message});}
- finally{if(controller===current){controller=undefined;$('cancel').hidden=true;}}
+ finally{if(controller===current){controller=undefined;$('cancel').hidden=true;selectionChanged();}}
 };
 $('cancel').onclick=()=>controller?.abort();
 window.addEventListener('pagehide',()=>{controller?.abort();animatePacket('');});
 // Only local settings containers provide this narrow launch-at-login bridge.
-function nativeState(data){if(data?.type!=='fncpn-settings')return;$('startup').hidden=mobile;$('auto-start').checked=!!data.autoStart;if(data.error)notice(data.error);}
-window.chrome?.webview?.addEventListener('message',event=>nativeState(event.data));
-window.fncpnSettingsState=nativeState;
-function nativeSend(action){const value='fncpn-settings:'+action;if(window.chrome?.webview)window.chrome.webview.postMessage(value);else window.webkit?.messageHandlers?.fncpnSettings?.postMessage(value);}
-$('auto-start').onchange=()=>nativeSend($('auto-start').checked?'enable':'disable');
-nativeSend('ready');selectionChanged();await refresh();
-setInterval(()=>{if(!document.hidden){nativeSend('ready');if(!controller)refresh();}},5000);
-
-
+$('copy-commit').onclick=async()=>{try{await api.Copy(state?.commit||'');$('copy-commit').textContent=L('已复制 Commit');setTimeout(()=>{$('copy-commit').textContent=L('复制');},2000);}catch(error){notice(error.message||String(error));}};
+root.querySelectorAll('a[href]').forEach(anchor=>anchor.addEventListener('click',async event=>{event.preventDefault();try{await api.OpenExternal(anchor.href);}catch(error){notice(error.message||String(error));}}));
+$('auto-start').onchange=async()=>{const error=await api.SetAutoStart($('auto-start').checked);if(error)notice(error);};
+document.getElementById('settings-close').onclick=()=>{controller?.abort();animatePacket('');root.hidden=true;if(previousWindowSize)WindowSetSize(previousWindowSize.w,previousWindowSize.h);};
+export async function openNativeSettings(){if(root.hidden){previousWindowSize=await WindowGetSize();WindowSetSize(Math.max(previousWindowSize.w,850),Math.max(previousWindowSize.h,760));}root.hidden=false;page('general',false);const info=await api.Info();$('auto-start').checked=!!info.autoStart;$('startup').hidden=false;await refresh();}
+EventsOn('open-settings',openNativeSettings);
 function animatePacket(stage){
  if(stage===packetStage)return;
  packetStage=stage;cancelAnimationFrame(packetFrame);

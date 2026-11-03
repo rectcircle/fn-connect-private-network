@@ -17,6 +17,8 @@
 #include <winrt/Windows.Data.Json.h>
 #include <algorithm>
 #include <array>
+#include <functional>
+#include <cmath>
 #include <cwctype>
 #include <memory>
 #include <string>
@@ -40,7 +42,7 @@ using namespace winrt::Windows::Data::Json;
 namespace {
 constexpr wchar_t kWindowClass[] = L"FnCPN.NativeWindow";
 constexpr wchar_t kAdminWindowClass[] = L"FnCPN.AdminWindow";
-constexpr int kIpcVersion = 5;
+constexpr int kIpcVersion = 6;
 constexpr UINT_PTR kRefreshTimer = 1;
 constexpr UINT kStatusReady = WM_APP + 1;
 constexpr UINT kDaemonReady = WM_APP + 2;
@@ -345,12 +347,12 @@ DWORD TimeoutForMethod(const wchar_t* method) {
     return 30000;
 }
 
-bool TransferExact(HANDLE pipe, void* data, DWORD size, bool write, DWORD timeout) {
+bool TransferExact(HANDLE pipe, void* data, DWORD size, bool write, DWORD timeout, HANDLE cancellation = nullptr) {
     auto* bytes = static_cast<uint8_t*>(data);
     DWORD offset = 0;
     const auto deadline = GetTickCount64() + timeout;
     while (offset < size) {
-        if(g_closing) { SetLastError(ERROR_CANCELLED); return false; }
+        if(g_closing || (cancellation && WaitForSingleObject(cancellation,0)==WAIT_OBJECT_0)) { SetLastError(ERROR_CANCELLED); return false; }
         OVERLAPPED overlapped{};
         overlapped.hEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
         if(!overlapped.hEvent) return false;
@@ -362,7 +364,8 @@ bool TransferExact(HANDLE pipe, void* data, DWORD size, bool write, DWORD timeou
         if (!started && GetLastError() != ERROR_IO_PENDING) { CloseHandle(overlapped.hEvent); return false; }
         if (!started) {
             const auto now = GetTickCount64();
-            const auto wait = WaitForSingleObject(overlapped.hEvent, now >= deadline ? 0 : static_cast<DWORD>(deadline - now));
+            HANDLE waits[]{overlapped.hEvent,cancellation};
+            const auto wait = WaitForMultipleObjects(cancellation?2:1,waits,FALSE,now >= deadline ? 0 : static_cast<DWORD>(deadline - now));
             if (wait != WAIT_OBJECT_0) {
                 CancelIoEx(pipe, &overlapped);
                 WaitForSingleObject(overlapped.hEvent, INFINITE);
@@ -438,7 +441,7 @@ bool IsSameUserSessionServer(HANDLE pipe) {
     return equal;
 }
 
-JsonObject CallIpc(const wchar_t* method, const JsonObject* parameters = nullptr) {
+JsonObject CallIpc(const wchar_t* method, const JsonObject* parameters = nullptr, std::function<bool(const JsonObject&)> receive = {}, HANDLE cancellation = nullptr) {
     DWORD sessionId = 0;
     ProcessIdToSessionId(GetCurrentProcessId(), &sessionId);
     const std::wstring pipeName = L"\\\\.\\pipe\\FnCPN.Client.v1." + std::to_wstring(sessionId)
@@ -473,22 +476,24 @@ JsonObject CallIpc(const wchar_t* method, const JsonObject* parameters = nullptr
     payload.resize(static_cast<size_t>(payloadSize - 1));
     std::array<uint8_t, 4> header{};
     WriteU32(header, static_cast<uint32_t>(payload.size()));
-    const auto timeout = TimeoutForMethod(method);
-    if (!TransferExact(pipe, header.data(), static_cast<DWORD>(header.size()), true, timeout) ||
-        !TransferExact(pipe, payload.data(), static_cast<DWORD>(payload.size()), true, timeout))
+    const auto timeout = receive ? 360000 : TimeoutForMethod(method);
+    if (!TransferExact(pipe, header.data(), static_cast<DWORD>(header.size()), true, timeout, cancellation) ||
+        !TransferExact(pipe, payload.data(), static_cast<DWORD>(payload.size()), true, timeout, cancellation))
         throw winrt::hresult_error(HRESULT_FROM_WIN32(GetLastError()));
-    if (!TransferExact(pipe, header.data(), static_cast<DWORD>(header.size()), false, timeout)) throw winrt::hresult_error(HRESULT_FROM_WIN32(GetLastError()));
+    for (;;) {
+    if (!TransferExact(pipe, header.data(), static_cast<DWORD>(header.size()), false, timeout, cancellation)) throw winrt::hresult_error(HRESULT_FROM_WIN32(GetLastError()));
     const auto responseSize = ReadU32(header);
     if (responseSize == 0 || responseSize > 262144) throw winrt::hresult_error(E_INVALIDARG);
     std::vector<uint8_t> response(responseSize);
-    if (!TransferExact(pipe, response.data(), responseSize, false, timeout)) throw winrt::hresult_error(HRESULT_FROM_WIN32(GetLastError()));
+    if (!TransferExact(pipe, response.data(), responseSize, false, timeout, cancellation)) throw winrt::hresult_error(HRESULT_FROM_WIN32(GetLastError()));
     const int chars = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, reinterpret_cast<const char*>(response.data()), static_cast<int>(response.size()), nullptr, 0);
     if (chars <= 0) throw winrt::hresult_error(E_INVALIDARG);
     std::wstring responseText(static_cast<size_t>(chars), L'\0');
     MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, reinterpret_cast<const char*>(response.data()), static_cast<int>(response.size()), responseText.data(), chars);
     auto root = JsonObject::Parse(responseText);
     ValidateEnvelope(root, id);
-    return root;
+    if (!receive || receive(root.GetNamedObject(L"result"))) return root;
+    }
 }
 
 void SetStatus(const std::wstring& state, const std::wstring& identity = {}) {
@@ -1379,7 +1384,7 @@ bool IsValidProxyUrl(const std::wstring& value) {
     if (hostname != L"127.0.0.1" && hostname != L"::1" && hostname != L"[::1]") return false;
     const std::wstring pathname(path, parts.dwUrlPathLength);
     const std::wstring extra(query, parts.dwExtraInfoLength);
-    if (pathname != L"/app/fncpn" && pathname != L"/app/fncpn/settings") return false;
+    if (pathname != L"/app/fncpn") return false;
     constexpr std::wstring_view prefix = L"?fncpn_proxy=";
     if (!extra.starts_with(prefix) || extra.size() != prefix.size() + 64) return false;
     const auto token = extra.substr(prefix.size());
@@ -1488,7 +1493,7 @@ void ShowAdminWebView(HWND owner, const std::wstring& url) {
             bounds.left,bounds.top,bounds.right-bounds.left,bounds.bottom-bounds.top, owner, nullptr, GetModuleHandleW(nullptr), nullptr);
     }
     if (!g_adminWindow) return;
-    SetWindowTextW(g_adminWindow, g_adminUrl.find(L"/settings?") != std::wstring::npos ? L("设置") : L("FnCPN 管理后台"));
+    SetWindowTextW(g_adminWindow, L("FnCPN 管理后台"));
     ShowWindow(g_adminWindow, SW_RESTORE);
     SetWindowPos(g_adminWindow,HWND_TOP,0,0,0,0,SWP_NOMOVE|SWP_NOSIZE);
     SetForegroundWindow(g_adminWindow);
@@ -1539,7 +1544,7 @@ void ShowAdminWebView(HWND owner, const std::wstring& url) {
                                         if (request) request->get_Uri(&uri);
                                         if (response) response->get_StatusCode(&status);
                                         const bool local = uri && IsAllowedAdminUrl(uri); CoTaskMemFree(uri);
-                                        if (local && g_adminUrl.find(L"/settings?") == std::wstring::npos && (status == 401 || status == 403)) {
+                                        if (local && (status == 401 || status == 403)) {
                                             g_operationError = L("登录已失效，请重新输入密码");
                                             SetWindowTextW(g_statusError, g_operationError.c_str());
                                             PostMessageW(g_adminWindow, WM_CLOSE, 0, 0);
@@ -1548,24 +1553,7 @@ void ShowAdminWebView(HWND owner, const std::wstring& url) {
                                         return S_OK;
                                     }).Get(), &g_responseToken);
                             }
-                            EventRegistrationToken settingsMessage{};
-                            g_webView->add_WebMessageReceived(Microsoft::WRL::Callback<ICoreWebView2WebMessageReceivedEventHandler>(
-                                [](ICoreWebView2* view, ICoreWebView2WebMessageReceivedEventArgs* args) -> HRESULT {
-                                    LPWSTR rawSource{}, rawMessage{};
-                                    args->get_Source(&rawSource);
-                                    const std::wstring source = rawSource ? rawSource : L""; CoTaskMemFree(rawSource);
-                                    if (g_adminUrl.find(L"/settings?") == std::wstring::npos || !IsAllowedAdminUrl(source) || source.find(L"/app/fncpn/settings") == std::wstring::npos) return S_OK;
-                                    if (FAILED(args->TryGetWebMessageAsString(&rawMessage))) return S_OK;
-                                    const std::wstring message = rawMessage ? rawMessage : L""; CoTaskMemFree(rawMessage);
-                                    if (message == L"fncpn-settings:enable") SetAutoStart(true);
-                                    else if (message == L"fncpn-settings:disable") SetAutoStart(false);
-                                    else if (message != L"fncpn-settings:ready") return S_OK;
-                                    JsonObject reply; reply.Insert(L"type", JsonValue::CreateStringValue(L"fncpn-settings"));
-                                    reply.Insert(L"autoStart", JsonValue::CreateBooleanValue(g_autoStart));
-                                    if ((message == L"fncpn-settings:enable" && !g_autoStart) || (message == L"fncpn-settings:disable" && g_autoStart)) reply.Insert(L"error",JsonValue::CreateStringValue(L("无法设置开机自启")));
-                                    view->PostWebMessageAsJson(reply.Stringify().c_str());
-                                    return S_OK;
-                                }).Get(), &settingsMessage);
+
                             g_webView->Navigate(url.c_str());
                             return S_OK;
                         }).Get());
@@ -1601,6 +1589,8 @@ void ShowTrayMenu(HWND window) {
     if (selected == 6) PostMessageW(window, WM_COMMAND, kExit, 0);
     if (selected == 7) ShellExecuteW(window, L"open", L"https://fncpn.rectcircle.cn/#donate", nullptr, nullptr, SW_SHOWNORMAL);
 }
+
+#include "settings_native.h"
 
 LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam) {
     if (g_taskbarCreated && message == g_taskbarCreated) {
@@ -2041,17 +2031,16 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
             g_operationInFlight = true; g_busy = true; g_operationError.clear();
             StartWorker(RepairServiceFromWorker); return 0;
         }
-        case kSettings:
+        case kSettings: OpenNativeSettings(); return 0;
         case kAdmin: {
             if ((LOWORD(wParam) == kAdmin && !g_administrator) || g_adminOpening) return 0;
             g_adminOpening = true;
             g_adminError.clear();
-            const bool settings = LOWORD(wParam) == kSettings;
-            StartWorker([settings] {
+            StartWorker([] {
                 winrt::init_apartment(winrt::apartment_type::multi_threaded);
                 struct ApartmentGuard { ~ApartmentGuard() { winrt::uninit_apartment(); } } apartmentGuard;
                 std::wstring url, error;
-                try { url = JsonString(CallIpc(settings ? L"settings-url" : L"admin-proxy").GetNamedObject(L"result"), L"url"); }
+                try { url = JsonString(CallIpc(L"admin-proxy").GetNamedObject(L"result"), L"url"); }
                 catch (const winrt::hresult_error& failure) { error = failure.message().c_str(); }
                 auto* data = new std::pair<std::wstring, std::wstring>(std::move(url), std::move(error));
                 PostPayload(kAdminReady, data, 0);

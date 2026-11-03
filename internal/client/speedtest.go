@@ -23,8 +23,50 @@ import (
 	"github.com/rectcircle/fn-connect-private-network/internal/version"
 )
 
+// Capability failures originate in connection discovery, never in UI string matching.
+type speedPathError struct {
+	reason  string
+	message string
+}
+
+func (e *speedPathError) Error() string { return e.message }
+
+type directPathError struct {
+	reason string
+	cause  error
+}
+
+func (e *directPathError) Error() string { return e.cause.Error() }
+func (e *directPathError) Unwrap() error { return e.cause }
+
+func speedFailure(err error) (string, string) {
+	var path *speedPathError
+	if errors.As(err, &path) {
+		return "failed", path.reason
+	}
+	var direct *directPathError
+	if errors.As(err, &direct) {
+		switch direct.reason {
+		case "no_local_ipv6", "no_server_ipv6", "server_disabled":
+			return "unavailable", direct.reason
+		default:
+			return "failed", direct.reason
+		}
+	}
+	if errors.Is(err, context.Canceled) {
+		return "canceled", "canceled"
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return "failed", "timeout"
+	}
+	return "failed", string(model.AsError(err).Code)
+}
+
 type SpeedTestResult struct {
 	Link            string    `json:"link"`
+	Outcome         string    `json:"outcome"`
+	Reason          string    `json:"reason,omitempty"`
+	Message         string    `json:"message,omitempty"`
 	LatencyMS       *float64  `json:"latencyMs,omitempty"`
 	TimeoutPercent  *float64  `json:"timeoutPercent,omitempty"`
 	DownloadMbps    *float64  `json:"downloadMbps,omitempty"`
@@ -35,16 +77,21 @@ type SpeedTestResult struct {
 	Error           string    `json:"error,omitempty"`
 }
 type SpeedTestStatus struct {
-	FNID         string            `json:"fnId"`
-	Active       bool              `json:"active"`
-	Stage        string            `json:"stage"`
-	Link         string            `json:"link"`
-	Sequence     uint64            `json:"sequence"`
-	Mbps         float64           `json:"mbps"`
-	RTTMS        float64           `json:"rttMs"`
-	EchoSent     uint64            `json:"echoSent"`
-	EchoReceived uint64            `json:"echoReceived"`
-	Samples      int               `json:"samples"`
+	FNID         string  `json:"fnId"`
+	Active       bool    `json:"active"`
+	Stage        string  `json:"stage"`
+	Outcome      string  `json:"outcome,omitempty"`
+	Link         string  `json:"link"`
+	Sequence     uint64  `json:"sequence"`
+	Mbps         float64 `json:"mbps"`
+	RTTMS        float64 `json:"rttMs"`
+	EchoSent     uint64  `json:"echoSent"`
+	EchoReceived uint64  `json:"echoReceived"`
+	Samples      int     `json:"samples"`
+	// Sampling timestamps exclude warmup; upload timestamps come from NAS receiver statistics.
+	SampleElapsedMS int64 `json:"sampleElapsedMs"`
+	TargetSampleMS  int64 `json:"targetSampleMs"`
+	// Progress is the legacy sampling-budget fraction, not transfer completion.
 	Progress     float64           `json:"progress"`
 	Results      []SpeedTestResult `json:"results"`
 	Error        string            `json:"error,omitempty"`
@@ -71,6 +118,8 @@ func (m *speedMeasurement) updateSpeed(update func(*SpeedTestStatus)) {
 }
 
 func (m *Manager) RunSpeedTest(parent context.Context, input SpeedTestRequest, report func(SpeedTestStatus) error) error {
+	parent, stopBudget := context.WithTimeout(parent, 4*time.Minute)
+	defer stopBudget()
 	if input.Link != "ipv6" && input.Link != "fn-connect" && input.Link != "all" {
 		return model.NewError(model.ErrorInvalidArgument, "请选择 IPv6、FN Connect 或两条链路", false)
 	}
@@ -139,7 +188,7 @@ func (m *Manager) RunSpeedTest(parent context.Context, input SpeedTestRequest, r
 		links = []string{"ipv6", "fn-connect"}
 	}
 	for _, link := range links {
-		measurement.status.Results = append(measurement.status.Results, SpeedTestResult{Link: link})
+		measurement.status.Results = append(measurement.status.Results, SpeedTestResult{Link: link, Outcome: "pending"})
 	}
 	networkTouched := false
 	for index, link := range links {
@@ -147,10 +196,13 @@ func (m *Manager) RunSpeedTest(parent context.Context, input SpeedTestRequest, r
 			break
 		}
 		measurement.updateSpeed(func(s *SpeedTestStatus) {
+			s.Results[index].Outcome = "running"
 			s.Link = link
 			s.Stage = "checking"
 			s.Mbps = 0
 			s.Progress = 0
+			s.SampleElapsedMS = 0
+			s.TargetSampleMS = 0
 			s.Samples = 0
 			s.RTTMS = 0
 			s.EchoSent = 0
@@ -178,7 +230,11 @@ func (m *Manager) RunSpeedTest(parent context.Context, input SpeedTestRequest, r
 		if err != nil {
 			message := err.Error()
 			measurement.updateSpeed(func(s *SpeedTestStatus) {
-				s.Results[index].Error = message
+				s.Results[index].Outcome, s.Results[index].Reason = speedFailure(err)
+				s.Results[index].Message = message
+				if s.Results[index].Outcome == "failed" {
+					s.Results[index].Error = message
+				}
 				s.Results[index].CompletedAt = time.Now().UTC()
 			})
 			if isAdmissionFailure(err) {
@@ -187,6 +243,7 @@ func (m *Manager) RunSpeedTest(parent context.Context, input SpeedTestRequest, r
 		}
 	}
 	canceled := ctx.Err() != nil
+	timedOut := errors.Is(ctx.Err(), context.DeadlineExceeded)
 	measurement.updateSpeed(func(s *SpeedTestStatus) { s.Stage = "restoring"; s.Mbps = 0 })
 	coordinator.mu.Lock()
 	obsolete := coordinator.epoch != generation || coordinator.stopped
@@ -216,8 +273,29 @@ func (m *Manager) RunSpeedTest(parent context.Context, input SpeedTestRequest, r
 	measurement.updateSpeed(func(s *SpeedTestStatus) {
 		s.Active = false
 		s.Stage = "completed"
+		s.Outcome = "unavailable"
+		for i := range s.Results {
+			if s.Results[i].Outcome == "pending" || s.Results[i].Outcome == "running" {
+				s.Results[i].Outcome = "canceled"
+			}
+			if s.Results[i].Outcome == "success" && s.Outcome == "unavailable" {
+				s.Outcome = "success"
+			}
+			if s.Results[i].Outcome == "failed" {
+				s.Outcome = "failed"
+			}
+		}
+		if s.RestoreError != "" {
+			s.Outcome = "failed"
+		}
 		if canceled {
 			s.Stage = "canceled"
+			s.Outcome = "canceled"
+			if timedOut {
+				s.Stage = "completed"
+				s.Outcome = "failed"
+				s.Error = "网络链路测试超时，请重试"
+			}
 		}
 	})
 	return nil
@@ -259,7 +337,7 @@ func (h *speedHTTP) request(ctx context.Context, method, path string, body io.Re
 	}
 	return response, nil
 }
-func (m *speedMeasurement) measureLink(ctx context.Context, cfg LocalConfig, index int) error {
+func (m *speedMeasurement) measureLink(ctx context.Context, cfg LocalConfig, index int) (resultErr error) {
 	if m.lastPlan == nil {
 		return errors.New("尚未建立隧道")
 	}
@@ -268,6 +346,13 @@ func (m *speedMeasurement) measureLink(ctx context.Context, cfg LocalConfig, ind
 		return err
 	}
 	fingerprint := snap.Fingerprint()
+	ctx, stopPath := m.watchSpeedPath(ctx, fingerprint)
+	defer stopPath()
+	defer func() {
+		if cause := context.Cause(ctx); cause != nil {
+			resultErr = cause
+		}
+	}()
 	m.updateSpeed(func(s *SpeedTestStatus) {
 		s.Stage = "verifying"
 	})
@@ -350,7 +435,10 @@ func (m *speedMeasurement) measureLink(ctx context.Context, cfg LocalConfig, ind
 	if err := m.measureUpload(ctx, h, path, index, fingerprint); err != nil {
 		return err
 	}
-	m.updateSpeed(func(s *SpeedTestStatus) { s.Results[index].CompletedAt = time.Now().UTC() })
+	m.updateSpeed(func(s *SpeedTestStatus) {
+		s.Results[index].CompletedAt = time.Now().UTC()
+		s.Results[index].Outcome = "success"
+	})
 	return nil
 }
 
@@ -392,7 +480,7 @@ func (m *speedMeasurement) checkSpeedPath(ctx context.Context, fingerprint strin
 		return err
 	}
 	if snap.Fingerprint() != fingerprint {
-		return errors.New("测试期间网络发生变化，请重试")
+		return &speedPathError{reason: "network_changed", message: "测试期间网络发生变化，请重试"}
 	}
 	status, err := m.networkStatus(ctx)
 	if err != nil {
@@ -401,7 +489,13 @@ func (m *speedMeasurement) checkSpeedPath(ctx context.Context, fingerprint strin
 	return clientNetworkHealthError(m.Status().State, status, nil, m.bridge.Connected())
 }
 func (m *speedMeasurement) measureDownload(ctx context.Context, h *speedHTTP, path string, index int, fingerprint string) error {
-	m.updateSpeed(func(s *SpeedTestStatus) { s.Stage = "download"; s.Mbps = 0; s.Progress = 0 })
+	m.updateSpeed(func(s *SpeedTestStatus) {
+		s.Stage = "download"
+		s.Mbps = 0
+		s.Progress = 0
+		s.SampleElapsedMS = 0
+		s.TargetSampleMS = 8000
+	})
 	response, err := h.request(ctx, http.MethodGet, path+"/download", nil)
 	if err != nil {
 		return err
@@ -423,7 +517,11 @@ func (m *speedMeasurement) measureDownload(ctx context.Context, h *speedHTTP, pa
 			rate := float64(count-lastCount) * 8 / now.Sub(last).Seconds() / 1e6
 			last = now
 			lastCount = count
-			m.updateSpeed(func(s *SpeedTestStatus) { s.Mbps = rate; s.Progress = min(1, now.Sub(measure).Seconds()/8) })
+			m.updateSpeed(func(s *SpeedTestStatus) {
+				s.Mbps = rate
+				s.Progress = min(1, now.Sub(measure).Seconds()/8)
+				s.SampleElapsedMS = max(0, now.Sub(measure).Milliseconds())
+			})
 			if err := m.checkSpeedPath(ctx, fingerprint); err != nil {
 				return err
 			}
@@ -447,6 +545,7 @@ func (m *speedMeasurement) measureDownload(ctx context.Context, h *speedHTTP, pa
 	}
 	rate := float64(count) * 8 / elapsed / 1e6
 	m.updateSpeed(func(s *SpeedTestStatus) {
+		s.SampleElapsedMS = max(0, time.Since(measure).Milliseconds())
 		s.Results[index].DownloadMbps = &rate
 		s.Results[index].DownloadLimited = total >= model.SpeedTestMaxBytes
 	})
@@ -534,11 +633,18 @@ func (m *speedMeasurement) measureLatency(ctx context.Context, h *speedHTTP, pat
 }
 
 func (m *speedMeasurement) measureUpload(ctx context.Context, h *speedHTTP, path string, index int, fingerprint string) error {
-	m.updateSpeed(func(s *SpeedTestStatus) { s.Stage = "upload"; s.Mbps = 0; s.Progress = 0 })
+	m.updateSpeed(func(s *SpeedTestStatus) {
+		s.Stage = "upload"
+		s.Mbps = 0
+		s.Progress = 0
+		s.SampleElapsedMS = 0
+		s.TargetSampleMS = 8000
+	})
 	payload := make([]byte, 64<<10)
 	if _, err := rand.Read(payload); err != nil {
 		return err
 	}
+	uploadStarted := time.Now()
 	reader := &speedUploadReader{ctx: ctx, buf: payload, remaining: model.SpeedTestMaxBytes, deadline: time.Now().Add(9 * time.Second)}
 	response, err := h.request(ctx, http.MethodPost, path+"/upload", reader)
 	if err != nil {
@@ -579,12 +685,14 @@ func (m *speedMeasurement) measureUpload(ctx context.Context, h *speedHTTP, path
 			return err
 		}
 		if event == "complete" {
+			m.logger.InfoContext(ctx, "upload measurement confirmation received", "elapsed_ms", time.Since(uploadStarted).Milliseconds(), "sample_elapsed_ms", stats.ElapsedMS, "produced_bytes", reader.sent.Load(), "received_bytes", stats.TotalBytes)
 			if stats.TotalBytes > reader.sent.Load() || stats.ElapsedMS < 500 {
 				return errors.New("上传样本不足，请重试")
 			}
 			rate := float64(stats.Bytes) * 8 / float64(stats.ElapsedMS) / 1000
 			m.updateSpeed(func(s *SpeedTestStatus) {
 				s.Stage = "upload-complete"
+				s.SampleElapsedMS = stats.ElapsedMS
 				s.Mbps = rate
 				s.Progress = 1
 				s.Results[index].UploadMbps = &rate
@@ -593,10 +701,14 @@ func (m *speedMeasurement) measureUpload(ctx context.Context, h *speedHTTP, path
 			return nil
 		}
 		rate, stage := meter.observe(stats, time.Now(), reader.finished.Load())
+		if stage != m.status.Stage {
+			m.logger.InfoContext(ctx, "upload measurement phase changed", "phase", stage, "elapsed_ms", time.Since(uploadStarted).Milliseconds(), "sample_elapsed_ms", stats.ElapsedMS, "produced_bytes", reader.sent.Load(), "received_bytes", stats.TotalBytes, "sender_finished", reader.finished.Load())
+		}
 		m.updateSpeed(func(s *SpeedTestStatus) {
 			s.Stage = stage
 			s.Mbps = rate
 			s.Progress = min(1, float64(stats.ElapsedMS)/8000)
+			s.SampleElapsedMS = stats.ElapsedMS
 		})
 		previous = stats
 
@@ -643,4 +755,39 @@ func (m *uploadProgressMeter) observe(stats model.SpeedTestStats, now time.Time,
 	}
 	m.previous = stats
 	return m.rate, stage
+}
+
+// Observe the selected session for the full measurement, including blocked body
+// reads. An epoch catches even a disconnect followed by a quick reconnect.
+func (m *speedMeasurement) watchSpeedPath(parent context.Context, fingerprint string) (context.Context, context.CancelFunc) {
+	ctx, cancel := context.WithCancelCause(parent)
+	var epoch uint64
+	link := m.status.Link
+	bridge, relay := m.bridge.(interface{ SessionEpoch() uint64 })
+	if relay {
+		epoch = bridge.SessionEpoch()
+	}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		ticker := time.NewTicker(100 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				if link == "fn-connect" && relay && bridge.SessionEpoch() != epoch {
+					cancel(&speedPathError{reason: "relay_interrupted", message: "测试期间中转连接已中断，请重试"})
+					return
+				}
+				// Network checks also run while HTTP is blocked waiting for a response.
+				if err := m.checkSpeedPath(ctx, fingerprint); err != nil {
+					cancel(err)
+					return
+				}
+			}
+		}
+	}()
+	return ctx, func() { cancel(context.Canceled); <-done }
 }

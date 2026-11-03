@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 
 	"github.com/rectcircle/fn-connect-private-network/mobile/internal/androidruntime"
 )
@@ -35,6 +36,6 @@ func (androidClient) SetBackHandler(handler func()) { androidruntime.SetBackHand
 func (androidClient) Background() error        { return androidruntime.Background() }
 func (androidClient) OpenNAS(url string) error { return androidruntime.OpenNAS(url) }
 
-func (androidClient) SavedSettingsPage(ctx context.Context) (string, error) {
-	return androidruntime.SavedSettingsPage(ctx)
+func (androidClient) Stream(ctx context.Context, method string, params any, receive func(json.RawMessage) (bool, error)) error {
+	return androidruntime.Stream(ctx, method, params, receive)
 }

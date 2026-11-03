@@ -1,3 +1,4 @@
+import { NativeSettings } from '../components/NativeSettings';
 import { failureMessage, dnsStateName } from '../platform/FailureMessages';
 import { StatusRow } from '../components/StatusRow';
 import { initialLoginPage } from '../controller/LoginPolicy';
@@ -57,6 +58,9 @@ struct Index {
   @State trust: boolean = false;
   @State privacyAccepted: boolean = false;
   @State adminURL: string = '';
+  @State settingsPage: string = '';
+  @State settingsForward: boolean = true;
+  @State webPageVisible: boolean = false;
   @State privacyURL: string = '';
   private privacyController: webview.WebviewController = new webview.WebviewController();
   @State viewportWidth: number = 360;
@@ -106,12 +110,13 @@ struct Index {
   aboutToDisappear(): void { if (this.timer >= 0) { clearInterval(this.timer); this.timer = -1; } }
   onBackPress(): boolean {
     if (this.adminLoading) { this.cancelAdmin(); return true; }
-    if (this.busy) { return true; }
     if (this.networkDebug) { this.networkDebug = false; return true; }
     if (this.privacyURL) { this.closePrivacy(); return true; }
-    if (this.adminURL) { if (this.backSettings()) { return true; } this.closeAdmin(); return true; }
+    if (this.settingsPage) { this.settingsBack(); return true; }
+    if (this.adminURL) { this.closeAdmin(); return true; }
     if (this.logsOpen) { this.logsOpen = false; return true; }
     if (this.menu) { this.closeMenu(); return true; }
+    if (this.busy) { return true; }
     if (this.loginPage && this.loginFromMenu) {
       this.cancelLogin(); return true;
     }
@@ -164,7 +169,8 @@ struct Index {
   }
   private navigate(): void {
     if (this.privacyURL) { this.closePrivacy(); }
-    else if (this.adminURL) { if (this.backSettings()) {} else { this.closeAdmin(); } }
+    else if (this.settingsPage) { this.settingsBack(); }
+    else if (this.adminURL) { this.closeAdmin(); }
     else if (this.logsOpen) { this.logsOpen = false; }
     else if (this.loginPage && this.loginFromMenu) { this.cancelLogin(); }
     else if (this.tv) { this.getUIContext().getFocusController().requestFocus('menu-重新登录'); }
@@ -267,34 +273,19 @@ struct Index {
       if (!this.challenge) { this.password = password; this.accessCode = accessCode; }
     } finally { this.busy = false; }
   }
-  private backSettings(): boolean {
-    if (!this.adminURL.includes('/app/fncpn/settings')) { return false; }
-    try { if (this.adminController.accessBackward()) { this.adminController.backward(); return true; } } catch (_) {}
-    return false;
+  private settingsBack(): void {
+    this.showSettings(this.settingsPage === 'menu' || isDesktop() ? '' : 'menu', false);
   }
-  private settingsNavigation(request: WebResourceRequest): boolean {
-    if (!this.adminURL.includes('/app/fncpn/settings')) { return false; }
-    const target = request.getRequestUrl();
-    const origin = this.adminURL.split('/app/fncpn/settings')[0];
-    if (target.startsWith(origin + '/app/fncpn/settings')) { return false; }
-    if (request.isRequestGesture() && (target.startsWith('https://github.com/rectcircle/fn-connect-private-network') || target.startsWith('https://fncpn.rectcircle.cn/'))) {
-      this.openBrowser(target).catch((error: Error) => { this.message = error.message; });
-    }
-    return true;
+  private showSettings(page: string, forward: boolean = true): void {
+    this.settingsForward = forward;
+    this.getUIContext().animateTo({ duration: 280, curve: Curve.EaseOut }, () => { this.settingsPage = page; });
   }
   private closeAdmin(): void {
-    this.getUIContext().animateTo({ duration: 220, curve: Curve.EaseOut }, () => { this.adminURL = ''; });
+    this.getUIContext().animateTo({ duration: 220, curve: Curve.EaseOut }, () => { this.adminURL = ''; this.webPageVisible = false; });
   }
   private cancelAdmin(): void { this.adminGeneration++; this.adminLoading = false; this.busy = false; }
-  private async openSettings(): Promise<void> {
-    if (this.busy) { return; }
-    this.closeMenu(); this.busy = true;
-    try {
-      const result = await this.client.call<Admin>('settings-url');
-      if (!/^http:\/\/127\.0\.0\.1:\d+\/app\/fncpn\/settings\?fncpn_proxy=[a-f0-9]{64}$/.test(result.url)) { throw new Error(tr('无效的设置页面地址')); }
-      this.adminURL = result.url + (isDesktop() ? '&layout=desktop' : '&layout=mobile');
-    } catch (error) { this.message = (error as Error).message || String(error); }
-    finally { this.busy = false; }
+  private openSettings(): void {
+    this.closeMenu(); this.showSettings(isDesktop() ? 'about' : 'menu');
   }
   private async openAdmin(): Promise<void> {
     if (this.busy) { return; }
@@ -311,7 +302,7 @@ struct Index {
         const owner = await this.client.call<Diagnostics>('diagnose');
         if (generation !== this.adminGeneration) { return; }
         await AdminWindows.open(getContext(this) as common.UIAbilityContext, result.url, this.client.directory, [owner.fnId ?? '', owner.username ?? ''].join('|'));
-      } else { this.getUIContext().animateTo({ duration: 220, curve: Curve.EaseOut }, () => { this.adminURL = result.url; }); }
+      } else { this.getUIContext().animateTo({ duration: 220, curve: Curve.EaseOut }, () => { this.webPageVisible = false; this.adminURL = result.url; }); }
     } catch (error) {
       if (generation !== this.adminGeneration) { return; }
       const failure = error as ClientError;
@@ -537,13 +528,13 @@ struct Index {
         .enabled(!this.busy && this.privacyAccepted && !vpnUnavailable(this.uiDebug) && this.fnId.trim().length > 0 && (this.challenge || (this.username.length > 0 && this.password.length > 0))).onClick(() => { this.login(); })
     }.width('100%').constraintSize({ maxWidth: this.tv ? 640 : 480 })
   }
-  @Builder menuItem(label: string, icon: Resource, action: () => void) {
+  @Builder menuItem(label: string, icon: Resource, action: () => void, whileBusy: boolean = false) {
     Button({ type: ButtonType.Normal }) {
       Row({ space: 16 }) {
         Image(icon).width(22).height(22).fillColor($r('app.color.foreground'))
         Text(tr(label)).fontSize(this.tv ? 22 : 16).fontColor($r('app.color.foreground')).layoutWeight(1).textAlign(TextAlign.Start)
       }.width('100%').padding({ left: 16, right: 16 })
-    }.id('menu-' + label).width('100%').height(this.tv ? 64 : 52).focusBox({ margin: LengthMetrics.vp(3), strokeWidth: LengthMetrics.vp(2), strokeColor: ColorMetrics.resourceColor($r('app.color.primary')) }).hoverEffect(HoverEffect.Highlight).borderRadius(BUTTON_RADIUS).backgroundColor(Color.Transparent).enabled(!this.busy).onClick(action)
+    }.id('menu-' + label).width('100%').height(this.tv ? 64 : 52).focusBox({ margin: LengthMetrics.vp(3), strokeWidth: LengthMetrics.vp(2), strokeColor: ColorMetrics.resourceColor($r('app.color.primary')) }).hoverEffect(HoverEffect.Highlight).borderRadius(BUTTON_RADIUS).backgroundColor(Color.Transparent).enabled(whileBusy || !this.busy).onClick(action)
   }
   @Builder menuPanel() {
     Column({ space: 4 }) {
@@ -555,7 +546,7 @@ struct Index {
       this.menuItem('重新登录', $r('app.media.menu_login'), () => { this.enterLogin(false); })
       this.menuItem('更换 NAS', $r('app.media.menu_storage'), () => { this.enterLogin(true); })
       this.menuItem('管理后台', $r('app.media.menu_computer'), () => { if (!this.busy) { this.openAdmin(); } })
-      this.menuItem('设置', $r('app.media.menu_computer'), () => { this.openSettings(); })
+      this.menuItem('设置', $r('app.media.menu_computer'), () => { this.openSettings(); }, true)
       this.menuItem('官网 · 捐赠', $r('app.media.menu_help'), () => { this.closeMenu(); this.openBrowser('https://fncpn.rectcircle.cn/#donate').catch((error: Error) => { this.message = (error as Error).message || String(error); }); })
       this.menuItem('导出诊断与日志', $r('app.media.menu_download'), () => { this.exportReport(); })
       if (this.showDebugUI) { this.menuItem('应用内网络调试', $r('app.media.menu_computer'), () => { this.closeMenu(); this.probeTarget = this.nasAddress !== '—' ? 'http://' + this.nasAddress + '/' : ''; this.probeResult = ''; this.networkDebug = true; }) }
@@ -613,8 +604,11 @@ struct Index {
           .accessibilityLevel(this.embedded() ? 'auto' : 'no-hide-descendants')
           .border({ width: { right: this.embedded() ? 1 : 0 }, color: $r('app.color.divider') })
       Column() {
-        BrandHeader({ back: !!this.privacyURL || !!this.adminURL || this.logsOpen || (this.loginPage && this.loginFromMenu), debug: this.showDebugUI, busy: this.busy, tv: this.tv, navigate: () => { this.navigate(); } })
-        if (this.privacyURL) {
+        BrandHeader({ title: this.settingsPage && !isDesktop() ? tr(this.settingsPage === 'menu' ? '设置' : this.settingsPage === 'links' ? '网络链路' : '关于') : '', back: !!this.settingsPage || !!this.privacyURL || !!this.adminURL || this.logsOpen || (this.loginPage && this.loginFromMenu), debug: this.showDebugUI, busy: this.busy, tv: this.tv, navigate: () => { this.navigate(); } })
+        if (this.settingsPage) {
+          NativeSettings({ client: this.client, page: this.settingsPage, forward: this.settingsForward,
+            navigate: (page: string) => { this.showSettings(page); }, openLink: (url: string) => { this.openBrowser(url).catch((error: Error) => { this.getUIContext().getPromptAction().showToast({ message: error.message }); }); } }).layoutWeight(1)
+        } else if (this.privacyURL) {
           Web({ src: $rawfile('privacy/index.html'), controller: this.privacyController }).layoutWeight(1)
             .javaScriptAccess(true).fileAccess(true).domStorageAccess(false)
             .onPageEnd(() => {
@@ -622,7 +616,20 @@ struct Index {
             })
             .transition(TransitionEffect.move(TransitionEdge.END).combine(TransitionEffect.OPACITY))
         } else if (this.adminURL) {
-          Web({ src: this.adminURL, controller: this.adminController }).layoutWeight(1).javaScriptAccess(true).fileAccess(false).domStorageAccess(true).multiWindowAccess(false).onOverrideUrlLoading((request: WebResourceRequest) => { return this.settingsNavigation(request); }).transition(TransitionEffect.move(TransitionEdge.END).combine(TransitionEffect.OPACITY))
+          Stack() {
+            Web({ src: this.adminURL, controller: this.adminController }).width('100%').height('100%')
+              .backgroundColor($r('app.color.page_background'))
+              .javaScriptAccess(true).fileAccess(false).domStorageAccess(true).multiWindowAccess(false)
+              .onPageBegin(() => { this.webPageVisible = false; })
+              .onPageVisible(() => { this.webPageVisible = true; })
+
+            if (!this.webPageVisible) {
+              Column({ space: 16 }) {
+                LoadingProgress().width(32).height(32).color($r('app.color.primary'))
+                Text(tr('正在打开管理后台…')).fontColor($r('app.color.secondary')).fontSize(14)
+              }.justifyContent(FlexAlign.Center).width('100%').height('100%').backgroundColor($r('app.color.page_background'))
+            }
+          }.layoutWeight(1).width('100%').transition(TransitionEffect.move(TransitionEdge.END).combine(TransitionEffect.OPACITY))
         } else if (this.logsOpen) {
           Column({ space: 8 }) {
             Select(this.logOptions).value(this.logFile).enabled(this.logOptions.length > 0).onSelect((_, value: string) => { this.readLog(value); })
@@ -708,7 +715,7 @@ struct Index {
       .parallelGesture(PanGesture({ direction: PanDirection.Horizontal, distance: 16 })
         .onActionStart((event: GestureEvent) => {
           // Reserve the first 24 vp for system back; the 24–96 vp strip opens the drawer.
-          this.drawerDragging = !this.embedded() && !this.tv && !this.privacyURL && !this.adminURL && !this.logsOpen && !this.networkDebug && !this.adminLoading && (this.menu || (this.gestureX >= 24 && this.gestureX <= 96 && event.offsetX > 0));
+          this.drawerDragging = !this.embedded() && !this.tv && !this.settingsPage && !this.privacyURL && !this.adminURL && !this.logsOpen && !this.networkDebug && !this.adminLoading && (this.menu || (this.gestureX >= 24 && this.gestureX <= 96 && event.offsetX > 0));
           if (this.drawerDragging) { this.menu = true; }
         })
         .onActionUpdate((event: GestureEvent) => {

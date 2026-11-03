@@ -54,6 +54,7 @@ type RelayBridge struct {
 	expectedPeer  atomic.Uint32
 	events        chan error
 	connected     atomic.Bool
+	sessionEpoch  atomic.Uint64
 }
 
 func (b *RelayBridge) Start(
@@ -163,6 +164,7 @@ func (b *RelayBridge) stopLocked() {
 	b.relayURL = ""
 	b.cookies = nil
 	b.expectedPeer.Store(0)
+	b.sessionEpoch.Add(1)
 	b.connected.Store(false)
 	cancel()
 	_ = udp.Close()
@@ -181,7 +183,7 @@ func (b *RelayBridge) run(
 	onCookies ...func([]Cookie, []Cookie) error,
 ) {
 	defer close(done)
-	defer b.connected.Store(false)
+	defer func() { b.sessionEpoch.Add(1); b.connected.Store(false) }()
 	logger := b.logger().With("relay_url", model.SafeURL(relayURL.String()))
 	packets := make(chan relayPacket, maxRelayQueue)
 	go readWireGuardDatagrams(ctx, udp, packets, &b.expectedPeer, func(err error) {
@@ -199,6 +201,7 @@ func (b *RelayBridge) run(
 		sessionStart := time.Now()
 		sessionErr := runRelaySession(ctx, connection, udp, packets, &b.expectedPeer)
 		connection.CloseNow()
+		b.sessionEpoch.Add(1)
 		b.connected.Store(false)
 		if ctx.Err() != nil {
 			return
@@ -529,3 +532,6 @@ func cookieHeaderForURL(cookies []Cookie, target *url.URL) string {
 	}
 	return set.Header(target)
 }
+
+// SessionEpoch changes whenever the underlying relay session ends.
+func (b *RelayBridge) SessionEpoch() uint64 { return b.sessionEpoch.Load() }

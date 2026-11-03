@@ -29,7 +29,7 @@ private func L(_ key: String, _ arguments: String...) -> String {
     return result
 }
 
-private let ipcProtocolVersion = 5
+private let ipcProtocolVersion = 6
 private let maximumFrameSize = 256 * 1024
 
 private func additionalCredentialMessage(_ failure: [String: Any]) -> String? {
@@ -1925,13 +1925,16 @@ private final class LinkSettingsController: NSWindowController, NSWindowDelegate
         fill(label(L("版本 {0} · 构建 {1}", version, build), secondary: true), in: about)
         let revision = Bundle.main.object(forInfoDictionaryKey: "FnCPNRevision") as? String ?? "unknown"
         let commit = label("Commit  " + revision, secondary: true); commit.isSelectable = true
-        fill(commit, in: about)
+        let copyCommit = SettingsButton(title: "", target: self, action: #selector(copyRevision))
+        copyCommit.image = NSImage(systemSymbolName: "doc.on.doc", accessibilityDescription: L("复制")); copyCommit.bezelStyle = .inline; copyCommit.toolTip = L("复制")
+        fill(NSStackView(views: [commit, copyCommit]), in: about)
         for (tag, title) in [L("GitHub 项目"), L("官方网站"), L("下载服务端与其他客户端")].enumerated() {
             let button = SettingsButton(title: title + " ↗", target: self, action: #selector(openLink(_:)))
             button.tag = tag; button.isBordered = false; button.contentTintColor = .linkColor
             about.addArrangedSubview(button)
         }
     }
+    @objc private func copyRevision() { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(Bundle.main.object(forInfoDictionaryKey: "FnCPNRevision") as? String ?? "unknown", forType: .string) }
     private func buildLinks() {
         heading(L("网络链路"), in: page)
         let summary = NSStackView(views: [nas, current]); summary.orientation = .vertical; summary.alignment = .leading; summary.spacing = 6
@@ -1939,14 +1942,16 @@ private final class LinkSettingsController: NSWindowController, NSWindowDelegate
         nas.lineBreakMode = .byTruncatingMiddle; current.lineBreakMode = .byTruncatingTail
         fill(summary, in: page)
         for text in [nas, current] { text.translatesAutoresizingMaskIntoConstraints = false; text.widthAnchor.constraint(equalTo: summary.widthAnchor).isActive = true; text.setContentCompressionResistancePriority(.defaultLow, for: .horizontal) }
-        let policy = group(L("开关与优先级"), help: L("从上到下尝试链路，拖动可调整远程链路优先级。局域网始终第一且不能禁用。禁用两条远程链路后，仅能在局域网连接。"), in: page)
+        let policy = group(L("开关与优先级"), help: L("打开或关闭开关可启用或禁用对应链路；拖动远程链路可调整优先级。连接时按从上到下的顺序尝试已启用的链路。局域网始终优先，且不可关闭或调整顺序。"), in: page)
         let column = NSTableColumn(identifier: .init("link")); table.addTableColumn(column)
+        table.style = .plain
         column.resizingMask = .autoresizingMask; table.columnAutoresizingStyle = .lastColumnOnlyAutoresizingStyle
         table.headerView = nil; table.rowHeight = 42; table.intercellSpacing = NSSize(width: 0, height: 2)
         table.backgroundColor = .clear; table.delegate = self; table.dataSource = self
         table.registerForDraggedTypes([.string]); table.setDraggingSourceOperationMask(.move, forLocal: true)
         table.setAccessibilityLabel(L("链路优先级"))
         let rows = NSScrollView(); rows.documentView = table; rows.drawsBackground = false; rows.hasVerticalScroller = false
+        rows.automaticallyAdjustsContentInsets = false; rows.contentInsets = NSEdgeInsets(top: 0, left: 0, bottom: 0, right: 0)
         rows.heightAnchor.constraint(equalToConstant: 132).isActive = true; fill(rows, in: policy)
         let controls = NSStackView(); controls.orientation = .horizontal
         for (tag, title) in [L("上移"), L("下移"), L("恢复默认设置")].enumerated() {
@@ -1966,7 +1971,7 @@ private final class LinkSettingsController: NSWindowController, NSWindowDelegate
         cancelButton.target = self; cancelButton.action = #selector(cancelTest); cancelButton.isHidden = true; controlsRow.addArrangedSubview(cancelButton)
         fill(controlsRow, in: network)
         fill(phase, in: network); phase.isHidden = true
-        canvas.heightAnchor.constraint(equalToConstant: 210).isActive = true; fill(canvas, in: network); canvas.isHidden = true
+        canvas.heightAnchor.constraint(equalToConstant: 184).isActive = true; fill(canvas, in: network); canvas.isHidden = true
         liveResults.font = .monospacedDigitSystemFont(ofSize: 12, weight: .regular); fill(liveResults, in: network); liveResults.isHidden = true
         resultArea.orientation = .vertical; resultArea.alignment = .leading; resultArea.spacing = 10
         let resultTitle = label(L("测试结果")); resultTitle.font = .systemFont(ofSize: 13, weight: .semibold); resultArea.addArrangedSubview(resultTitle)
@@ -1980,12 +1985,14 @@ private final class LinkSettingsController: NSWindowController, NSWindowDelegate
         results.column(at: 0).width = 130
         for index in 1...3 { results.column(at: index).width = 105 }
         resultArea.addArrangedSubview(results); fill(resultArea, in: network); resultArea.isHidden = true
-        let errorRow = NSStackView(); errorRow.orientation = .horizontal; errorRow.alignment = .top
+        let errorRow = NSStackView(); errorRow.orientation = .horizontal; errorRow.alignment = .centerY
         notice.font = .systemFont(ofSize: 12); notice.textColor = .systemRed
         notice.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         errorRow.addArrangedSubview(notice)
         let dismiss = NSButton(image: NSImage(systemSymbolName: "xmark.circle", accessibilityDescription: L("关闭提示"))!, target: self, action: #selector(dismissNotice))
-        dismiss.isBordered = false; errorRow.addArrangedSubview(dismiss)
+        dismiss.isBordered = false; dismiss.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([dismiss.widthAnchor.constraint(equalToConstant: 24), dismiss.heightAnchor.constraint(equalToConstant: 24)])
+        errorRow.addArrangedSubview(dismiss)
         fill(errorRow, in: network); errorRow.isHidden = true
         detailsButton.target = self; detailsButton.action = #selector(toggleErrorDetails); detailsButton.isBordered = false; detailsButton.contentTintColor = .secondaryLabelColor
         network.addArrangedSubview(detailsButton); detailsButton.isHidden = true
@@ -2116,7 +2123,7 @@ private final class LinkSettingsController: NSWindowController, NSWindowDelegate
         errorMessage = ""; showNotice(""); resultArea.isHidden = true; canvas.reset()
         active = true; startButton.title = L("重新测试"); cancelButton.isHidden = false
         render(["active": true, "stage": "preparing", "results": []])
-        window?.contentView?.layoutSubtreeIfNeeded(); canvas.scrollToVisible(canvas.bounds)
+        followTestBottom()
         let target = selection.count == 2 ? "all" : selection.first!
         testing.async { [weak self] in
             guard let self else { return }
@@ -2142,7 +2149,7 @@ private final class LinkSettingsController: NSWindowController, NSWindowDelegate
         lastState = state; active = state["active"] as? Bool == true
         let stage = state["stage"] as? String ?? "idle"
         canvas.isHidden = !active; canvas.nasName = fnID; canvas.update(state)
-        phase.isHidden = !active; phase.stringValue = active ? L("正在测试：{0}", linkName(state["link"] as? String ?? "")) : ""
+        phase.isHidden = true; phase.stringValue = active ? L("正在测试：{0}", linkName(state["link"] as? String ?? "")) : ""
         cancelButton.isHidden = !active; cancelButton.isEnabled = active && stage != "restoring"
         startButton.title = active ? L("重新测试") : L("开始测试")
         let rows = state["results"] as? [[String: Any]] ?? []
@@ -2157,15 +2164,31 @@ private final class LinkSettingsController: NSWindowController, NSWindowDelegate
                 if let number = result[field] as? Double { let text = String(format: j == 0 ? "%.1f ms" : "%.1f Mbps", number); values[i][j].stringValue = text; completed.append([L("延迟"), L("下载"), L("上传")][j] + " " + text) }
                 else { values[i][j].stringValue = result["error"] != nil ? L("未完成") : stage == "canceled" ? L("已取消") : "—" }
             }
+            if result["outcome"] as? String == "unavailable" {
+                let message = L(result["message"] as? String ?? "不可用")
+                values[i].enumerated().forEach { index, field in field.stringValue = index == 0 ? message : "—"; field.textColor = .secondaryLabelColor }
+                summaries.append(linkName(key) + " · " + message)
+            } else { values[i].forEach { $0.textColor = .labelColor } }
             if !completed.isEmpty { summaries.append(linkName(key) + " · " + completed.joined(separator: "  ")) }
             if let error = result["error"] as? String { let message = linkName(key) + "：" + L(error); failures.append(message); if active { summaries.append(message) } }
             values[i].forEach { $0.toolTip = result["completedAt"] as? String }
         }
         liveResults.isHidden = !active || summaries.isEmpty; liveResults.stringValue = summaries.joined(separator: "\n")
+        if active { followTestBottom() }
         if !active {
             if let error = state["restoreError"] as? String, !error.isEmpty { failures.append(error) }
             showNotice(failures.joined(separator: "\n"))
-            if wasActive { window?.contentView?.layoutSubtreeIfNeeded(); resultArea.scrollToVisible(resultArea.bounds) }
+            if wasActive { followTestBottom() }
+        }
+    }
+    private func followTestBottom() {
+        // Hidden stack rows change document height on the next layout pass.
+        // Scroll the document bottom, not just the diagram's visible rectangle.
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.sidebar.selectedRow == 1, self.window?.isVisible == true else { return }
+            self.window?.contentView?.layoutSubtreeIfNeeded(); self.pageDocument.layoutSubtreeIfNeeded()
+            let origin = NSPoint(x: 0, y: max(0, self.pageDocument.bounds.height - self.scroll.contentView.bounds.height))
+            self.scroll.contentView.scroll(to: origin); self.scroll.reflectScrolledClipView(self.scroll.contentView)
         }
     }
     func tableView(_ tableView: NSTableView, pasteboardWriterForRow row: Int) -> NSPasteboardWriting? {
@@ -2213,7 +2236,7 @@ private final class SettingsCard: NSView {
 private final class SpeedTestCanvas: NSView {
     private var state: [String: Any] = [:]
     private var timer: Timer?
-    private var history: [Double] = []
+    private var history: [(elapsed: Double, rate: Double)] = []
     private var sequence: UInt64 = 0
     private var sent: UInt64 = 0
     private var received: UInt64 = 0
@@ -2237,7 +2260,15 @@ private final class SpeedTestCanvas: NSView {
         if nextSent != sent { sent = nextSent; if now >= pongAt + 0.6 { pingAt = now } }
         if nextReceived != received { received = nextReceived; pongAt = max(now, pingAt + 0.25) }
         let nextSequence = (state["sequence"] as? NSNumber)?.uint64Value ?? 0
-        if nextSequence != sequence { sequence = nextSequence; if ["download", "upload"].contains(state["stage"] as? String ?? "") { history.append(state["mbps"] as? Double ?? 0); if history.count > 80 { history.removeFirst() } } }
+        if nextSequence != sequence {
+            sequence = nextSequence
+            let elapsed = (state["sampleElapsedMs"] as? NSNumber)?.doubleValue ?? 0
+            if ["download", "upload"].contains(newStage) && elapsed > 0 && elapsed > (history.last?.elapsed ?? -1) {
+                history.append((elapsed, state["mbps"] as? Double ?? 0))
+                let cutoff = max(0, elapsed - ((state["targetSampleMs"] as? NSNumber)?.doubleValue ?? 8000))
+                while history.count > 1 && history[1].elapsed <= cutoff { history.removeFirst() }
+            }
+        }
         if state["active"] as? Bool == true && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
             if timer == nil { timer = Timer.scheduledTimer(withTimeInterval: 1.0 / 30, repeats: true) { [weak self] _ in self?.needsDisplay = true } }
         } else { stopAnimation() }
@@ -2252,8 +2283,9 @@ private final class SpeedTestCanvas: NSView {
         let stage = state["stage"] as? String ?? "idle"
         let link = state["link"] as? String ?? ""
         let names = ["idle": L("选择链路开始测速"), "preparing": L("准备测试"), "checking": L("检查链路条件"), "failed": L("测试失败"), "queued": L("等待连接任务"), "connecting": L("正在建立真实链路"), "verifying": L("正在验证 NAS"), "latency": L("正在测试延迟"), "download": L("正在测试下载"), "upload": L("正在测试上传"), "upload-warmup": L("正在预热上传"), "upload-waiting": L("等待 NAS 接收数据"), "upload-confirming": L("等待 NAS 完成确认"), "upload-complete": L("上传完成"), "restoring": L("正在恢复正常选路"), "completed": L("测速完成"), "canceled": L("测速已取消"), "canceling": L("正在取消")]
-        text(names[stage] ?? stage, rect: NSRect(x: 12, y: bounds.height - 30, width: bounds.width - 24, height: 20), size: 13, weight: .medium)
-        let y: CGFloat = 121
+        let pathTitle = link == "fn-connect" ? L("FN Connect 中转") : link == "ipv6" ? L("IPv6 直连") : ""
+        text([pathTitle, names[stage] ?? stage].filter { !$0.isEmpty }.joined(separator: " · "), rect: NSRect(x: 12, y: bounds.height - 30, width: bounds.width - 24, height: 20), size: 13, weight: .medium)
+        let y: CGFloat = 113
         let xs: [CGFloat] = link == "fn-connect" ? [58, bounds.midX, bounds.width - 58] : [58, bounds.width - 58]
         let active = state["active"] as? Bool == true
         let moving = active && ["latency", "download", "upload"].contains(stage)
@@ -2290,19 +2322,25 @@ private final class SpeedTestCanvas: NSView {
         switch stage {
         case "latency": metric = String(format: "%.1f ms", state["rttMs"] as? Double ?? 0)
         case "upload", "upload-complete", "download": metric = String(format: "%.1f Mbps", rate)
-        case "upload-warmup": metric = L("预热中…")
-        case "upload-waiting": metric = L("等待接收…")
-        case "upload-confirming": metric = L("等待确认…")
-        default: metric = link == "ipv6" ? L("IPv6 直连") : link == "fn-connect" ? L("FN Connect 中继") : ""
+        case "upload-warmup", "upload-waiting", "upload-confirming": metric = ""
+        default: metric = ""
         }
-        text(metric, rect: NSRect(x: 12, y: 43, width: bounds.width - 24, height: 28), size: 23, weight: .semibold)
+        text(metric, rect: NSRect(x: 12, y: 37, width: bounds.width - 24, height: 28), size: 23, color: .controlAccentColor, weight: .semibold)
+        let graphY: CGFloat = metric.isEmpty ? 23 : 9
         if history.count > 1 {
-            let maximum = max(history.max() ?? 1, 1)
+            let maximum = max(history.map { $0.rate }.max() ?? 1, 1)
+            let window = max(1, (state["targetSampleMs"] as? NSNumber)?.doubleValue ?? 8000)
+            let origin = max(0, (history.last?.elapsed ?? 0) - window)
             let graph = NSBezierPath(); graph.lineWidth = 1.5
-            for (i, sample) in history.enumerated() { let point = NSPoint(x: 24 + (bounds.width - 48) * CGFloat(i) / CGFloat(max(79, history.count - 1)), y: 9 + CGFloat(sample / maximum) * 22); if i == 0 { graph.move(to: point) } else { graph.line(to: point) } }
+            for (i, sample) in history.enumerated() {
+                var elapsed = sample.elapsed, rate = sample.rate
+                if elapsed < origin && i + 1 < history.count { let next = history[i + 1]; rate += (next.rate - rate) * (origin - elapsed) / (next.elapsed - elapsed); elapsed = origin }
+                let point = NSPoint(x: 24 + (bounds.width - 48) * CGFloat(max(0, elapsed - origin) / window), y: graphY + CGFloat(rate / maximum) * 22)
+                if i == 0 { graph.move(to: point) } else { graph.line(to: point) }
+            }
             NSColor.controlAccentColor.setStroke(); graph.stroke()
         }
-        if moving { let progress = min(1, max(0, state["progress"] as? Double ?? 0)); NSColor.controlAccentColor.withAlphaComponent(0.3).setFill(); NSBezierPath(rect: NSRect(x: 0, y: 0, width: bounds.width * progress, height: 3)).fill() }
+        NSColor.separatorColor.setStroke(); let baseline = NSBezierPath(); baseline.move(to: NSPoint(x: 24, y: graphY - 5)); baseline.line(to: NSPoint(x: bounds.width - 24, y: graphY - 5)); baseline.stroke()
     }
 }
 

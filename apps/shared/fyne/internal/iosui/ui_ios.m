@@ -392,9 +392,8 @@ void fncpn_ui_share_file(const char *path) {
 @implementation FnCPNBrowser
 - (void)viewDidLoad {
     [super viewDidLoad];self.view.backgroundColor=UIColor.systemBackgroundColor;
-    if([self.url.path isEqualToString:@"/app/fncpn/settings"])self.navigationItem.title=uiText("设置");
     self.spinner=[[UIActivityIndicatorView alloc] initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleMedium];
-    self.message=[UILabel new];self.message.text=uiText([self.url.path isEqualToString:@"/app/fncpn/settings"] ? "正在打开设置…" : "正在打开管理后台…");self.message.numberOfLines=0;self.message.textAlignment=NSTextAlignmentCenter;
+    self.message=[UILabel new];self.message.text=uiText("正在打开管理后台…");self.message.numberOfLines=0;self.message.textAlignment=NSTextAlignmentCenter;
     self.retry=[UIButton buttonWithType:UIButtonTypeSystem];[self.retry setTitle:uiText("重试") forState:UIControlStateNormal];[self.retry addTarget:self action:@selector(reload) forControlEvents:UIControlEventTouchUpInside];self.retry.hidden=YES;
     self.loading=[[UIStackView alloc] initWithArrangedSubviews:@[self.spinner,self.message,self.retry]];self.loading.axis=UILayoutConstraintAxisVertical;self.loading.alignment=UIStackViewAlignmentCenter;self.loading.spacing=12;self.loading.translatesAutoresizingMaskIntoConstraints=NO;
     [self.view addSubview:self.loading];[NSLayoutConstraint activateConstraints:@[[self.loading.centerXAnchor constraintEqualToAnchor:self.view.centerXAnchor],[self.loading.centerYAnchor constraintEqualToAnchor:self.view.centerYAnchor],[self.loading.widthAnchor constraintLessThanOrEqualToAnchor:self.view.widthAnchor multiplier:0.85]]];[self.spinner startAnimating];
@@ -410,7 +409,7 @@ void fncpn_ui_share_file(const char *path) {
     });
 }
 - (void)showLoading {
-    self.failed=NO;self.loading.hidden=NO;self.web.hidden=YES;self.message.text=uiText([self.url.path isEqualToString:@"/app/fncpn/settings"] ? "正在打开设置…" : "正在打开管理后台…");self.retry.hidden=YES;[self.spinner startAnimating];
+    self.failed=NO;self.loading.hidden=NO;self.web.hidden=YES;self.message.text=uiText("正在打开管理后台…");self.retry.hidden=YES;[self.spinner startAnimating];
     NSInteger generation=++self.loadGeneration;__weak FnCPNBrowser *weakSelf=self;
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW,30*NSEC_PER_SEC),dispatch_get_main_queue(), ^{FnCPNBrowser *owner=weakSelf;if(owner && generation==owner.loadGeneration && !owner.loading.hidden){[owner.web stopLoading];[owner showFailure];}});
 }
@@ -460,7 +459,7 @@ void fncpn_ui_open(const char *input,int embedded) {
         NSURL *url=[NSURL URLWithString:text];
         if (!url || ![@[@"https",@"http"] containsObject:url.scheme.lowercaseString]) return;
         if(embedded && (![url.scheme isEqualToString:@"http"] || ![url.host isEqualToString:@"127.0.0.1"] || !url.port || url.port.integerValue<=0 || url.user || url.password)) return;
-        if (!embedded) { [UIApplication.sharedApplication openURL:url options:@{} completionHandler:nil]; return; }
+        if (!embedded) { [UIApplication.sharedApplication openURL:url options:@{} completionHandler:^(BOOL success){if(!success)fncpn_ui_feedback("无法打开链接，请检查浏览器设置。");}]; return; }
         FnCPNBrowser *browser=[FnCPNBrowser new]; browser.url=url;
         [presenter() presentViewController:[[UINavigationController alloc] initWithRootViewController:browser] animated:YES completion:nil];
     });
@@ -523,7 +522,6 @@ char *fncpn_ui_call(const char *input) {
             dispatch_semaphore_signal(done); return;
         }
         if(manager && (manager.connection.status==NEVPNStatusConnected || manager.connection.status==NEVPNStatusReasserting)){send(manager);return;}
-        if([method isEqualToString:@"settings-url"]) {failure(@"VPN provider is not running");return;}
         if([method isEqualToString:@"ios-log-snapshot"]) {
             reply=[[NSJSONSerialization dataWithJSONObject:@{@"version":request[@"version"],@"id":request[@"id"],@"ok":@YES,@"result":@{@"available":@NO}} options:0 error:nil] copy];dispatch_semaphore_signal(done);return;
         }

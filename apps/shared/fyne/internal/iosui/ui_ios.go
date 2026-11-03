@@ -39,6 +39,39 @@ func Call(ctx context.Context, method string, params, result any) error {
 		return simulatorCall(ctx, method, params, result)
 	}
 
+	if method == client.MethodLinkSettings || method == client.MethodSetLinkSettings {
+		directory := C.fncpn_ui_shared_settings_directory()
+		if directory == nil {
+			return errors.New("shared settings directory unavailable")
+		}
+		defer C.free(unsafe.Pointer(directory))
+		store := client.SharedLinkSettingsStore(C.GoString(directory))
+		var value client.LinkSettings
+		var err error
+		if method == client.MethodLinkSettings {
+			value, err = store.LinkSettings(ctx)
+		} else {
+			raw, e := json.Marshal(params)
+			if e != nil {
+				return e
+			}
+			if e = json.Unmarshal(raw, &value); e != nil {
+				return e
+			}
+			value, err = store.SetLinkSettings(ctx, value)
+		}
+		if err != nil {
+			return err
+		}
+		if result == nil {
+			return nil
+		}
+		raw, err := json.Marshal(value)
+		if err != nil {
+			return err
+		}
+		return json.Unmarshal(raw, result)
+	}
 	request, err := ipc.NewRequest("ios-ui", method, params)
 	if err != nil {
 		return err
@@ -105,14 +138,13 @@ func Share(text string) error {
 	return nil
 }
 
-func SavedSettingsPage(ctx context.Context) (string, error) {
+func Stream(ctx context.Context, method string, params any, receive func(json.RawMessage) (bool, error)) error {
 	if Simulator() {
-		return simulatorCallSettingsPage(ctx)
+		return simulatorStream(ctx, method, params, receive)
 	}
-	directory := C.fncpn_ui_shared_settings_directory()
-	if directory == nil {
-		return client.NewSettingsInfoPage(ctx)
+	var endpoint ipc.NativeEndpoint
+	if err := Call(ctx, "native-transport", nil, &endpoint); err != nil {
+		return err
 	}
-	defer C.free(unsafe.Pointer(directory))
-	return client.NewSavedSettingsPage(ctx, client.SharedLinkSettingsStore(C.GoString(directory)))
+	return ipc.StreamNative(ctx, endpoint, method, params, receive)
 }

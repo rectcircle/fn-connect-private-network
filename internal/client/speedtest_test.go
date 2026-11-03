@@ -24,6 +24,7 @@ func TestUploadUsesSSEReceiverCountAndRequiresCompletion(t *testing.T) {
 	}{
 		{"complete", "event: progress\ndata: {\"receivedBytes\":262144,\"totalBytes\":524288,\"elapsedMs\":1000}\n\nevent: complete\ndata: {\"receivedBytes\":524288,\"totalBytes\":1048576,\"elapsedMs\":2000}\n\n", false},
 		{"idle-before-complete", "event: progress\ndata: {\"receivedBytes\":524288,\"totalBytes\":1048576,\"elapsedMs\":2000}\n\nevent: progress\ndata: {\"receivedBytes\":524288,\"totalBytes\":1048576,\"elapsedMs\":2000}\n\nevent: complete\ndata: {\"receivedBytes\":524288,\"totalBytes\":1048576,\"elapsedMs\":2000}\n\n", false},
+		{"sampling-ended-without-confirmation", "event: progress\ndata: {\"receivedBytes\":524288,\"totalBytes\":1048576,\"elapsedMs\":9000}\n\n", true},
 		{"interrupted", "event: progress\ndata: {\"receivedBytes\":262144,\"totalBytes\":524288,\"elapsedMs\":1000}\n\n", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -44,6 +45,11 @@ func TestUploadUsesSSEReceiverCountAndRequiresCompletion(t *testing.T) {
 				if (err != nil) != tc.wantError {
 					t.Fatal(err)
 				}
+				if tc.name == "sampling-ended-without-confirmation" {
+					if measurement.status.SampleElapsedMS != 9000 || measurement.status.Results[0].UploadMbps != nil || measurement.status.Stage == "upload-complete" {
+						t.Fatal("sampling target was mistaken for completed upload", measurement.status)
+					}
+				}
 				if !tc.wantError {
 					got := measurement.status.Results[0].UploadMbps
 					if got == nil || *got != 2.097152 || measurement.status.Mbps != *got || measurement.status.Stage != "upload-complete" {
@@ -63,7 +69,7 @@ func TestSpeedTestDiscoveryAndCancellationRestoreIntent(t *testing.T) {
 		if err := manager.RunSpeedTest(t.Context(), SpeedTestRequest{Link: "ipv6"}, func(s SpeedTestStatus) error { final = s; return nil }); err != nil {
 			t.Fatal(err)
 		}
-		if final.Active || len(final.Results) != 1 || final.Results[0].Error != "NAS 未提供可用的公网 IPv6" || n.applies.Load() != 0 {
+		if final.Active || len(final.Results) != 1 || final.Results[0].Outcome != "unavailable" || final.Results[0].Reason != "no_server_ipv6" || final.Results[0].Error != "" || n.applies.Load() != 0 {
 			t.Fatal(final)
 		}
 		entered := make(chan struct{}, 1)
@@ -177,4 +183,39 @@ func TestSpeedTunnelVerificationRetriesTransientFailureOnly(t *testing.T) {
 			})
 		})
 	}
+}
+
+type epochBridge struct {
+	*coordinatedBridge
+	epoch atomic.Uint64
+}
+
+func (b *epochBridge) SessionEpoch() uint64 { return b.epoch.Load() }
+
+func TestSpeedPathCancelsBlockedIOAfterRelayReconnect(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		manager, probe, network, _, _ := coordinationFixture(t)
+		bridge := &epochBridge{coordinatedBridge: &coordinatedBridge{events: make(chan error, 1)}}
+		bridge.connected.Store(true)
+		manager.bridge = bridge
+		now := time.Now()
+		network.status = model.ClientPrivilegedStatus{Active: true, Interface: "utun9", LastHandshake: &now}
+		manager.setStatus(model.ClientRelay, "fn-connect", "utun9", nil)
+		measurement := &speedMeasurement{Manager: manager, status: SpeedTestStatus{Link: "fn-connect"}}
+		snapshot, _ := probe.Snapshot()
+		ctx, stop := measurement.watchSpeedPath(t.Context(), snapshot.Fingerprint())
+		defer stop()
+		// The bridge is already connected again when the observer runs: a boolean
+		// health check alone would silently continue waiting on the stale HTTP body.
+		bridge.epoch.Add(1)
+		time.Sleep(101 * time.Millisecond)
+		synctest.Wait()
+		if ctx.Err() == nil {
+			t.Fatal("stale measurement survived reconnect")
+		}
+		outcome, reason := speedFailure(context.Cause(ctx))
+		if outcome != "failed" || reason != "relay_interrupted" {
+			t.Fatal(outcome, reason, context.Cause(ctx))
+		}
+	})
 }

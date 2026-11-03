@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fyne.io/fyne/v2"
 	"time"
 
@@ -89,6 +90,6 @@ func (iosClient) SetRailAdmin(enabled bool) { iosui.SetRailAdmin(enabled) }
 
 func (iosClient) SetRailExpanded(expanded bool) { iosui.SetRailExpanded(expanded) }
 
-func (iosClient) SavedSettingsPage(ctx context.Context) (string, error) {
-	return iosui.SavedSettingsPage(ctx)
+func (iosClient) Stream(ctx context.Context, method string, params any, receive func(json.RawMessage) (bool, error)) error {
+	return iosui.Stream(ctx, method, params, receive)
 }

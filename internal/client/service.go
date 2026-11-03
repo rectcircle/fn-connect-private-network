@@ -11,11 +11,11 @@ import (
 	"github.com/rectcircle/fn-connect-private-network/internal/ipc"
 	"github.com/rectcircle/fn-connect-private-network/internal/logging"
 	"github.com/rectcircle/fn-connect-private-network/internal/model"
+	"github.com/rectcircle/fn-connect-private-network/internal/version"
 )
 
 const (
 	MethodLinkSettings        = "link-settings"
-	MethodSettingsURL         = "settings-url"
 	MethodSetLinkSettings     = "set-link-settings"
 	MethodStatus              = "status"
 	MethodWatchStatus         = "watch-client-status"
@@ -151,18 +151,8 @@ func (s *Service) Handle(
 	}
 	var err error
 	switch request.Method {
-	case MethodSettingsURL:
-		runtime, ok := s.runtime.(interface {
-			SettingsURL(context.Context) (string, error)
-		})
-		if !ok {
-			return ipc.Failure(request.ID, model.NewError(model.ErrorUnavailable, "settings unavailable", false))
-		}
-		address, err := runtime.SettingsURL(ctx)
-		if err != nil {
-			return ipc.Failure(request.ID, err)
-		}
-		return ipc.Success(request.ID, map[string]string{"url": address})
+	case "build-info":
+		return ipc.Success(request.ID, map[string]string{"version": version.Current, "commit": version.Revision})
 	case MethodLinkSettings, MethodSetLinkSettings:
 		runtime, ok := s.runtime.(interface {
 			LinkSettings(context.Context) (LinkSettings, error)

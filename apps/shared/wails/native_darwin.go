@@ -20,6 +20,7 @@ char* fn_symbols(void);
 */
 import "C"
 import "unsafe"
+import "os/exec"
 import "encoding/json"
 
 //export fnGoAction
@@ -74,3 +75,5 @@ func nativeSymbols() map[string]string {
 }
 
 func nativePresentMain() { C.fn_present_main() }
+
+func uiOpenExternal(address string) error { return exec.Command("/usr/bin/open", address).Run() }

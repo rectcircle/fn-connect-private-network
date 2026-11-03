@@ -10,7 +10,8 @@ import (
 // system appearance. Never freeze an early startup theme color in a rectangle.
 type themeSurface struct {
 	widget.BaseWidget
-	name fyne.ThemeColorName
+	name   fyne.ThemeColorName
+	radius float32
 }
 
 func newThemeSurface(name fyne.ThemeColorName) *themeSurface {
@@ -19,7 +20,9 @@ func newThemeSurface(name fyne.ThemeColorName) *themeSurface {
 	return s
 }
 func (s *themeSurface) CreateRenderer() fyne.WidgetRenderer {
-	return &surfaceRenderer{rectangle: canvas.NewRectangle(s.Theme().Color(s.name, fyne.CurrentApp().Settings().ThemeVariant())), owner: s}
+	rectangle := canvas.NewRectangle(s.Theme().Color(s.name, fyne.CurrentApp().Settings().ThemeVariant()))
+	rectangle.CornerRadius = s.radius
+	return &surfaceRenderer{rectangle: rectangle, owner: s}
 }
 
 type surfaceRenderer struct {

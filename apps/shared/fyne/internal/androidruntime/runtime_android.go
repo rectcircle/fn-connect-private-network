@@ -234,6 +234,38 @@ func Call(ctx context.Context, method string, params, result any) error {
 		return errors.New("Android service is stopping; retry after cleanup")
 	}
 	if host == nil {
+		if method == client.MethodLinkSettings || method == client.MethodSetLinkSettings {
+			var directory string
+			if err := (system{}).Call("settings.directory", nil, &directory); err != nil {
+				return err
+			}
+			store := client.NewConfigStore(filepath.Join(directory, "client.json"), nil)
+			var value client.LinkSettings
+			var err error
+			if method == client.MethodLinkSettings {
+				value, err = store.LinkSettings(ctx)
+			} else {
+				raw, e := json.Marshal(params)
+				if e != nil {
+					return e
+				}
+				if e = json.Unmarshal(raw, &value); e != nil {
+					return e
+				}
+				value, err = store.SetLinkSettings(ctx, value)
+			}
+			if err != nil {
+				return err
+			}
+			if result == nil {
+				return nil
+			}
+			raw, err := json.Marshal(value)
+			if err != nil {
+				return err
+			}
+			return json.Unmarshal(raw, result)
+		}
 		if method == client.MethodStatus {
 			var saved struct {
 				Configured  bool `json:"configured"`
@@ -339,27 +371,15 @@ func fncpnUIProfile(directory *C.char) {
 	go uiperf.Capture(path, 45*time.Second)
 }
 
-func SavedSettingsPage(ctx context.Context) (string, error) {
-	var directory string
-	if err := (system{}).Call("settings.directory", nil, &directory); err != nil {
-		return "", err
+func Stream(ctx context.Context, method string, params any, receive func(json.RawMessage) (bool, error)) error {
+	if err := (system{}).Call("service.ensure", nil, nil); err != nil {
+		return err
 	}
-	return client.NewSavedSettingsPageWithTest(ctx, client.NewConfigStore(filepath.Join(directory, "client.json"), nil), func(ctx context.Context, input client.SpeedTestRequest, report func(client.SpeedTestStatus) error) error {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		if err := report(client.SpeedTestStatus{Active: true, Stage: "preparing"}); err != nil {
-			return err
-		}
-		if err := (system{}).Call("service.ensure", nil, nil); err != nil {
-			return err
-		}
-		state.Lock()
-		manager, stopping := state.manager, state.stopping
-		state.Unlock()
-		if stopping || manager == nil {
-			return errors.New("Android VPN service is unavailable")
-		}
-		return manager.RunSpeedTest(ctx, input, report)
-	})
+	state.Lock()
+	host, stopping := state.host, state.stopping
+	state.Unlock()
+	if host == nil || stopping {
+		return model.NewError(model.ErrorUnavailable, "client service is not running", true)
+	}
+	return host.Stream(ctx, method, params, receive)
 }

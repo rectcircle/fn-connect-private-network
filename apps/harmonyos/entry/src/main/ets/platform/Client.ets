@@ -13,7 +13,9 @@ export interface Authorization { requestId: string; state: string; }
 export interface Admin { url: string; }
 export interface SupportArchive { name: string; size: number; }
 interface ConnectionIntent { configured: boolean; autoConnect: boolean; }
-interface CommandParams { target?: string; address?: string; requestId?: string; fnId?: string; username?: string; password?: string; accessCode?: string; twofaCode?: string; trustDevice?: boolean; }
+export interface LinkPreference { link: string; enabled: boolean; }
+export interface LinkSettings { fnId: string; links: LinkPreference[]; }
+interface CommandParams { links?: LinkPreference[]; target?: string; address?: string; requestId?: string; fnId?: string; username?: string; password?: string; accessCode?: string; twofaCode?: string; trustDevice?: boolean; }
 interface CommandRequest { version: number; directory: string; method: string; params: CommandParams; }
 export class ClientError extends Error {
   failure: Failure;

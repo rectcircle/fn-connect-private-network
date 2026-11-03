@@ -104,7 +104,8 @@ func (s *drawerScroll) DragEnd() {
 
 type drawerButton struct {
 	touchButton
-	view *clientView
+	view             *clientView
+	settingsDistance float32
 }
 
 func (b *drawerButton) Dragged(e *fyne.DragEvent) {
@@ -129,7 +130,8 @@ const drawerGestureWidth float32 = 80
 
 type drawerEdge struct {
 	widget.BaseWidget
-	view *clientView
+	view             *clientView
+	settingsDistance float32
 }
 
 func (e *drawerEdge) CreateRenderer() fyne.WidgetRenderer {
@@ -137,6 +139,10 @@ func (e *drawerEdge) CreateRenderer() fyne.WidgetRenderer {
 }
 func (e *drawerEdge) Dragged(event *fyne.DragEvent) {
 	v := e.view
+	if v.settings != nil && v.settings.panel.Visible() {
+		e.settingsDistance += event.Dragged.DX
+		return
+	}
 	if v.editing || !v.statusReceived {
 		return
 	}
@@ -151,6 +157,14 @@ func (e *drawerEdge) Dragged(event *fyne.DragEvent) {
 	}
 }
 func (e *drawerEdge) DragEnd() {
+	if e.view.settings != nil && e.view.settings.panel.Visible() {
+		distance := e.settingsDistance
+		e.settingsDistance = 0
+		if distance > 48 {
+			e.view.back()
+		}
+		return
+	}
 	if e.view.drawer != nil {
 		e.view.drawer.endDrag()
 	}

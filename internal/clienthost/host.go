@@ -25,14 +25,15 @@ type Runtime interface {
 // Host is single-use. The Android Service owns Start and Close; UI clients only
 // receive the Call interface. A stopped host requires a fresh manager instance.
 type Host struct {
-	mu      sync.Mutex
-	runtime Runtime
-	service *client.Service
-	ctx     context.Context
-	cancel  context.CancelFunc
-	runDone chan struct{}
-	closed  bool
-	calls   sync.WaitGroup
+	mu        sync.Mutex
+	runtime   Runtime
+	service   *client.Service
+	ctx       context.Context
+	cancel    context.CancelFunc
+	runDone   chan struct{}
+	closed    bool
+	transport NativeTransport
+	calls     sync.WaitGroup
 }
 
 func New(runtime Runtime) (*Host, error) {
@@ -66,6 +67,20 @@ func (h *Host) Start(parent context.Context) error {
 // Call preserves the existing daemon command contract without opening a socket.
 // Cancelling an individual UI request does not cancel the host lifetime.
 func (h *Host) Call(ctx context.Context, method string, params, result any) error {
+	if method == "native-transport" {
+		descriptor, err := h.nativeTransport()
+		if err != nil {
+			return err
+		}
+		if result == nil {
+			return nil
+		}
+		raw, err := json.Marshal(descriptor)
+		if err != nil {
+			return err
+		}
+		return json.Unmarshal(raw, result)
+	}
 	h.mu.Lock()
 	if h.ctx == nil || h.closed || h.ctx.Err() != nil {
 		h.mu.Unlock()
@@ -94,6 +109,61 @@ func (h *Host) Call(ctx context.Context, method string, params, result any) erro
 		return nil
 	}
 	return json.Unmarshal(response.Result, result)
+}
+
+// Stream uses the same service dispatch as socket IPC. The caller owns the
+// subscription; cancellation never stops the system-owned host.
+func (h *Host) Stream(ctx context.Context, method string, params any, receive func(json.RawMessage) (bool, error)) error {
+	h.mu.Lock()
+	if h.ctx == nil || h.closed || h.ctx.Err() != nil {
+		h.mu.Unlock()
+		return model.NewError(model.ErrorUnavailable, "client service is not running", true)
+	}
+	h.calls.Add(1)
+	lifetime := h.ctx
+	h.mu.Unlock()
+	defer h.calls.Done()
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	stop := context.AfterFunc(lifetime, cancel)
+	defer stop()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	request, err := ipc.NewRequest("embedded", method, params)
+	if err != nil {
+		return err
+	}
+	var deliveryErr error
+	finished := false
+	emit := func(response ipc.Response) error {
+		if finished {
+			return deliveryErr
+		}
+		if !response.OK {
+			deliveryErr = response.Error
+			finished = true
+			cancel()
+			return deliveryErr
+		}
+		done, err := receive(response.Result)
+		if err != nil || done {
+			finished = true
+			deliveryErr = err
+			cancel()
+		}
+		return err
+	}
+	if !h.service.HandleStream(ctx, request, emit) {
+		_ = emit(h.service.Handle(ctx, request))
+	}
+	if deliveryErr != nil {
+		return deliveryErr
+	}
+	if finished {
+		return nil
+	}
+	return ctx.Err()
 }
 
 // Close cancels admitted calls and waits for them and the run loop before
